@@ -33,9 +33,12 @@ final class ThumbnailCache {
         cache.totalCostLimit = Self.memoryLimit
     }
 
-    /// The cached thumbnail, or nil while one is made in the background. A
-    /// `didLoad` notification (object: the item's URL) follows when it's ready.
-    /// `owner` is the view asking; `cancelRequests(of:)` stops its requests.
+    /// The cached thumbnail. While one of the right size is made in the
+    /// background, a cached one of another size stands in, so a zoom shows
+    /// the old thumbnail scaled rather than flashing back to the file icon;
+    /// nil when there is none. A `didLoad` notification (object: the item's
+    /// URL) follows when the right size is ready. `owner` is the view asking;
+    /// `cancelRequests(of:)` stops its requests.
     func thumbnail(
         for item: FileItem, pointSize: CGFloat, scale: CGFloat, pathGuard: PathGuard, owner: ObjectIdentifier
     ) -> NSImage? {
@@ -44,12 +47,13 @@ final class ThumbnailCache {
         let bucket = Self.bucket(for: pointSize)
         let key = Self.key(item, bucket) as NSString
         if let image = cache.object(forKey: key) { return image }
+        let standIn = standIn(for: item, bucket: bucket)
         if pending[key] != nil {
             pending[key]?.owners.insert(owner)
-            return nil
+            return standIn
         }
         if let failure = failed[key] {
-            guard Date().timeIntervalSince(failure) > Self.retryAfter else { return nil }
+            guard Date().timeIntervalSince(failure) > Self.retryAfter else { return standIn }
             failed[key] = nil
         }
 
@@ -64,6 +68,17 @@ final class ThumbnailCache {
                 ThumbnailCache.shared.start(
                     key: keyString as NSString, url: url, size: size, scale: scale, permitted: permitted)
             }
+        }
+        return standIn
+    }
+
+    /// A cached thumbnail of the item at another size: the next larger one,
+    /// which scales down sharply, or else the largest smaller one.
+    private func standIn(for item: FileItem, bucket: CGFloat) -> NSImage? {
+        let larger = Self.buckets.filter { $0 > bucket }
+        let smaller = Self.buckets.filter { $0 < bucket }.reversed()
+        for other in larger + smaller {
+            if let image = cache.object(forKey: Self.key(item, other) as NSString) { return image }
         }
         return nil
     }
@@ -128,8 +143,10 @@ final class ThumbnailCache {
     }
 
     /// Thumbnails come in a few sizes so a slider drag doesn't make dozens.
+    private static let buckets: [CGFloat] = [32, 64, 128, 256, 512]
+
     private static func bucket(for pointSize: CGFloat) -> CGFloat {
-        [32, 64, 128, 256, 512].first { $0 >= pointSize } ?? 512
+        buckets.first { $0 >= pointSize } ?? 512
     }
 
     private static func key(_ item: FileItem, _ bucket: CGFloat) -> String {
