@@ -46,7 +46,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .frame(minWidth: 170)
+        .frame(minWidth: 150, maxWidth: .infinity)
     }
 
     @ViewBuilder

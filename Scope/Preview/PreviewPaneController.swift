@@ -56,7 +56,7 @@ final class PreviewPaneController: NSViewController {
             root.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            preview.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 12),
+            preview.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
             preview.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             preview.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             preview.heightAnchor.constraint(equalTo: root.heightAnchor, multiplier: 0.42),

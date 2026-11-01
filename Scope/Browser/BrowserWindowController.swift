@@ -57,16 +57,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.delegate = self
 
         let sidebar = NSHostingController(rootView: SidebarView(store: SidebarStore.shared, selection: sidebarSelection))
+        // Without this the hosting controller pins the sidebar to its ideal
+        // width, and the divider can't be dragged.
+        sidebar.sizingOptions = []
+        sidebar.view.setContentHuggingPriority(.init(1), for: .horizontal)
+        sidebar.view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 170
-        sidebarItem.maximumThickness = 320
+        sidebarItem.minimumThickness = 150
+        sidebarItem.maximumThickness = 400
+        sidebarItem.holdingPriority = .init(260)
         sidebarItem.canCollapse = true
         contentItem = NSSplitViewItem(viewController: workspace)
         contentItem.titlebarSeparatorStyle = .line
-        contentItem.automaticallyAdjustsSafeAreaInsets = true
         splitController.addSplitViewItem(sidebarItem)
         splitController.addSplitViewItem(contentItem)
-        splitController.splitView.autosaveName = "BrowserSplit"
+        splitController.splitView.autosaveName = "BrowserSplit.v2"
         window.contentViewController = splitController
         window.setContentSize(NSSize(width: 1000, height: 620))
 
@@ -199,7 +204,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let item = NSSplitViewItem(viewController: pane)
             item.titlebarSeparatorStyle = .line
             item.minimumThickness = 280
-            item.automaticallyAdjustsSafeAreaInsets = true
             // Adding an item makes the split view grow the window to fit it;
             // keep the window where it was and share its width instead.
             let frame = window?.frame
@@ -248,7 +252,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func makeTab(at location: Location) -> BrowserViewController {
         let tab = BrowserViewController(model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
         wire(tab)
-        _ = tab.view
+        // A real starting size, so its layout doesn't fight a zero-sized frame.
+        tab.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
         if workspace.isSplit { tab.isPreviewVisible = false }
         return tab
     }
@@ -426,6 +431,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     var searchSettingsForHooks: SearchSettings { content.search }
     var pathBarForHooks: NSView { content.pathBar }
+
+    func setSidebarWidthForHooks(_ width: CGFloat) {
+        splitController.splitView.setPosition(width, ofDividerAt: 0)
+        splitController.splitView.layoutSubtreeIfNeeded()
+        let frames = splitController.splitView.arrangedSubviews.map { NSStringFromRect($0.frame) }.joined(separator: " | ")
+        Self.logger.notice("Sidebar width asked \(width), now \(self.sidebarItem.viewController.view.frame.width), split \(frames, privacy: .public)")
+    }
 
     func logPanesForHooks() {
         if let window {

@@ -161,8 +161,11 @@ final class BrowserViewController: NSViewController {
             searchSeparator.leadingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.leadingAnchor),
             searchSeparator.trailingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.trailingAnchor),
             split.topAnchor.constraint(equalTo: searchSeparator.bottomAnchor),
-            split.leadingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.leadingAnchor),
-            split.trailingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.trailingAnchor),
+            // The file views handle the sidebar themselves (scroll views inset
+            // their content); tying this split view to the safe area made
+            // AppKit's constraints conflict and crash when the sidebar toggled.
+            split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             split.bottomAnchor.constraint(equalTo: activitySeparator.topAnchor),
             activitySeparator.leadingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.leadingAnchor),
             activitySeparator.trailingAnchor.constraint(equalTo: root.safeAreaLayoutGuide.trailingAnchor),

@@ -119,6 +119,8 @@ enum DevHooks {
             }
             dump(bar, 0)
             logger.notice("PB window rect \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) visible \(NSStringFromRect(bar.visibleRect), privacy: .public)")
+        case "sidebarwidth":
+            controller?.setSidebarWidthForHooks(CGFloat(Double(argument) ?? 200))
         case "resize":
             if let width = Double(argument), let window = controller?.window {
                 var frame = window.frame
