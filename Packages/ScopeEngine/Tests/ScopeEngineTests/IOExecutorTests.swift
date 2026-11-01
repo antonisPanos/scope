@@ -5,6 +5,11 @@ import Testing
 
 @testable import ScopeEngine
 
+/// Shared by the blocked jobs, which each run in a task of their own.
+private final class Counter: Sendable {
+    let state = Mutex((running: 0, most: 0))
+}
+
 @Suite struct IOExecutorTests {
     private static func currentQueueLabel() -> String {
         String(cString: __dispatch_queue_get_label(nil))
@@ -23,18 +28,18 @@ import Testing
         // block pool threads themselves.)
         let blockers = ProcessInfo.processInfo.activeProcessorCount * 2
         let gate = DispatchSemaphore(value: 0)
-        let counts = Mutex((running: 0, most: 0))
+        let counts = Counter()
         let started = AsyncStream.makeStream(of: Void.self)
         let jobs = (0..<blockers).map { _ in
             Task {
                 await onIOThreads {
-                    counts.withLock {
+                    counts.state.withLock {
                         $0.running += 1
                         $0.most = max($0.most, $0.running)
                     }
                     started.continuation.yield()
                     Self.block(on: gate)
-                    counts.withLock { $0.running -= 1 }
+                    counts.state.withLock { $0.running -= 1 }
                 }
             }
         }
@@ -45,7 +50,7 @@ import Testing
         }
         for _ in 0..<blockers { gate.signal() }
         for job in jobs { await job.value }
-        #expect(counts.withLock { $0.most } == blockers)
+        #expect(counts.state.withLock { $0.most } == blockers)
     }
 
     @Test func engineWorkRunsOnTheIOThreads() async throws {
