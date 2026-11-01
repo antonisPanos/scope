@@ -14,6 +14,11 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     var onOpen: (([FileItem]) -> Void)?
     var onSelectionChange: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onDrop: (([URL], URL, Bool) -> Void)?
+    var onRename: (() -> Void)?
+    var contextMenu: NSMenu? {
+        didSet { collectionView.menu = contextMenu }
+    }
 
     private let scrollView = NSScrollView()
     private let collectionView = IconCollectionView()
@@ -52,6 +57,10 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         collectionView.delegate = self
         collectionView.onDoubleClick = { [weak self] in self?.openSelection() }
         collectionView.onKey = { [weak self] event in self?.handleKey(event) ?? false }
+        collectionView.registerForDraggedTypes(FileViewKeys.dropTypes)
+        collectionView.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
+        collectionView.setDraggingSourceOperationMask([.copy, .generic], forLocal: false)
+        collectionView.onRightClick = { [weak self] point in self?.selectItem(at: point) }
         collectionView.onMagnify = { [weak self] factor in
             guard self?.style == .grid else { return }
             AppSettings.shared.iconSize *= factor
@@ -105,6 +114,17 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         view.window?.makeFirstResponder(collectionView)
         if collectionView.selectionIndexPaths.isEmpty, !items.isEmpty {
             select([items[0].url], scroll: false)
+        }
+    }
+
+    func prepareForContextMenu() {}
+
+    /// Right-clicking an icon that isn't selected selects it first.
+    private func selectItem(at point: NSPoint) {
+        guard let path = collectionView.indexPathForItem(at: point) else { return }
+        if !collectionView.selectionIndexPaths.contains(path) {
+            collectionView.selectionIndexPaths = [path]
+            onSelectionChange?()
         }
     }
 
@@ -172,6 +192,9 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         case .quickLook?:
             onQuickLook?()
             return true
+        case .rename?:
+            onRename?()
+            return true
         case nil:
             break
         }
@@ -199,6 +222,41 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
         let item = collectionView.makeItem(withIdentifier: Self.itemIdentifier, for: indexPath) as! IconItem
         configure(item, with: items[indexPath.item])
         return item
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
+        guard items.indices.contains(indexPath.item), model.engine.pathGuard.permits(items[indexPath.item].url) else { return nil }
+        return items[indexPath.item].url as NSURL
+    }
+
+    private func dropFolder(at indexPath: IndexPath?, operation: NSCollectionView.DropOperation) -> URL? {
+        if operation == .on, let indexPath, items.indices.contains(indexPath.item),
+           items[indexPath.item].isBrowsableFolder, !items[indexPath.item].isSymbolicLink {
+            return items[indexPath.item].url
+        }
+        return model.location.folderURL
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, validateDrop info: NSDraggingInfo,
+                        proposedIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
+                        dropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
+        guard model.engine.pathGuard.allowsWrites else { return [] }
+        let path = proposedIndexPath.pointee as IndexPath
+        if dropOperation.pointee == .on, !(items.indices.contains(path.item) && items[path.item].isBrowsableFolder) {
+            dropOperation.pointee = .before
+        }
+        guard let folder = dropFolder(at: path, operation: dropOperation.pointee) else { return [] }
+        return FileViewKeys.dropOperation(info, into: folder)
+    }
+
+    func collectionView(_ collectionView: NSCollectionView, acceptDrop info: NSDraggingInfo, indexPath: IndexPath,
+                        dropOperation: NSCollectionView.DropOperation) -> Bool {
+        guard let folder = dropFolder(at: indexPath, operation: dropOperation) else { return false }
+        let urls = FileViewKeys.droppedURLs(info)
+        let operation = FileViewKeys.dropOperation(info, into: folder)
+        guard !urls.isEmpty, !operation.isEmpty else { return false }
+        onDrop?(urls, folder, operation == .copy)
+        return true
     }
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
@@ -292,6 +350,12 @@ final class IconCollectionView: NSCollectionView {
     var onDoubleClick: (() -> Void)?
     var onKey: ((NSEvent) -> Bool)?
     var onMagnify: ((Double) -> Void)?
+    var onRightClick: ((NSPoint) -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        onRightClick?(convert(event.locationInWindow, from: nil))
+        return super.menu(for: event)
+    }
 
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)

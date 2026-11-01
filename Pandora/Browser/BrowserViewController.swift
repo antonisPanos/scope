@@ -1,5 +1,6 @@
 import AppKit
 import PandoraEngine
+import SwiftUI
 
 /// The right-hand side of a browser tab: path bar, the file view for the
 /// current view mode, the preview pane, and the status bar with the icon size
@@ -26,6 +27,18 @@ final class BrowserViewController: NSViewController {
     var onOpen: (([FileItem]) -> Void)? { didSet { fileView.onOpen = onOpen } }
     var onQuickLook: (() -> Void)? { didSet { fileView.onQuickLook = onQuickLook } }
     var onSelectionChange: (() -> Void)?
+    var onDrop: (([URL], URL, Bool) -> Void)? { didSet { fileView.onDrop = onDrop } }
+    var onRename: (() -> Void)? { didSet { fileView.onRename = onRename } }
+    var contextMenu: NSMenu? { didSet { fileView.contextMenu = contextMenu } }
+    /// Set by the window: what the activity drawer's Undo button does.
+    var onUndoOperation: ((UUID) -> Void)?
+
+    private lazy var activity = NSHostingView(rootView: ActivityPanel(
+        controller: OperationsController.shared,
+        onUndo: { [weak self] id in self?.onUndoOperation?(id) },
+        onClose: { [weak self] in self?.isActivityVisible = false }))
+    private let activitySeparator = NSBox()
+    private var activityHeight: NSLayoutConstraint!
 
     init(model: BrowserModel) {
         self.model = model
@@ -91,7 +104,8 @@ final class BrowserViewController: NSViewController {
             view.translatesAutoresizingMaskIntoConstraints = false
             statusBar.addSubview(view)
         }
-        for view in [pathBar, pathSeparator, split, statusSeparator, statusBar, message, spinner] as [NSView] {
+        activitySeparator.boxType = .separator
+        for view in [pathBar, pathSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -105,7 +119,13 @@ final class BrowserViewController: NSViewController {
             split.topAnchor.constraint(equalTo: pathSeparator.bottomAnchor),
             split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.bottomAnchor.constraint(equalTo: statusSeparator.topAnchor),
+            split.bottomAnchor.constraint(equalTo: activitySeparator.topAnchor),
+            activitySeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            activitySeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            activitySeparator.bottomAnchor.constraint(equalTo: activity.topAnchor),
+            activity.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            activity.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            activity.bottomAnchor.constraint(equalTo: statusSeparator.topAnchor),
             statusSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             statusSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             statusSeparator.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -128,6 +148,10 @@ final class BrowserViewController: NSViewController {
             spinner.centerYAnchor.constraint(equalTo: fileContainer.centerYAnchor),
         ])
         statusLeft.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        activityHeight = activity.heightAnchor.constraint(equalToConstant: 0)
+        activityHeight.isActive = true
+        activity.isHidden = true
+        activitySeparator.isHidden = true
         view = root
         install(fileView)
         isPreviewVisible = AppSettings.shared.showPreviewPane
@@ -150,6 +174,9 @@ final class BrowserViewController: NSViewController {
         ])
         newView.onOpen = onOpen
         newView.onQuickLook = onQuickLook
+        newView.onDrop = onDrop
+        newView.onRename = onRename
+        newView.contextMenu = contextMenu
         newView.onSelectionChange = { [weak self] in self?.selectionDidChange() }
         pathBar.nextKeyView = subview
         sizeSlider.isHidden = model.viewMode != .icons
@@ -260,6 +287,16 @@ final class BrowserViewController: NSViewController {
     var isStatusBarVisible: Bool {
         get { !statusBar.isHidden }
         set { statusBar.isHidden = !newValue; statusSeparator.isHidden = !newValue; collapse(statusBar, !newValue) }
+    }
+
+    /// The activity drawer at the bottom of the window.
+    var isActivityVisible: Bool {
+        get { !activity.isHidden }
+        set {
+            activity.isHidden = !newValue
+            activitySeparator.isHidden = !newValue
+            activityHeight.constant = newValue ? 200 : 0
+        }
     }
 
     var isPreviewVisible: Bool {

@@ -17,7 +17,11 @@ extension FileEngine {
     @discardableResult
     func mountImage(_ image: URL, readOnly: Bool, mountPoint: URL?, passphrase: String? = nil) async throws -> URL? {
         let imagePath = try pathGuard.checkLocation(image)
-        if let mountPoint { try pathGuard.checkWriteLocation(mountPoint) }
+        if let mountPoint {
+            try pathGuard.checkWriteLocation(mountPoint)
+            // diskutil makes the mount point itself, but its folder must exist.
+            try FileManager.default.createDirectory(at: mountPoint.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
         guard ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil else {
             throw OperationError.needsUnsandboxedBuild
         }

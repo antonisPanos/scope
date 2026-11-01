@@ -15,6 +15,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let sidebarSelection = SidebarSelection()
     private var sidebarItem: NSSplitViewItem!
     private var palette: CommandPalette?
+    private let contextMenu = NSMenu()
+    private let contextMenuBuilder = ContextMenuBuilder()
     private var navigationGroup: NSToolbarItemGroup?
     private var viewModeGroup: NSToolbarItemGroup?
     /// Called when the tab closes, so the app can let it go.
@@ -24,6 +26,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private static let navigationItem = NSToolbarItem.Identifier("navigation")
     private static let viewModeItem = NSToolbarItem.Identifier("viewMode")
     private static let paletteItem = NSToolbarItem.Identifier("palette")
+    private static let activityItem = NSToolbarItem.Identifier("activity")
 
     init(location: Location) {
         model = BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location)
@@ -72,6 +75,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         content.onOpen = { [weak self] items in self?.open(items) }
         content.onQuickLook = { [weak self] in self?.toggleQuickLook() }
         content.onSelectionChange = { [weak self] in self?.quickLookSelectionChanged() }
+        content.onDrop = { [weak self] urls, folder, copy in self?.handleDrop(urls, onto: folder, copy: copy) }
+        content.onRename = { [weak self] in
+            guard let self, self.allowsWrites else { return }
+            self.renameSelection()
+        }
+        content.onUndoOperation = { [weak self] id in
+            let window = self?.window
+            Task { await OperationsController.shared.undo(id, from: window) }
+        }
+        contextMenu.delegate = contextMenuBuilder
+        contextMenuBuilder.controller = self
+        content.contextMenu = contextMenu
         content.pathBar.onNavigate = { [weak self] url in self?.model.navigate(to: .folder(url)) }
         content.pathBar.onSubmit = { [weak self] text in
             self?.goToTypedPath(text)
@@ -125,10 +140,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @objc func runCommand(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let command = Commands.command(id: id),
               command.isEnabled(self) else { return }
+        // A held-down Cmd+Delete or Cmd+V must not fire again and again.
+        if command.ignoresKeyRepeat, NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.isARepeat == true { return }
         command.run(self)
     }
 
+    /// False in the read-only release build.
+    var allowsWrites: Bool { model.engine.pathGuard.allowsWrites }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(copy(_:)): return !selectedItems.isEmpty
+        case #selector(paste(_:)): return !pasteboardFiles.isEmpty && currentFolder != nil && allowsWrites
+        case #selector(undo(_:)):
+            menuItem.title = "Undo"
+            return OperationsController.shared.canUndo
+        default: break
+        }
         guard menuItem.action == #selector(runCommand(_:)) else { return true }
         guard let id = menuItem.representedObject as? String, let command = Commands.command(id: id) else { return false }
         menuItem.state = command.isChecked?(self) == true ? .on : .off
@@ -136,6 +164,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     var selectedItems: [FileItem] { content.fileView.selectedItems }
+
+    #if PANDORA_DEV
+    func selectForHooks(_ urls: [URL]) {
+        content.fileView.select(urls, scroll: true)
+    }
+    #endif
+
+    func prepareForContextMenu() {
+        content.fileView.prepareForContextMenu()
+    }
 
     func openSelection() {
         open(selectedItems)
@@ -145,6 +183,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var isStatusBarVisible: Bool { content.isStatusBarVisible }
     var isSidebarVisible: Bool { !sidebarItem.isCollapsed }
     var isPreviewVisible: Bool { content.isPreviewVisible }
+    var isActivityVisible: Bool { content.isActivityVisible }
+    func showActivity(_ visible: Bool) { content.isActivityVisible = visible }
     func togglePreview() { content.isPreviewVisible.toggle() }
 
     func togglePathBar() { content.isPathBarVisible.toggle() }
@@ -296,7 +336,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
 extension BrowserWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.viewModeItem, Self.paletteItem]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem, Self.paletteItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -327,6 +367,15 @@ extension BrowserWindowController: NSToolbarDelegate {
             viewModeGroup = group
             updateToolbar()
             return group
+        case Self.activityItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Activity"
+            item.toolTip = "Activity (⌥⌘A)"
+            item.view = NSHostingView(rootView: ActivityRing(controller: OperationsController.shared) { [weak self] in
+                guard let self else { return }
+                self.showActivity(!self.isActivityVisible)
+            })
+            return item
         case Self.paletteItem:
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.image = NSImage(systemSymbolName: "command", accessibilityDescription: "Command Palette")

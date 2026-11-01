@@ -10,6 +10,13 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     var onOpen: (([FileItem]) -> Void)?
     var onSelectionChange: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onDrop: (([URL], URL, Bool) -> Void)?
+    var onRename: (() -> Void)?
+    var contextMenu: NSMenu? {
+        didSet { browser.menu = contextMenu }
+    }
+
+    func prepareForContextMenu() {}
 
     private let browser = FileBrowser()
     private let root = ColumnNode(item: nil)
@@ -132,6 +139,9 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
             return true
         case .quickLook?:
             onQuickLook?()
+            return true
+        case .rename?:
+            onRename?()
             return true
         case nil:
             return false

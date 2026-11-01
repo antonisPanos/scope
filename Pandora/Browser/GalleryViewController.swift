@@ -20,6 +20,20 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
         set { strip.onQuickLook = newValue }
     }
     var onSelectionChange: (() -> Void)?
+    var onDrop: (([URL], URL, Bool) -> Void)? {
+        get { strip.onDrop }
+        set { strip.onDrop = newValue }
+    }
+    var onRename: (() -> Void)? {
+        get { strip.onRename }
+        set { strip.onRename = newValue }
+    }
+    var contextMenu: NSMenu? {
+        get { strip.contextMenu }
+        set { strip.contextMenu = newValue }
+    }
+
+    func prepareForContextMenu() {}
 
     init(model: BrowserModel) {
         self.model = model

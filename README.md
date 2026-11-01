@@ -5,8 +5,29 @@ preview pane, every classic view, a real operations queue and a search that
 works, with Finder's keyboard shortcuts. Requires macOS 27.2 and Xcode 27.
 
 Milestones done: M0 (project, file engine with its path guard, test disks, CI),
-M1 (the browse window) and M2 (views and preview). File operations such as
-copy and move arrive in M3.
+M1 (the browse window), M2 (views and preview) and M3 (file operations).
+
+## What M3 adds
+
+- Copy (Cmd+C) and Paste (Cmd+V), Move Item Here (Option+Cmd+V), Duplicate
+  (Cmd+D), Rename (Return), New Folder (Shift+Cmd+N), Move to Trash
+  (Cmd+Delete), Compress, Extract, Mount Disk Image, Eject (Cmd+E), Copy Path
+  (Option+Cmd+C), all also in the right-click menu with Open With.
+- Drag and drop between folders and from Finder: a move on the same disk, a
+  copy across disks or with Option held.
+- Undo (Cmd+Z) for every operation, including a cancelled one's finished part.
+- When a name is taken: Keep Both, Replace (the old item goes to the Trash),
+  Skip or Stop, with "Apply to all".
+- The activity drawer (Option+Cmd+A or the toolbar ring) lists every
+  operation with progress, speed, time running and left, Pause, Cancel, the
+  queue with Start Now and reordering, and Undo for finished ones. The Dock
+  icon shows a progress bar.
+- Safety: nothing is overwritten or deleted. Copies are written under a hidden
+  partial name and renamed into place; moves between disks verify every
+  file's SHA-256 before the original goes to the Trash; archive entries with
+  ../ or absolute paths, or that would write through a link, are skipped.
+  Operations on the same disk run one at a time; held-down Cmd+Delete and
+  Cmd+V don't repeat; items in a running operation can't be touched by another.
 
 ## What M2 adds
 

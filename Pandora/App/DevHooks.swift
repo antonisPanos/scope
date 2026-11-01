@@ -12,6 +12,10 @@ import os
 ///   "snapshot:<name>"  renders the key window (or sheet, or palette) into <container tmp>/<name>.png
 ///   "appearance:dark" / "appearance:light" / "appearance:system"
 ///   "sidebar:<title>"  opens the sidebar item with that title
+///   "select:<names>"   selects items by name (comma separated) in the folder on screen
+///   "press:<title>"    presses a button on an open sheet
+///   "ops"              logs every operation in the activity list
+///   "undo"             undoes the last operation
 ///   "activate"         brings Pandora Dev to the front (the palette needs focus)
 ///   "dismiss"          closes any open sheet (alerts)
 ///   "state"            logs the key window's location, items and the sidebar
@@ -53,6 +57,24 @@ enum DevHooks {
             if let item = SidebarStore.shared.allItems.first(where: { $0.title == argument }), item.isEnabled {
                 controller?.model.navigate(to: item.location)
             }
+        case "select":
+            // "select:a.txt,b.txt" selects items by name in the folder on screen.
+            let names = Set(argument.split(separator: ",").map(String.init))
+            let urls = controller?.model.items.filter { names.contains($0.name) }.map(\.url) ?? []
+            controller?.selectForHooks(urls)
+        case "press":
+            // Presses a button by title on any open sheet (an alert or the conflict dialog).
+            for window in NSApp.windows {
+                guard let sheet = window.attachedSheet else { continue }
+                if let button = findButton(argument, in: sheet.contentView) { button.performClick(nil) }
+            }
+        case "ops":
+            for snapshot in OperationsController.shared.snapshots {
+                let progress = snapshot.progress
+                logger.notice("Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)")
+            }
+        case "undo":
+            controller?.undoLastOperation()
         case "activate":
             NSApp.activate()
         case "dismiss":
@@ -73,6 +95,15 @@ enum DevHooks {
         default:
             logger.error("Unknown hook \(request, privacy: .public)")
         }
+    }
+
+    private static func findButton(_ title: String, in view: NSView?) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton, button.title == title { return button }
+        for subview in view.subviews {
+            if let found = findButton(title, in: subview) { return found }
+        }
+        return nil
     }
 
     private static func split(_ request: String) -> (String, String) {

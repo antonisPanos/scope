@@ -6,7 +6,9 @@ import PandoraEngine
 /// shortcut are defined once.
 @MainActor
 struct Command: Identifiable {
-    enum Menu { case file, view, sortBy, go }
+    /// `contextOnly` commands appear in the right-click menu and the palette,
+    /// not the menu bar (where AppKit's own Copy and Paste items live).
+    enum Menu { case file, edit, view, sortBy, go, contextOnly }
 
     let id: String
     let title: String
@@ -18,6 +20,8 @@ struct Command: Identifiable {
     var isChecked: (@MainActor (BrowserWindowController) -> Bool)?
     /// A separator goes above this command in its menu.
     var startsGroup = false
+    /// Held-down keys repeat; destructive commands ignore the repeats.
+    var ignoresKeyRepeat = false
 
     /// The shortcut as the menu shows it, such as ⇧⌘G.
     var shortcutText: String {
@@ -31,6 +35,7 @@ struct Command: Identifiable {
         case Self.upArrow: text += "↑"
         case Self.downArrow: text += "↓"
         case "-": text += "−"
+        case Self.backspace: text += "⌫"
         default: text += key.uppercased()
         }
         return text
@@ -38,11 +43,12 @@ struct Command: Identifiable {
 
     static let upArrow = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
     static let downArrow = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
+    static let backspace = String(Character(UnicodeScalar(NSBackspaceCharacter)!))
 }
 
 @MainActor
 enum Commands {
-    static let all: [Command] = file + viewModes + view + sortBy + go
+    static let all: [Command] = file + edit + viewModes + view + sortBy + go
 
     /// as Icons (Cmd+1), as Details (Cmd+2), as Columns (Cmd+3), as Gallery (Cmd+4), as List (Cmd+5).
     private static let viewModes: [Command] = ViewMode.allCases.map { mode in
@@ -57,12 +63,42 @@ enum Commands {
     private static let file: [Command] = [
         Command(id: "newTab", title: "New Tab", menu: .file, key: "t", modifiers: .command,
                 run: { $0.newWindowForTab(nil) }),
+        Command(id: "newFolder", title: "New Folder…", menu: .file, key: "n", modifiers: [.shift, .command],
+                run: { $0.newFolder() }, isEnabled: { $0.currentFolder != nil && $0.allowsWrites }),
         Command(id: "open", title: "Open", menu: .file, key: "o", modifiers: .command,
                 run: { $0.openSelection() }, isEnabled: { !$0.selectedItems.isEmpty }, startsGroup: true),
+        Command(id: "rename", title: "Rename…", menu: .file, key: "", modifiers: [],
+                run: { $0.renameSelection() }, isEnabled: { $0.selectedItems.count == 1 && $0.allowsWrites }, startsGroup: true),
+        Command(id: "duplicate", title: "Duplicate", menu: .file, key: "d", modifiers: .command,
+                run: { $0.duplicateSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites }, ignoresKeyRepeat: true),
+        Command(id: "compress", title: "Compress", menu: .file, key: "", modifiers: [],
+                run: { $0.compressSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites }),
+        Command(id: "extract", title: "Extract", menu: .file, key: "", modifiers: [],
+                run: { $0.extractSelection() }, isEnabled: { $0.archiveToExtract != nil && $0.allowsWrites }),
+        Command(id: "mount", title: "Mount Disk Image", menu: .file, key: "", modifiers: [],
+                run: { $0.mountSelection() }, isEnabled: { $0.imageToMount != nil }),
+        Command(id: "mountReadOnly", title: "Mount Read-Only", menu: .file, key: "", modifiers: [],
+                run: { $0.mountSelection(readOnly: true) }, isEnabled: { $0.imageToMount != nil }),
+        Command(id: "trash", title: "Move to Trash", menu: .file, key: Command.backspace, modifiers: .command,
+                run: { $0.trashSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites },
+                startsGroup: true, ignoresKeyRepeat: true),
         Command(id: "addToSidebar", title: "Add to Sidebar", menu: .file, key: "t", modifiers: [.control, .command],
                 run: { $0.addSelectionToSidebar() }, isEnabled: { $0.folderToAddToSidebar != nil }, startsGroup: true),
         Command(id: "eject", title: "Eject", menu: .file, key: "e", modifiers: .command,
                 run: { $0.ejectSelectedVolume() }, isEnabled: { $0.volumeToEject != nil }),
+    ]
+
+    private static let edit: [Command] = [
+        Command(id: "copy", title: "Copy", menu: .contextOnly, key: "", modifiers: [],
+                run: { $0.copySelection() }, isEnabled: { !$0.selectedItems.isEmpty }),
+        Command(id: "paste", title: "Paste Items", menu: .contextOnly, key: "", modifiers: [],
+                run: { $0.paste(move: false) },
+                isEnabled: { !$0.pasteboardFiles.isEmpty && $0.currentFolder != nil && $0.allowsWrites }, ignoresKeyRepeat: true),
+        Command(id: "moveHere", title: "Move Item Here", menu: .edit, key: "v", modifiers: [.option, .command],
+                run: { $0.paste(move: true) },
+                isEnabled: { !$0.pasteboardFiles.isEmpty && $0.currentFolder != nil && $0.allowsWrites }, ignoresKeyRepeat: true),
+        Command(id: "copyPath", title: "Copy Path", menu: .edit, key: "c", modifiers: [.option, .command],
+                run: { $0.copyPathOfSelection() }),
     ]
 
     private static let view: [Command] = [
@@ -83,6 +119,8 @@ enum Commands {
                 run: { $0.toggleStatusBar() }, isChecked: { $0.isStatusBarVisible }),
         Command(id: "toggleSidebar", title: "Show Sidebar", menu: .view, key: "s", modifiers: [.control, .command],
                 run: { $0.toggleSidebar() }, isChecked: { $0.isSidebarVisible }),
+        Command(id: "toggleActivity", title: "Show Activity", menu: .view, key: "a", modifiers: [.option, .command],
+                run: { $0.showActivity(!$0.isActivityVisible) }, isChecked: { $0.isActivityVisible }),
         Command(id: "reload", title: "Reload", menu: .view, key: "r", modifiers: .command,
                 run: { $0.model.reload() }, startsGroup: true),
     ]

@@ -26,6 +26,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     var onOpen: (([FileItem]) -> Void)?
     var onSelectionChange: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onDrop: (([URL], URL, Bool) -> Void)?
+    var onRename: (() -> Void)?
+    var contextMenu: NSMenu? {
+        didSet { outlineView.menu = contextMenu }
+    }
 
     private let scrollView = NSScrollView()
     private let outlineView = FileOutlineView()
@@ -121,6 +126,10 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.doubleAction = #selector(openClicked)
         outlineView.onOpenSelection = { [weak self] in self?.openSelection() }
         outlineView.onQuickLook = { [weak self] in self?.onQuickLook?() }
+        outlineView.onRename = { [weak self] in self?.onRename?() }
+        outlineView.registerForDraggedTypes(FileViewKeys.dropTypes)
+        outlineView.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
+        outlineView.setDraggingSourceOperationMask([.copy, .generic], forLocal: false)
 
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
@@ -244,6 +253,13 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         openSelection()
     }
 
+    func prepareForContextMenu() {
+        let row = outlineView.clickedRow
+        if row >= 0, !outlineView.selectedRowIndexes.contains(row) {
+            outlineView.selectRowIndexes([row], byExtendingSelection: false)
+        }
+    }
+
     func openSelection() {
         let items = selectedItems
         guard !items.isEmpty else { return }
@@ -346,6 +362,36 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
             node.isLoadingChildren = false
             self?.outlineView.reloadItem(node, reloadChildren: true)
         }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        guard let node = item as? FileNode, model.engine.pathGuard.permits(node.item.url) else { return nil }
+        return node.item.url as NSURL
+    }
+
+    /// The folder a drop lands in: the folder row under the pointer, or the folder on screen.
+    private func dropFolder(for item: Any?) -> URL? {
+        if let node = item as? FileNode, node.item.isBrowsableFolder, !node.item.isSymbolicLink { return node.item.url }
+        return model.location.folderURL
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
+                     proposedChildIndex index: Int) -> NSDragOperation {
+        guard model.engine.pathGuard.allowsWrites else { return [] }
+        let target = (item as? FileNode).flatMap { $0.item.isBrowsableFolder ? $0 : nil }
+        if target == nil { outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex) }
+        else { outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex) }
+        guard let folder = dropFolder(for: target) else { return [] }
+        return FileViewKeys.dropOperation(info, into: folder)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard let folder = dropFolder(for: item) else { return false }
+        let urls = FileViewKeys.droppedURLs(info)
+        let operation = FileViewKeys.dropOperation(info, into: folder)
+        guard !urls.isEmpty, !operation.isEmpty else { return false }
+        onDrop?(urls, folder, operation == .copy)
+        return true
     }
 
     func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -498,11 +544,13 @@ final class PaletteRowView: NSTableRowView {
 final class FileOutlineView: NSOutlineView {
     var onOpenSelection: (() -> Void)?
     var onQuickLook: (() -> Void)?
+    var onRename: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         switch FileViewKeys.action(for: event) {
         case .open?: onOpenSelection?()
         case .quickLook?: onQuickLook?()
+        case .rename?: onRename?()
         case nil: super.keyDown(with: event)
         }
     }

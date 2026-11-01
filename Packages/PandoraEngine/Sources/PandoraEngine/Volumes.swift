@@ -61,6 +61,42 @@ public enum Volumes {
         try await FileManager.default.unmountVolume(at: volume, options: [.allPartitionsAndEjectDisk, .withoutUI])
     }
 
+    /// The app keeping a volume busy, from an eject error, when macOS says which.
+    public static func blockingApp(from error: Error) -> String? {
+        let info = (error as NSError).userInfo
+        guard let pid = info[NSFileManagerUnmountDissentingProcessIdentifierErrorKey] as? pid_t else { return nil }
+        var name = [UInt8](repeating: 0, count: 1024)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0 else { return "process \(pid)" }
+        return String(decoding: name.prefix { $0 != 0 }, as: UTF8.self)
+    }
+
+    /// Ejects even when an app still has files open on the volume, through
+    /// Disk Arbitration's forced unmount. The guard applies as for `eject`.
+    public static func forceEject(_ url: URL, pathGuard: PathGuard) async throws {
+        let volume = try pathGuard.checkLocation(url)
+        guard let session = DASessionCreate(kCFAllocatorDefault),
+              let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, volume as CFURL) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        DASessionSetDispatchQueue(session, DispatchQueue.global())
+        let whole = DADiskCopyWholeDisk(disk) ?? disk
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let box = Unmanaged.passRetained(ContinuationBox(continuation)).toOpaque()
+            DADiskUnmount(whole, DADiskUnmountOptions(kDADiskUnmountOptionForce | kDADiskUnmountOptionWhole), { _, dissenter, context in
+                let box = Unmanaged<ContinuationBox>.fromOpaque(context!).takeRetainedValue()
+                if let dissenter {
+                    box.continuation.resume(throwing: CocoaError(.fileWriteUnknown, userInfo: [
+                        NSLocalizedDescriptionKey: "Couldn't force eject (status \(DADissenterGetStatus(dissenter))).",
+                    ]))
+                } else {
+                    box.continuation.resume()
+                }
+            }, box)
+        }
+        DADiskEject(whole, DADiskEjectOptions(kDADiskEjectOptionDefault), nil, nil)
+        DASessionSetDispatchQueue(session, nil)
+    }
+
     /// Finds the image file behind a volume by walking up the I/O Registry from
     /// the volume's disk to the disk image device. For APFS this passes through
     /// the container to the image's physical disk. Current macOS records the
@@ -84,4 +120,9 @@ public enum Volumes {
         }
         return value as? String
     }
+}
+
+private final class ContinuationBox: @unchecked Sendable {
+    let continuation: CheckedContinuation<Void, Error>
+    init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }
 }
