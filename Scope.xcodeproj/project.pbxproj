@@ -1,0 +1,243 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000301 /* ScopeEngine in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000502 /* ScopeEngine */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000101 /* Scope.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scope.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000111 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000112 /* ScopeDev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ScopeDev.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000113 /* ScopeDevUnsandboxed.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ScopeDevUnsandboxed.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000114 /* Scope.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Scope.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000115 /* ScopeDev.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScopeDev.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000116 /* ScopeDevUnsandboxed.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScopeDevUnsandboxed.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000117 /* Scope.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Scope.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000000201 /* Scope */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Scope;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000401 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000301 /* ScopeEngine in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000201 /* Scope */,
+				A10000000000000000000011 /* Config */,
+				A10000000000000000000012 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000011 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000111 /* Base.xcconfig */,
+				A10000000000000000000112 /* ScopeDev.xcconfig */,
+				A10000000000000000000113 /* ScopeDevUnsandboxed.xcconfig */,
+				A10000000000000000000114 /* Scope.xcconfig */,
+				A10000000000000000000115 /* ScopeDev.entitlements */,
+				A10000000000000000000116 /* ScopeDevUnsandboxed.entitlements */,
+				A10000000000000000000117 /* Scope.entitlements */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000012 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000101 /* Scope.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000601 /* Scope */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000802 /* Build configuration list for PBXNativeTarget "Scope" */;
+			buildPhases = (
+				A10000000000000000000402 /* Sources */,
+				A10000000000000000000401 /* Frameworks */,
+				A10000000000000000000403 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000201 /* Scope */,
+			);
+			name = Scope;
+			packageProductDependencies = (
+				A10000000000000000000502 /* ScopeEngine */,
+			);
+			productName = Scope;
+			productReference = A10000000000000000000101 /* Scope.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000701 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2720;
+				LastUpgradeCheck = 2720;
+				TargetAttributes = {
+					A10000000000000000000601 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+				};
+			};
+			buildConfigurationList = A10000000000000000000801 /* Build configuration list for PBXProject "Scope" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A10000000000000000000501 /* XCLocalSwiftPackageReference "Packages/ScopeEngine" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A10000000000000000000012 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000601 /* Scope */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000403 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000402 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000901 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ONLY_ACTIVE_ARCH = YES;
+			};
+			name = Debug;
+		};
+		A10000000000000000000902 /* Debug Unsandboxed */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ONLY_ACTIVE_ARCH = YES;
+			};
+			name = "Debug Unsandboxed";
+		};
+		A10000000000000000000903 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+			};
+			name = Release;
+		};
+		A10000000000000000000911 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000112 /* ScopeDev.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		A10000000000000000000912 /* Debug Unsandboxed */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000113 /* ScopeDevUnsandboxed.xcconfig */;
+			buildSettings = {
+			};
+			name = "Debug Unsandboxed";
+		};
+		A10000000000000000000913 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000114 /* Scope.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000801 /* Build configuration list for PBXProject "Scope" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000901 /* Debug */,
+				A10000000000000000000902 /* Debug Unsandboxed */,
+				A10000000000000000000903 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000802 /* Build configuration list for PBXNativeTarget "Scope" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000911 /* Debug */,
+				A10000000000000000000912 /* Debug Unsandboxed */,
+				A10000000000000000000913 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000501 /* XCLocalSwiftPackageReference "Packages/ScopeEngine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/ScopeEngine;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000502 /* ScopeEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ScopeEngine;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A10000000000000000000701 /* Project object */;
+}

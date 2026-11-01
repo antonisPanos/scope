@@ -1,0 +1,8 @@
+// "Scope Dev" without the App Sandbox, only for testing disk image mounting
+// (hdiutil can't run inside the sandbox). The path guard still limits it to
+// the test disks.
+#include "ScopeDev.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = Config/ScopeDevUnsandboxed.entitlements
+
+#include? "Local.xcconfig"
