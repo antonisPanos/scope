@@ -36,6 +36,42 @@ import Testing
         #expect(throws: PathGuardViolation.self) { try pathGuard.checkLocation(URL(fileURLWithPath: "/")) }
     }
 
+    // MARK: - Protected items
+
+    @Test func refusesToModifyFoldersMacOSNeeds() {
+        let home = PathGuard.defaultProtectedItems.first { $0.hasPrefix("/Users/") } ?? "/Users"
+        for path in ["/", "/Applications", "/Library", "/Users", "/tmp", home, home + "/Library", home + "/Documents"] {
+            #expect(throws: PathGuardViolation.self, "\(path)") {
+                try PathGuard.unrestricted.checkModifiable(URL(fileURLWithPath: path))
+            }
+        }
+    }
+
+    @Test func protectionIgnoresCaseAndUnicodeForm() {
+        let home = PathGuard.defaultProtectedItems.first { $0.hasPrefix("/Users/") } ?? "/Users"
+        #expect(throws: PathGuardViolation.self) {
+            try PathGuard.unrestricted.checkModifiable(URL(fileURLWithPath: home + "/library"))
+        }
+        #expect(throws: PathGuardViolation.self) {
+            try PathGuard.unrestricted.checkModifiable(URL(fileURLWithPath: "/APPLICATIONS"))
+        }
+    }
+
+    @Test func protectionCoversOnlyTheItemNotWhatIsInside() throws {
+        // Writing into a protected folder is fine; only the folder itself is kept in place.
+        #expect(throws: Never.self) {
+            try PathGuard.unrestricted.checkWriteLocation(URL(fileURLWithPath: "/Applications/New Folder"))
+        }
+        try sandbox.write("allowed/a.txt", "a")
+        #expect(try pathGuard.checkModifiable(allowed.appendingPathComponent("a.txt")).lastPathComponent == "a.txt")
+    }
+
+    @Test func refusesToModifyAVolumeRoot() {
+        #expect(throws: PathGuardViolation.self) {
+            try PathGuard.unrestricted.checkModifiable(URL(fileURLWithPath: "/System/Volumes/Data"))
+        }
+    }
+
     @Test func refusesASiblingThatSharesThePrefix() throws {
         try sandbox.mkdir("allowed-not-really")
         #expect(throws: PathGuardViolation.self) { try pathGuard.checkLocation(sandbox.url("allowed-not-really")) }

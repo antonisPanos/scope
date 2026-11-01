@@ -20,9 +20,15 @@ public struct PathGuard: Sendable {
     /// every write is refused, wherever it points.
     public let allowsWrites: Bool
 
+    /// Items that may never be renamed, moved or trashed themselves (what is
+    /// inside them can be), stored lowercased and precomposed so a differently
+    /// cased or normalized spelling still matches. Volume roots are refused too.
+    let protectedItems: Set<String>
+
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "PathGuard")
 
-    /// Every absolute path is allowed, for reading and writing.
+    /// Every absolute path is allowed, for reading and writing, except that
+    /// the protected items can't be renamed, moved or trashed.
     public static let unrestricted = PathGuard(policy: .unrestricted, allowsWrites: true)
 
     /// Every absolute path may be read, but nothing may be changed. The real
@@ -34,9 +40,39 @@ public struct PathGuard: Sendable {
         PathGuard(policy: .restricted(roots: roots.map { resolveRoot($0.path) }), allowsWrites: true)
     }
 
-    private init(policy: Policy, allowsWrites: Bool) {
+    private init(policy: Policy, allowsWrites: Bool, protectedItems: [String] = PathGuard.defaultProtectedItems) {
         self.policy = policy
         self.allowsWrites = allowsWrites
+        self.protectedItems = Set(protectedItems.map(Self.protectionKey))
+    }
+
+    /// Folders macOS and the user's account need in place, as Finder protects
+    /// them: system folders, the home folder and its standard folders.
+    static let defaultProtectedItems: [String] = {
+        let system = [
+            "/", "/Applications", "/Library", "/System", "/Users", "/Volumes", "/Network", "/cores", "/opt",
+            "/bin", "/sbin", "/usr", "/etc", "/tmp", "/var", "/private", "/private/etc", "/private/tmp",
+            "/private/var",
+        ]
+        let home = userHome
+        let standard = [
+            "", "Applications", "Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures",
+            "Public", ".Trash",
+        ]
+        return system + standard.map { $0.isEmpty ? home : home + "/" + $0 }
+    }()
+
+    /// The account's real home folder, also when sandboxed (where
+    /// NSHomeDirectory points into the container).
+    private static let userHome: String = {
+        if let entry = getpwuid(getuid()), let directory = entry.pointee.pw_dir {
+            return resolveRoot(String(cString: directory))
+        }
+        return resolveRoot(NSHomeDirectory())
+    }()
+
+    static func protectionKey(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping.lowercased()
     }
 
     public var isRestricted: Bool {
@@ -58,6 +94,32 @@ public struct PathGuard: Sendable {
     public func checkWriteLocation(_ url: URL) throws(PathGuardViolation) -> URL {
         guard allowsWrites else { throw fail(url, resolved: nil, reason: .writesDisabled) }
         return try checkLocation(url)
+    }
+
+    /// Like `checkWriteLocation`, for an existing item about to be renamed,
+    /// moved or trashed. Also refuses the items macOS needs in place: volume
+    /// roots, system folders, the home folder and its standard folders.
+    @discardableResult
+    public func checkModifiable(_ url: URL) throws(PathGuardViolation) -> URL {
+        let resolved = try checkWriteLocation(url)
+        if protectedItems.contains(Self.protectionKey(resolved.path)) || Self.isVolumeRoot(resolved.path) {
+            throw fail(url, resolved: resolved.path, reason: .protectedItem)
+        }
+        return resolved
+    }
+
+    /// Whether `path` is the root of a mounted volume: "/" or a folder on a
+    /// different device than its parent.
+    private static func isVolumeRoot(_ path: String) -> Bool {
+        if path == "/" { return true }
+        var item = stat()
+        var parent = stat()
+        guard lstat(path, &item) == 0, item.st_mode & S_IFMT == S_IFDIR,
+            lstat((path as NSString).deletingLastPathComponent, &parent) == 0
+        else {
+            return false
+        }
+        return item.st_dev != parent.st_dev
     }
 
     /// Checks the item an URL finally points to, following every symlink.
@@ -182,6 +244,7 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
         case parentReference
         case unresolvable
         case writesDisabled
+        case protectedItem
     }
 
     public let path: String
@@ -202,6 +265,8 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
             "\(path) could not be resolved (a dangling or looping symlink)"
         case .writesDisabled:
             "\(path) can't be changed: this build is read-only"
+        case .protectedItem:
+            "\((path as NSString).lastPathComponent) can't be renamed, moved or trashed because macOS needs it"
         }
     }
 
