@@ -144,6 +144,12 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = Palette.windowBackground
         view = scrollView
+        scrollView.contentView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification, object: scrollView.contentView, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fitNameColumn(fill: false) }
+        }
         NotificationCenter.default.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadVisibleNames() }
         }
@@ -192,7 +198,22 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         scrollView.hasHorizontalScroller = details
         outlineView.indentationPerLevel = details ? 14 : 0
         outlineView.tile()
+        fitNameColumn(fill: true)
         outlineView.reloadData()
+    }
+
+    /// Keeps every visible column on screen. The list view widens the name
+    /// column to the whole window, and that width is saved, so coming back to
+    /// Details could leave it wide enough to push the other columns out of
+    /// view. With `fill`, it also grows to take up spare width.
+    private func fitNameColumn(fill: Bool) {
+        guard let name = outlineView.tableColumn(withIdentifier: Column.name.identifier) else { return }
+        let available = scrollView.contentView.bounds.width
+        guard available > 0 else { return }
+        let others = outlineView.tableColumns.filter { $0 !== name && !$0.isHidden }
+        let spacing = outlineView.intercellSpacing.width * CGFloat(others.count + 1)
+        let fitted = max(name.minWidth, (available - others.reduce(0) { $0 + $1.width } - spacing).rounded(.down))
+        if name.width > fitted || (fill && name.width < fitted) { name.width = fitted }
     }
 
     private func applySortIndicator() {
