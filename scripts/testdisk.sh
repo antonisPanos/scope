@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds and manages Pandora's throwaway test disks.
+# Builds and manages Scope's throwaway test disks.
 #
 #   scripts/testdisk.sh create    make the disk images, mount them, fill them with fixtures
 #   scripts/testdisk.sh reset     eject, delete and create again (a clean slate in a minute or so)
@@ -9,29 +9,29 @@
 #   scripts/testdisk.sh destroy   eject and delete the images
 #
 # Three disks, all growable images that only take the space their files use:
-#   /Volumes/PandoraTest    main test disk, up to 5 GB, with every fixture
-#   /Volumes/PandoraTest2   small second disk, for moves between disks
-#   /Volumes/PandoraTestCS  small case-sensitive disk, for name clashes
+#   /Volumes/ScopeTest    main test disk, up to 5 GB, with every fixture
+#   /Volumes/ScopeTest2   small second disk, for moves between disks
+#   /Volumes/ScopeTestCS  small case-sensitive disk, for name clashes
 #
-# The images live in ~/PandoraTestDisks (override with PANDORA_TESTDISK_DIR).
+# The images live in ~/ScopeTestDisks (override with SCOPE_TESTDISK_DIR).
 # This script only ever writes inside that folder and inside the mounted test
 # volumes; it checks each mount point before writing to it.
 #
-# Fixture sizes can be tuned: PANDORA_HUGE_MB (default 1024) for the large file,
-# PANDORA_MANY_COUNT (default 100000) for the folder with many files.
+# Fixture sizes can be tuned: SCOPE_HUGE_MB (default 1024) for the large file,
+# SCOPE_MANY_COUNT (default 100000) for the folder with many files.
 
 set -euo pipefail
 
-IMAGE_DIR="${PANDORA_TESTDISK_DIR:-$HOME/PandoraTestDisks}"
-HUGE_MB="${PANDORA_HUGE_MB:-1024}"
-MANY_COUNT="${PANDORA_MANY_COUNT:-100000}"
+IMAGE_DIR="${SCOPE_TESTDISK_DIR:-$HOME/ScopeTestDisks}"
+HUGE_MB="${SCOPE_HUGE_MB:-1024}"
+MANY_COUNT="${SCOPE_MANY_COUNT:-100000}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # name|size|filesystem
 DISKS=(
-  "PandoraTest|5g|APFS"
-  "PandoraTest2|512m|APFS"
-  "PandoraTestCS|512m|Case-sensitive APFS"
+  "ScopeTest|5g|APFS"
+  "ScopeTest2|512m|APFS"
+  "ScopeTestCS|512m|Case-sensitive APFS"
 )
 
 log() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -51,7 +51,7 @@ is_mounted() {
 assert_test_volume() {
   local path="$1" name
   name="$(basename "$path")"
-  [[ "$path" == "/Volumes/PandoraTest" || "$path" == "/Volumes/PandoraTest2" || "$path" == "/Volumes/PandoraTestCS" ]] \
+  [[ "$path" == "/Volumes/ScopeTest" || "$path" == "/Volumes/ScopeTest2" || "$path" == "/Volumes/ScopeTestCS" ]] \
     || die "refusing to write to $path: not a test volume"
   is_mounted "$name" || die "refusing to write to $path: it is not mounted from $(image_path "$name")"
 }
@@ -64,10 +64,10 @@ attach() {
   if is_mounted "$name"; then
     return
   fi
-  [[ ! -e "$mount" ]] || die "$mount already exists but is not a Pandora test disk; eject it first"
+  [[ ! -e "$mount" ]] || die "$mount already exists but is not a Scope test disk; eject it first"
   output="$(diskutil image attach "$image")"
   grep -qF "$mount" <<<"$output" || die "$image mounted somewhere other than $mount:"$'\n'"$output"
-  # Disk images aren't indexed by default. Pandora's Recents and Tags come
+  # Disk images aren't indexed by default. Scope's Recents and Tags come
   # from Spotlight, so index the test disks like a normal drive.
   mdutil -i on "$mount" >/dev/null 2>&1 || log "Could not turn on Spotlight for $mount"
   log "Mounted $mount"
@@ -99,7 +99,7 @@ create_images() {
 # MARK: - Fixtures
 
 fill_main() {
-  local root="/Volumes/PandoraTest"
+  local root="/Volumes/ScopeTest"
   assert_test_volume "$root"
   cd "$root"
   log "Filling $root"
@@ -144,7 +144,7 @@ fill_main() {
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>com.antonispanos.pandora.fixture</string>
+<key>CFBundleIdentifier</key><string>com.antonispanos.scope.fixture</string>
 <key>CFBundleName</key><string>Fake App</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
@@ -158,9 +158,9 @@ PLIST
   # Attributes, permissions and flags.
   mkdir -p attributes
   printf 'custom xattr\n' > attributes/with-xattr.txt
-  xattr -w com.antonispanos.pandora.note "kept on copy" attributes/with-xattr.txt
+  xattr -w com.antonispanos.scope.note "kept on copy" attributes/with-xattr.txt
   printf 'quarantined\n' > attributes/quarantined.txt
-  xattr -w com.apple.quarantine "0081;00000000;Pandora;" attributes/quarantined.txt
+  xattr -w com.apple.quarantine "0081;00000000;Scope;" attributes/quarantined.txt
   printf 'locked\n' > attributes/locked.txt
   chflags uchg attributes/locked.txt
   printf 'read only\n' > attributes/read-only.txt
@@ -201,7 +201,7 @@ for i in range(count):
         f.write(f"{i}\n")
 PY
 
-  # Archives in every format Pandora extracts, plus a large one and malicious ones.
+  # Archives in every format Scope extracts, plus a large one and malicious ones.
   log "Writing archives"
   mkdir -p archives/source/sub
   printf 'archived file\n' > archives/source/a.txt
@@ -233,7 +233,7 @@ PY
   printf 'rar archives cannot be created with the tools macOS ships; drop a sample .rar here by hand if needed.\n' \
     > archives/README-no-rar.txt
 
-  # Disk images to mount and eject (tested in the unsandboxed Pandora Dev build).
+  # Disk images to mount and eject (tested in the unsandboxed Scope Dev build).
   log "Writing small disk images"
   mkdir -p disk-images/iso-source
   printf 'inside the iso\n' > disk-images/iso-source/readme.txt
@@ -245,7 +245,7 @@ PY
 
   # Audio for the preview pane's duration (images come from the Swift helper).
   mkdir -p media
-  say -o media/hello.aiff "Hello from the Pandora test disk" 2>/dev/null || true
+  say -o media/hello.aiff "Hello from the Scope test disk" 2>/dev/null || true
 
   # Aliases, Finder tags, Recents and images need Foundation.
   log "Writing aliases and Finder tags"
@@ -255,7 +255,7 @@ PY
   mdimport "$root" "$root/names" "$root/sizes" "$root/archives" "$root/attributes" "$root/attributes/tagged" >/dev/null 2>&1 || true
 
   cat > README.txt <<'TXT'
-Pandora test disk. Everything here is disposable: scripts/testdisk.sh reset rebuilds it.
+Scope test disk. Everything here is disposable: scripts/testdisk.sh reset rebuilds it.
 
 names/        Unicode (composed and decomposed), emoji, odd characters, a 255-byte name, 60-level nesting
 links/        symlinks inside, outside the disk, dangling and looping; a hard link; Finder aliases
@@ -273,7 +273,7 @@ TXT
 }
 
 fill_second() {
-  local root="/Volumes/PandoraTest2"
+  local root="/Volumes/ScopeTest2"
   assert_test_volume "$root"
   log "Filling $root"
   mkdir -p "$root/incoming"
@@ -282,7 +282,7 @@ fill_second() {
 }
 
 fill_case_sensitive() {
-  local root="/Volumes/PandoraTestCS"
+  local root="/Volumes/ScopeTestCS"
   assert_test_volume "$root"
   log "Filling $root"
   printf 'lower\n' > "$root/readme.txt"
@@ -312,9 +312,9 @@ cmd_create() {
   each_disk attach
   for name in ${fresh[@]+"${fresh[@]}"}; do
     case "$name" in
-      PandoraTest) fill_main ;;
-      PandoraTest2) fill_second ;;
-      PandoraTestCS) fill_case_sensitive ;;
+      ScopeTest) fill_main ;;
+      ScopeTest2) fill_second ;;
+      ScopeTestCS) fill_case_sensitive ;;
     esac
   done
   log "Test disks ready"

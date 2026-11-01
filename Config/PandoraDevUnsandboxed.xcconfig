@@ -1,8 +1,0 @@
-// "Pandora Dev" without the App Sandbox, only for testing disk image mounting
-// (hdiutil can't run inside the sandbox). The path guard still limits it to
-// the test disks.
-#include "PandoraDev.xcconfig"
-
-CODE_SIGN_ENTITLEMENTS = Config/PandoraDevUnsandboxed.entitlements
-
-#include? "Local.xcconfig"

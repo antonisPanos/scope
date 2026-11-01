@@ -22,7 +22,7 @@ jobs:
       - name: Toolchain
         run: xcodebuild -version && swift --version
       - name: Run engine tests
-        working-directory: Packages/PandoraEngine
+        working-directory: Packages/ScopeEngine
         run: swift test
 
   app-build:
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select the newest Xcode
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
-      # Pandora requires the macOS 27.2 SDK. GitHub's runners don't offer it
+      # Scope requires the macOS 27.2 SDK. GitHub's runners don't offer it
       # yet; until they do, this job reports that and skips the build.
       - name: Check for the macOS 27.2 SDK
         id: sdk
@@ -46,9 +46,9 @@ jobs:
             echo "::notice::macOS SDK $version on this runner is older than 27.2; skipping the app build."
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build Pandora Dev and Pandora
+      - name: Build Scope Dev and Scope
         if: steps.sdk.outputs.available == 'true'
         run: |
-          for scheme in "Pandora Dev" "Pandora Dev (No Sandbox)" "Pandora"; do
-            xcodebuild -project Pandora.xcodeproj -scheme "$scheme" -derivedDataPath build/DerivedData build
+          for scheme in "Scope Dev" "Scope Dev (No Sandbox)" "Scope"; do
+            xcodebuild -project Scope.xcodeproj -scheme "$scheme" -derivedDataPath build/DerivedData build
           done

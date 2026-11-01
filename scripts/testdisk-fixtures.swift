@@ -4,8 +4,8 @@ import Foundation
 import ImageIO
 
 let arguments = CommandLine.arguments
-guard arguments.count == 2, arguments[1] == "/Volumes/PandoraTest" else {
-    FileHandle.standardError.write(Data("usage: testdisk-fixtures.swift /Volumes/PandoraTest\n".utf8))
+guard arguments.count == 2, arguments[1] == "/Volumes/ScopeTest" else {
+    FileHandle.standardError.write(Data("usage: testdisk-fixtures.swift /Volumes/ScopeTest\n".utf8))
     exit(1)
 }
 let root = URL(fileURLWithPath: arguments[1])
@@ -28,7 +28,7 @@ try makeAlias(to: "links/target-folder", at: "links/alias to folder")
 try makeAlias(to: "packages/Fake App.app", at: "links/alias to app")
 
 try FileManager.default.createDirectory(at: root.appendingPathComponent("attributes/tagged"), withIntermediateDirectories: true)
-for (name, tags) in [("red.txt", ["Red"]), ("work-and-blue.txt", ["Work", "Blue"]), ("custom-tag.txt", ["Pandora fixture"])] {
+for (name, tags) in [("red.txt", ["Red"]), ("work-and-blue.txt", ["Work", "Blue"]), ("custom-tag.txt", ["Scope fixture"])] {
     let path = "attributes/tagged/\(name)"
     try Data("tagged\n".utf8).write(to: root.appendingPathComponent(path))
     try tag(path, tags)
@@ -37,7 +37,7 @@ try tag("attributes/tagged", ["Green"])
 
 // Recents: Finder's Recents lists files with a recent "last used" date, which
 // macOS keeps in this extended attribute (a timespec). Mark a few files used
-// over the last few days so Pandora's Recents has something to show.
+// over the last few days so Scope's Recents has something to show.
 func markUsed(_ path: String, daysAgo: Double) {
     let date = Date().addingTimeInterval(-daysAgo * 24 * 3600)
     var time = timespec(tv_sec: Int(date.timeIntervalSince1970), tv_nsec: 0)
@@ -67,7 +67,7 @@ func writeImage(_ path: String, type: CFString, width: Int, height: Int, hue: CG
     guard let destination = CGImageDestinationCreateWithURL(url, type, 1, nil) else { return }
     var properties: [CFString: Any] = [:]
     if exif {
-        properties[kCGImagePropertyTIFFDictionary] = [kCGImagePropertyTIFFMake: "Pandora", kCGImagePropertyTIFFModel: "Fixture Camera"]
+        properties[kCGImagePropertyTIFFDictionary] = [kCGImagePropertyTIFFMake: "Scope", kCGImagePropertyTIFFModel: "Fixture Camera"]
         properties[kCGImagePropertyExifDictionary] = [kCGImagePropertyExifDateTimeOriginal: "2026:10:31 12:00:00"]
     }
     CGImageDestinationAddImage(destination, image, properties as CFDictionary)

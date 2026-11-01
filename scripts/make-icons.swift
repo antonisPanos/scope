@@ -1,11 +1,11 @@
 #!/usr/bin/env swift
 // Draws the placeholder app icons into the asset catalog:
-// AppIcon (Pandora, teal) and AppIconDev (Pandora Dev, amber with a DEV band),
+// AppIcon (Scope, teal) and AppIconDev (Scope Dev, amber with a DEV band),
 // so the two builds can't be mistaken for each other.
 // Run from the repo root: swift scripts/make-icons.swift
 import AppKit
 
-let catalog = "Pandora/Resources/Assets.xcassets"
+let catalog = "Scope/Resources/Assets.xcassets"
 let sizes: [(points: Int, scale: Int)] = [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)]
 
 func drawIcon(pixels: Int, color: NSColor, band: String?) -> Data {
@@ -22,7 +22,7 @@ func drawIcon(pixels: Int, color: NSColor, band: String?) -> Data {
     color.setFill()
     shape.fill()
 
-    let glyph = NSAttributedString(string: "P", attributes: [
+    let glyph = NSAttributedString(string: "S", attributes: [
         .font: NSFont.systemFont(ofSize: rect.height * 0.62, weight: .bold),
         .foregroundColor: NSColor.white,
     ])
