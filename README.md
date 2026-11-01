@@ -97,9 +97,9 @@ and the status bar says "Scope Dev · test disks only".
 
 | Scheme | App | Sandbox | Path guard | Use it for |
 | --- | --- | --- | --- | --- |
-| Scope Dev | Scope Dev | On, test disks only | Test disks only | All testing |
+| Scope Dev | Scope Dev (amber squares) | On, test disks only | Test disks only | All testing |
 | Scope Dev (No Sandbox) | Scope Dev | Off | Test disks only | Mounting disk images (hdiutil can't run sandboxed) |
-| Scope | Scope | Off | Read-only: every change is refused | The real app, after the MVP gate |
+| Scope | Scope (white squares) | Off | Read-only: every change is refused | The real app, after the MVP gate |
 
 Development builds can only touch `/Volumes/ScopeTest`, `/Volumes/ScopeTest2`
 and `/Volumes/ScopeTestCS`. The App Sandbox enforces that in the kernel, and

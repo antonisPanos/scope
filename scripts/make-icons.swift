@@ -5,8 +5,8 @@
 // time, inside the bottom-right corner. Each level's square grows past its
 // slot and sits on top of the pieces beside and below it, with a black
 // outline keeping them apart.
-// AppIcon (Scope) and AppIconDev (Scope Dev) are the same white design; the
-// apps' names tell them apart.
+// AppIcon (Scope) uses white squares, AppIconDev (Scope Dev) amber ones, so
+// the two builds can't be mistaken for each other.
 // Run from the repo root: swift scripts/make-icons.swift
 import AppKit
 
@@ -79,6 +79,7 @@ func writeIconSet(name: String, squareColor: NSColor) throws {
     try json.write(to: URL(fileURLWithPath: "\(folder)/Contents.json"))
 }
 
+let amber = NSColor(red: 0xF5 / 255, green: 0xA5 / 255, blue: 0x24 / 255, alpha: 1)
 try writeIconSet(name: "AppIcon", squareColor: .white)
-try writeIconSet(name: "AppIconDev", squareColor: .white)
+try writeIconSet(name: "AppIconDev", squareColor: amber)
 print("Icons written to \(catalog)")
