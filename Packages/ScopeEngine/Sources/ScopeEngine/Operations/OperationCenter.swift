@@ -3,8 +3,11 @@ import Foundation
 /// The queue every file operation goes through.
 ///
 /// Operations on the same disk run one at a time, in order; operations on
-/// different disks run side by side. Items in a running or cancelling
-/// operation are locked: a new operation that touches them is refused.
+/// different disks run side by side. An operation that renames, moves or
+/// trashes items locks them: while it runs, a new operation that uses them,
+/// their contents or a folder they are in is refused, and the same goes the
+/// other way round (trashing the folder a copy is writing into). A queued
+/// operation that would collide with a running one waits until it finishes.
 /// Identical requests already waiting are merged. The UI reads `snapshots()`
 /// about ten times a second and never waits on the work itself.
 public actor OperationCenter {
@@ -48,6 +51,9 @@ public actor OperationCenter {
         let control = OperationControl()
         let undo = UndoRecorder()
         let disk: dev_t
+        let changedPaths: [String]
+        let itemPaths: [String]
+        let destinationPaths: [String]
         var state: State = .queued
         var task: Task<Void, Never>?
         var started: Date?
@@ -55,6 +61,8 @@ public actor OperationCenter {
         var undone = false
 
         var isActive: Bool { state.isActive }
+
+        var isRunningOrStopping: Bool { state == .running || state == .paused || state == .cancelling }
 
         var isUndoOperation: Bool {
             if case .undo = operation.kind { return true }
@@ -64,6 +72,25 @@ public actor OperationCenter {
         init(operation: FileOperation, disk: dev_t) {
             self.operation = operation
             self.disk = disk
+            changedPaths = operation.changedItems.map(OperationCenter.lockKey)
+            itemPaths = (operation.touchedItems + operation.changedItems).map(OperationCenter.lockKey)
+            destinationPaths = [operation.destinationFolder].compactMap { $0 }.map(OperationCenter.lockKey)
+        }
+
+        /// Whether this and `other` can't run at the same time: one changes an
+        /// item the other uses (the item, something inside it, or a folder
+        /// holding it), or changes the folder the other writes into or one of
+        /// that folder's parents. Changing something else inside a destination
+        /// folder is fine.
+        func collides(with other: Entry) -> Bool {
+            changes(other) || other.changes(self)
+        }
+
+        private func changes(_ other: Entry) -> Bool {
+            OperationCenter.overlap(changedPaths, other.itemPaths)
+                || changedPaths.contains { changed in
+                    other.destinationPaths.contains { OperationCenter.isSameOrInside($0, changed) }
+                }
         }
     }
 
@@ -91,14 +118,15 @@ public actor OperationCenter {
         }) {
             return same.id
         }
-        let touched = Set(operation.touchedItems.map(\.standardizedFileURL.path))
-        let busy = entries.filter { $0.state == .running || $0.state == .cancelling || $0.state == .paused }
-            .flatMap { $0.operation.touchedItems }
-            .filter { item in touched.contains { Self.overlaps($0, item.standardizedFileURL.path) } }
-        if !busy.isEmpty {
-            throw OperationError.itemsBusy(Array(Set(busy.map(\.lastPathComponent))).sorted())
-        }
         let entry = Entry(operation: operation, disk: Self.disk(for: operation))
+        let blockers = entries.filter { $0.isRunningOrStopping && entry.collides(with: $0) }
+        if !blockers.isEmpty {
+            let names = (entry.operation.usedItems + entry.operation.changedItems).filter { item in
+                let key = Self.lockKey(item)
+                return blockers.contains { Self.overlap([key], $0.itemPaths + $0.destinationPaths) }
+            }
+            throw OperationError.itemsBusy(Array(Set(names.map(\.lastPathComponent))).sorted())
+        }
         entries.append(entry)
         trimHistory()
         schedule()
@@ -161,7 +189,9 @@ public actor OperationCenter {
 
     /// Starts a queued operation now, even if its disk is busy.
     public func startNow(_ id: UUID) {
-        guard let entry = entries.first(where: { $0.id == id }), entry.state == .queued else { return }
+        guard let entry = entries.first(where: { $0.id == id }), entry.state == .queued,
+            !entries.contains(where: { $0.isRunningOrStopping && entry.collides(with: $0) })
+        else { return }
         start(entry)
         notify()
     }
@@ -229,10 +259,11 @@ public actor OperationCenter {
     // MARK: - Scheduling
 
     private func schedule() {
-        var busyDisks = Set(
-            entries.filter { $0.state == .running || $0.state == .paused || $0.state == .cancelling }.map(\.disk))
+        var busyDisks = Set(entries.filter(\.isRunningOrStopping).map(\.disk))
         for entry in entries where entry.state == .queued && !busyDisks.contains(entry.disk) {
+            // One that would collide with running work waits, and keeps its disk's place in line.
             busyDisks.insert(entry.disk)
+            guard !entries.contains(where: { $0.isRunningOrStopping && entry.collides(with: $0) }) else { continue }
             start(entry)
         }
     }
@@ -246,7 +277,7 @@ public actor OperationCenter {
         let control = entry.control
         let undo = entry.undo
         let id = entry.id
-        entry.task = Task.detached(priority: .userInitiated) { [weak self] in
+        entry.task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) { [weak self] in
             let result: State
             do {
                 try await engine.run(operation, control: control, undo: undo, resolveConflict: resolver)
@@ -293,7 +324,25 @@ public actor OperationCenter {
 
     /// Whether one path is the other or lies inside it.
     private static func overlaps(_ a: String, _ b: String) -> Bool {
-        a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+        a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/") || a == "/" || b == "/"
+    }
+
+    /// Whether `path` is `folder` or lies inside it.
+    fileprivate static func isSameOrInside(_ path: String, _ folder: String) -> Bool {
+        path == folder || folder == "/" || path.hasPrefix(folder + "/")
+    }
+
+    fileprivate static func overlap(_ a: [String], _ b: [String]) -> Bool {
+        a.contains { x in b.contains { overlaps(x, $0) } }
+    }
+
+    /// A path as the locks compare it: symlinks resolved, so two spellings of
+    /// one item match, and lowercased, since most disks ignore case (on a
+    /// case-sensitive disk that only makes a lock a little wider).
+    fileprivate static func lockKey(_ url: URL) -> String {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let key = path.precomposedStringWithCanonicalMapping.lowercased()
+        return key.count > 1 && key.hasSuffix("/") ? String(key.dropLast()) : key
     }
 }
 

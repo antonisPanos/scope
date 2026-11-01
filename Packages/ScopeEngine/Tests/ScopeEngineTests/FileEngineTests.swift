@@ -259,21 +259,23 @@ import Testing
         let engine = self.engine
         let source = sandbox.url("big")
         let target = sandbox.url("dest/big")
-        // Cancelled from the copy's own first progress report, so the copy
-        // can't finish before the cancel lands, however fast the disk is or
-        // however long this test's task waits for a thread.
+        // Cancelled from the copy's own progress report, after the first
+        // chunk, so the test doesn't depend on when its own task gets a thread
+        // (other suites keep the pool busy, and the copy could finish first).
         let handle = Mutex<Task<Void, Error>?>(nil)
         let cancelledAt = Mutex<ContinuousClock.Instant?>(nil)
         let stoppedAt = Mutex<ContinuousClock.Instant?>(nil)
         let ready = AsyncStream.makeStream(of: Void.self)
         let task = Task {
             for await _ in ready.stream { break }
-            // Timed where the copy returns, not where this test resumes.
-            defer { stoppedAt.withLock { $0 = .now } }
-            try await engine.copyItem(at: source, to: target) { progress in
-                guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
-                cancelledAt.withLock { $0 = .now }
-                handle.withLock { $0?.cancel() }
+            // Timed on the engine's threads too, for the same reason.
+            try await onIOThreads {
+                defer { stoppedAt.withLock { $0 = .now } }
+                try await engine.copyItem(at: source, to: target) { progress in
+                    guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
+                    cancelledAt.withLock { $0 = .now }
+                    handle.withLock { $0?.cancel() }
+                }
             }
         }
         handle.withLock { $0 = task }

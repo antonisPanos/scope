@@ -12,33 +12,37 @@ extension FileEngine {
         undo: UndoRecorder,
         resolveConflict: @escaping ConflictResolver
     ) async throws {
-        var conflicts = ConflictPolicy(resolver: resolveConflict)
-        switch operation.kind {
-        case .copy(let items, let folder):
-            try await transfer(items, into: folder, moving: false, control: control, undo: undo, conflicts: &conflicts)
-        case .move(let items, let folder):
-            try await transfer(items, into: folder, moving: true, control: control, undo: undo, conflicts: &conflicts)
-        case .duplicate(let items):
-            try await duplicate(items, control: control, undo: undo)
-        case .rename(let item, let name):
-            let renamed = try await rename(item, to: name)
-            undo.add(.moveBack(from: renamed, to: try pathGuard.checkLocation(item)))
-        case .newFolder(let folder, let name):
-            let target = try uniqueName(name, in: try pathGuard.checkWriteLocation(folder), style: .numbered)
-            try await createFolder(at: target)
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
-        case .trash(let items):
-            try await trash(items, control: control, undo: undo)
-        case .compress(let items, let format):
-            try await compress(items, format: format, control: control, undo: undo)
-        case .extract(let archive):
-            try await extract(archive, control: control, undo: undo)
-        case .mountImage(let image, let readOnly, let mountPoint):
-            try await mountImage(image, readOnly: readOnly, mountPoint: mountPoint)
-        case .ejectVolume(let volume):
-            try await Volumes.eject(volume, pathGuard: pathGuard)
-        case .undo(let record):
-            try await applyUndo(record, control: control)
+        try await onIOThreads {
+            var conflicts = ConflictPolicy(resolver: resolveConflict)
+            switch operation.kind {
+            case .copy(let items, let folder):
+                try await transfer(
+                    items, into: folder, moving: false, control: control, undo: undo, conflicts: &conflicts)
+            case .move(let items, let folder):
+                try await transfer(
+                    items, into: folder, moving: true, control: control, undo: undo, conflicts: &conflicts)
+            case .duplicate(let items):
+                try await duplicate(items, control: control, undo: undo)
+            case .rename(let item, let name):
+                let renamed = try await rename(item, to: name)
+                undo.add(.moveBack(from: renamed, to: try pathGuard.checkLocation(item)))
+            case .newFolder(let folder, let name):
+                let target = try uniqueName(name, in: try pathGuard.checkWriteLocation(folder), style: .numbered)
+                try await createFolder(at: target)
+                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+            case .trash(let items):
+                try await trash(items, control: control, undo: undo)
+            case .compress(let items, let format):
+                try await compress(items, format: format, control: control, undo: undo)
+            case .extract(let archive):
+                try await extract(archive, control: control, undo: undo)
+            case .mountImage(let image, let readOnly, let mountPoint):
+                try await mountImage(image, readOnly: readOnly, mountPoint: mountPoint)
+            case .ejectVolume(let volume):
+                try await Volumes.eject(volume, pathGuard: pathGuard)
+            case .undo(let record):
+                try await applyUndo(record, control: control)
+            }
         }
     }
 
