@@ -21,8 +21,9 @@ M1 (the browse window), M2 (views and preview), M3 (file operations) and M4
   folder's right-click menu): two panes side by side, each with its own tabs
   (Cmd+T adds one on the focused side, Cmd+W closes it). Focus follows clicks,
   or Option+Cmd+Left/Right. Copy to Other Side (Ctrl+Cmd+C) and Move to Other
-  Side (Ctrl+Cmd+M), or drag between the panes. The preview pane hides while
-  split is on.
+  Side (Ctrl+Cmd+M), or drag between the panes. The preview pane and the path
+  bar hide while split is on; Cmd+L opens the command palette with the path
+  to edit instead.
 
 ## What M3 adds
 

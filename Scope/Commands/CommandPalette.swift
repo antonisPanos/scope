@@ -29,10 +29,11 @@ final class CommandPalette: NSObject {
         buildUI()
     }
 
-    func show() {
+    /// Opens the palette; `prefill` starts it with text, such as a path to edit.
+    func show(prefill: String = "") {
         guard let window = controller?.window, let controller else { return }
         allEntries = makeEntries(for: controller)
-        field.stringValue = ""
+        field.stringValue = prefill
         filter()
         let frame = window.frame
         panel.setFrameOrigin(NSPoint(x: frame.midX - panel.frame.width / 2, y: frame.maxY - panel.frame.height - 90))

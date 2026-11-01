@@ -148,7 +148,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         pane.onNewTab = { [weak self] pane in self?.addTab(to: pane) }
         pane.onCloseTab = { [weak self] pane, index in self?.closeTab(in: pane, at: index) }
-        pane.onSubmitPath = { [weak self] text in self?.goToTypedPath(text) }
         pane.onTabAction = { [weak self] pane, index, action in self?.tabAction(action, in: pane, at: index) }
     }
 
@@ -426,7 +425,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     var searchSettingsForHooks: SearchSettings { content.search }
-    var pathBarForHooks: NSView { workspace.isSplit ? workspace.activePane.headerPathBar : content.pathBar }
+    var pathBarForHooks: NSView { content.pathBar }
 
     func logPanesForHooks() {
         if let window {
@@ -467,8 +466,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func toggleSidebar() { sidebarItem.animator().isCollapsed.toggle() }
 
     func beginTypingPath() {
+        // Split view has no path bar: type the path in the command palette.
         if workspace.isSplit {
-            workspace.activePane.headerPathBar.beginEditing()
+            if palette == nil { palette = CommandPalette(controller: self) }
+            palette?.show(prefill: model.location.folderURL.map { PathBar.displayPath($0) + "/" } ?? "~/")
             return
         }
         if !content.isPathBarVisible { content.isPathBarVisible = true }

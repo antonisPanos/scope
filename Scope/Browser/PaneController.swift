@@ -62,27 +62,21 @@ final class PaneController: NSViewController {
     /// the window adds as a top accessory of the pane's split item. That is
     /// the place AppKit keeps clear of the toolbar's scroll edge effect;
     /// rows placed under the toolbar by hand get hidden by it.
-    let headerPathBar = PathBar()
-    var onSubmitPath: ((String) -> Void)?
 
     private(set) lazy var header: NSSplitViewItemAccessoryViewController = {
         let controller = NSSplitViewItemAccessoryViewController()
         let separator = NSBox()
         separator.boxType = .separator
-        let stack = NSStackView(views: [headerPathBar, separator, stripHost])
+        // Split view shows the tabs only; the path bar is a single-view feature.
+        let stack = NSStackView(views: [stripHost])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.alignment = .leading
-        for view in [headerPathBar, separator, stripHost] as [NSView] {
+        for view in [stripHost] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         stripHost.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        headerPathBar.onNavigate = { [weak self] url in self?.activeTab.model.navigate(to: .folder(url)) }
-        headerPathBar.onSubmit = { [weak self] text in
-            self?.onSubmitPath?(text)
-            return nil
-        }
         // Inside the accessory too, keep clear of the floating sidebar.
         let holder = NSView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -162,7 +156,6 @@ final class PaneController: NSViewController {
         strip.titles = tabs.map { $0.model.location.title }
         strip.activeIndex = activeIndex
         stripHost.rebuild()
-        headerPathBar.show(activeTab.model.location)
     }
 
     var isFocused = false {
