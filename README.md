@@ -90,7 +90,7 @@ and the status bar says "Scope Dev · test disks only".
 | `Packages/ScopeEngine/` | The file engine: listing and file operations, all behind the path guard |
 | `Config/` | Build settings and entitlements for each build |
 | `scripts/testdisk.sh` | Builds and manages the throwaway test disks |
-| `scripts/make-icons.swift` | Redraws the placeholder app icons |
+| `scripts/make-icons.swift` | Redraws the app icons |
 | `scripts/devhook.swift` | Drives a running Scope Dev from the terminal (development only) |
 
 ## The three builds

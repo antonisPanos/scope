@@ -2,7 +2,9 @@
 // Draws Scope's app icons into the asset catalog: a black square with a
 // 2 px margin (at 32 px), filled by a square in the top-left corner, two
 // rectangles beside and below it, and the same pattern again, smaller each
-// time, inside the bottom-right corner. Small gaps separate the pieces.
+// time, inside the bottom-right corner. Each level's square grows past its
+// slot and sits on top of the pieces beside and below it, with a black
+// outline keeping them apart.
 // AppIcon (Scope) uses white squares, AppIconDev (Scope Dev) amber ones, so
 // the two builds can't be mistaken for each other.
 // Run from the repo root: swift scripts/make-icons.swift
@@ -11,9 +13,11 @@ import AppKit
 let catalog = "Scope/Resources/Assets.xcassets"
 let sizes: [(points: Int, scale: Int)] = [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)]
 
-/// Four levels; the top-left square takes 55% of each level.
+/// Four levels; the top-left square takes 55% of each level and grows 14%
+/// past its slot.
 let depth = 4
 let share: CGFloat = 0.55
+let grow: CGFloat = 0.14
 
 func drawIcon(pixels: Int, squareColor: NSColor) -> Data {
     let size = CGFloat(pixels)
@@ -28,23 +32,34 @@ func drawIcon(pixels: Int, squareColor: NSColor) -> Data {
     let unit = size / 32
     let padding = max(1, (2 * unit).rounded())
     let gap = max(1, unit.rounded())
-    squareColor.setFill()
-    // Top-left origin, flipped into AppKit's bottom-left one.
-    func fill(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) {
-        guard w >= 1, h >= 1 else { return }
-        NSRect(x: x.rounded(), y: (size - y - h).rounded(), width: w.rounded(), height: h.rounded()).fill()
-    }
+    let context = NSGraphicsContext.current!.cgContext
+    context.clip(to: CGRect(x: padding, y: padding, width: size - 2 * padding, height: size - 2 * padding))
+
+    // Pieces per level in top-left coordinates; the level's square comes last.
+    var levels: [[CGRect]] = []
     var x = padding, y = padding, side = size - 2 * padding
     for level in 0..<depth {
         let big = (side - gap) * share
         let rest = side - big - gap
-        fill(x, y, big, big)
-        fill(x + big + gap, y, rest, big)
-        fill(x, y + big + gap, big, rest)
-        if level == depth - 1 { fill(x + big + gap, y + big + gap, rest, rest) }
+        var pieces = [CGRect(x: x + big + gap, y: y, width: rest, height: big),
+                      CGRect(x: x, y: y + big + gap, width: big, height: rest)]
+        if level == depth - 1 { pieces.append(CGRect(x: x + big + gap, y: y + big + gap, width: rest, height: rest)) }
+        pieces.append(CGRect(x: x, y: y, width: big * (1 + grow), height: big * (1 + grow)))
+        levels.append(pieces)
         x += big + gap
         y += big + gap
         side = rest
+    }
+    // Deepest level first, so each bigger square lands on top of the smaller ones.
+    for pieces in levels.reversed() {
+        for piece in pieces where piece.width >= 1 && piece.height >= 1 {
+            let rect = CGRect(x: piece.minX, y: size - piece.minY - piece.height, width: piece.width, height: piece.height)
+            context.setFillColor(squareColor.cgColor)
+            context.fill(rect)
+            context.setStrokeColor(NSColor.black.cgColor)
+            context.setLineWidth(gap)
+            context.stroke(rect.insetBy(dx: -gap / 2, dy: -gap / 2))
+        }
     }
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
