@@ -108,8 +108,10 @@ final class SidebarStore {
         ejecting.insert(item.id)
         let pathGuard = BuildIdentity.current.pathGuard
         Task {
+            var ejected = false
             do {
                 try await Volumes.eject(url, pathGuard: pathGuard)
+                ejected = true
             } catch {
                 Self.logger.error(
                     "Eject of \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
@@ -138,6 +140,7 @@ final class SidebarStore {
                 if blocker != nil, canForce, choice == .alertSecondButtonReturn {
                     do {
                         try await Volumes.forceEject(url, pathGuard: pathGuard)
+                        ejected = true
                     } catch {
                         let failed = NSAlert()
                         failed.messageText = "\(item.title) couldn't be ejected."
@@ -150,8 +153,23 @@ final class SidebarStore {
                     }
                 }
             }
+            if ejected { await waitUntilGone(item.id) }
             ejecting.remove(item.id)
             refresh()
+        }
+    }
+
+    /// macOS reports an ejected disk gone a moment after the eject returns.
+    /// Until then the row keeps its spinner, so it never shows an eject
+    /// button for a disk that is already on its way out. Gives up after five
+    /// seconds, in case the disk stays.
+    private func waitUntilGone(_ id: String) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while ContinuousClock.now < deadline {
+            refresh()
+            await refreshTask?.value
+            if !allItems.contains(where: { $0.id == id }) { return }
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 
