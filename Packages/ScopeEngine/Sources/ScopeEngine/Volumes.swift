@@ -75,37 +75,71 @@ public enum Volumes {
     }
 
     /// Ejects even when an app still has files open on the volume, through
-    /// Disk Arbitration's forced unmount. The guard applies as for `eject`.
+    /// Disk Arbitration's forced unmount. Only the chosen volume is unmounted;
+    /// other volumes on the same disk stay mounted, and the disk itself is
+    /// ejected only once nothing on it is mounted. Apps with files open on the
+    /// volume can lose unsaved changes, so this counts as a write for the path
+    /// guard, and internal disks and the startup disk are refused.
     public static func forceEject(_ url: URL, pathGuard: PathGuard) async throws {
-        let volume = try pathGuard.checkLocation(url)
+        let volume = try pathGuard.checkWriteLocation(url)
+        if let reason = forceEjectRefusal(volume) {
+            throw CocoaError(
+                .fileWriteNoPermission,
+                userInfo: [NSLocalizedDescriptionKey: "Scope doesn't force eject this disk. \(reason)"])
+        }
         guard let session = DASessionCreate(kCFAllocatorDefault),
             let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, volume as CFURL)
         else {
             throw CocoaError(.fileNoSuchFile)
         }
         DASessionSetDispatchQueue(session, DispatchQueue.global())
-        let whole = DADiskCopyWholeDisk(disk) ?? disk
+        defer { DASessionSetDispatchQueue(session, nil) }
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let box = Unmanaged.passRetained(ContinuationBox(continuation)).toOpaque()
             DADiskUnmount(
-                whole, DADiskUnmountOptions(kDADiskUnmountOptionForce | kDADiskUnmountOptionWhole),
-                { _, dissenter, context in
-                    let box = Unmanaged<ContinuationBox>.fromOpaque(context!).takeRetainedValue()
-                    if let dissenter {
-                        box.continuation.resume(
-                            throwing: CocoaError(
-                                .fileWriteUnknown,
-                                userInfo: [
-                                    NSLocalizedDescriptionKey:
-                                        "Couldn't force eject (status \(DADissenterGetStatus(dissenter)))."
-                                ]))
-                    } else {
-                        box.continuation.resume()
-                    }
-                }, box)
+                disk, DADiskUnmountOptions(kDADiskUnmountOptionForce),
+                { _, dissenter, context in ContinuationBox.finish(context, dissenter) }, box)
         }
-        DADiskEject(whole, DADiskEjectOptions(kDADiskEjectOptionDefault), nil, nil)
-        DASessionSetDispatchQueue(session, nil)
+        // Ejecting never unmounts anything: Disk Arbitration refuses while
+        // another volume on the disk is still mounted, which leaves it in use.
+        guard let whole = DADiskCopyWholeDisk(disk) else { return }
+        try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let box = Unmanaged.passRetained(ContinuationBox(continuation)).toOpaque()
+            DADiskEject(
+                whole, DADiskEjectOptions(kDADiskEjectOptionDefault),
+                { _, dissenter, context in ContinuationBox.finish(context, dissenter) }, box)
+        }
+    }
+
+    /// Why Scope won't force eject a volume, or nil when it will. Disk images
+    /// and external disks can be force ejected; the startup disk and other
+    /// internal disks can't, since the apps and the system using them would
+    /// lose what they haven't saved.
+    public static func forceEjectRefusal(_ url: URL) -> String? {
+        guard let session = DASessionCreate(kCFAllocatorDefault),
+            let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL)
+        else {
+            return "It isn't a disk that can be ejected."
+        }
+        if let startup = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: "/") as CFURL),
+            let startupName = wholeDiskName(startup), wholeDiskName(disk) == startupName
+        {
+            return "It's the startup disk."
+        }
+        if diskImagePath(for: url, session: session) != nil { return nil }
+        let description = DADiskCopyDescription(disk) as? [String: Any]
+        guard description?[kDADiskDescriptionDeviceInternalKey as String] as? Bool == false else {
+            return "It's an internal disk."
+        }
+        return nil
+    }
+
+    /// The BSD name of the whole disk a volume is on, such as "disk4". For
+    /// APFS this is the container, which all of its volumes share.
+    private static func wholeDiskName(_ disk: DADisk) -> String? {
+        let whole = DADiskCopyWholeDisk(disk) ?? disk
+        return DADiskGetBSDName(whole).map { String(cString: $0) }
     }
 
     /// Finds the image file behind a volume by walking up the I/O Registry from
@@ -141,4 +175,19 @@ public enum Volumes {
 private final class ContinuationBox: @unchecked Sendable {
     let continuation: CheckedContinuation<Void, Error>
     init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }
+
+    /// Resumes the continuation a Disk Arbitration callback's context holds.
+    static func finish(_ context: UnsafeMutableRawPointer?, _ dissenter: DADissenter?) {
+        let box = Unmanaged<ContinuationBox>.fromOpaque(context!).takeRetainedValue()
+        if let dissenter {
+            box.continuation.resume(
+                throwing: CocoaError(
+                    .fileWriteUnknown,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Couldn't force eject (status \(DADissenterGetStatus(dissenter)))."
+                    ]))
+        } else {
+            box.continuation.resume()
+        }
+    }
 }

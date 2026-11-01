@@ -116,18 +116,26 @@ final class SidebarStore {
                 let alert = NSAlert()
                 alert.messageText = "\(item.title) couldn't be ejected."
                 let blocker = Volumes.blockingApp(from: error)
-                if let blocker {
+                // Force eject is a write, and never offered for internal or startup disks.
+                var canForce = false
+                if pathGuard.allowsWrites {
+                    canForce = await Task.detached { Volumes.forceEjectRefusal(url) }.value == nil
+                }
+                if let blocker, canForce {
                     // Name the app holding files open, and offer to eject anyway.
                     alert.informativeText =
                         "\(blocker) is using files on it. Quit \(blocker) or close those files, or force eject (unsaved changes in \(blocker) may be lost)."
                     alert.addButton(withTitle: "Cancel")
                     alert.addButton(withTitle: "Force Eject")
+                } else if let blocker {
+                    alert.informativeText =
+                        "\(blocker) is using files on it. Quit \(blocker) or close those files, then try again."
                 } else {
                     alert.informativeText = Self.describeEjectError(error)
                 }
                 let choice: NSApplication.ModalResponse
                 if let window { choice = await alert.beginSheetModal(for: window) } else { choice = alert.runModal() }
-                if blocker != nil, choice == .alertSecondButtonReturn {
+                if blocker != nil, canForce, choice == .alertSecondButtonReturn {
                     do {
                         try await Volumes.forceEject(url, pathGuard: pathGuard)
                     } catch {
