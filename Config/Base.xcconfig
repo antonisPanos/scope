@@ -1,0 +1,24 @@
+// Settings shared by every build of Pandora.
+
+MACOSX_DEPLOYMENT_TARGET = 27.2
+SDKROOT = macosx
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+PRODUCT_MODULE_NAME = Pandora
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_KEY_NSPrincipalClass = NSApplication
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.productivity
+INFOPLIST_KEY_NSHumanReadableCopyright = Personal build
+ENABLE_HARDENED_RUNTIME = YES
+COMBINE_HIDPI_IMAGES = YES
+
+// Signing. Without Local.xcconfig the app is signed ad hoc ("Sign to Run
+// Locally"), which is what CI uses. On your Mac, Local.xcconfig sets your
+// personal team so macOS keeps the same identity between builds.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+ALWAYS_SEARCH_USER_PATHS = NO

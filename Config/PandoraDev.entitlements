@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Pandora Dev runs sandboxed: it can reach its own container and the
+	     test disks below, nothing else. Keep the list in sync with
+	     BuildIdentity.testDiskRoots and scripts/testdisk.sh. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+	<array>
+		<string>/Volumes/PandoraTest/</string>
+		<string>/Volumes/PandoraTest2/</string>
+		<string>/Volumes/PandoraTestCS/</string>
+	</array>
+</dict>
+</plist>

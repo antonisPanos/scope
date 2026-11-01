@@ -1,0 +1,13 @@
+// "Pandora": the real app. No sandbox and no path guard; not used until the
+// MVP gate in the test plan is met.
+#include "Base.xcconfig"
+
+PRODUCT_NAME = Pandora
+PRODUCT_BUNDLE_IDENTIFIER = com.antonispanos.pandora
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+CODE_SIGN_ENTITLEMENTS = Config/Pandora.entitlements
+SWIFT_COMPILATION_MODE = wholemodule
+SWIFT_OPTIMIZATION_LEVEL = -O
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+
+#include? "Local.xcconfig"

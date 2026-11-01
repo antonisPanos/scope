@@ -1,0 +1,16 @@
+// "Pandora Dev": the build used for all testing. Runs in the App Sandbox with
+// access only to the test disks, and its path guard refuses anything else.
+#include "Base.xcconfig"
+
+PRODUCT_NAME = Pandora Dev
+PRODUCT_BUNDLE_IDENTIFIER = com.antonispanos.pandora.dev
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev
+CODE_SIGN_ENTITLEMENTS = Config/PandoraDev.entitlements
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG PANDORA_DEV
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+ONLY_ACTIVE_ARCH = YES
+DEBUG_INFORMATION_FORMAT = dwarf
+ENABLE_TESTABILITY = YES
+GCC_OPTIMIZATION_LEVEL = 0
+
+#include? "Local.xcconfig"

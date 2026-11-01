@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine-tests:
+    name: Engine tests
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+      - name: Run engine tests
+        working-directory: Packages/PandoraEngine
+        run: swift test
+
+  app-build:
+    name: Build app
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+      # Pandora requires the macOS 27.2 SDK. GitHub's runners don't offer it
+      # yet; until they do, this job reports that and skips the build.
+      - name: Check for the macOS 27.2 SDK
+        id: sdk
+        run: |
+          version="$(xcrun --sdk macosx --show-sdk-version)"
+          echo "SDK $version"
+          if [ "$(printf '%s\n27.2\n' "$version" | sort -V | head -1)" = "27.2" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::macOS SDK $version on this runner is older than 27.2; skipping the app build."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build Pandora Dev and Pandora
+        if: steps.sdk.outputs.available == 'true'
+        run: |
+          for scheme in "Pandora Dev" "Pandora Dev (No Sandbox)" "Pandora"; do
+            xcodebuild -project Pandora.xcodeproj -scheme "$scheme" -derivedDataPath build/DerivedData build
+          done
