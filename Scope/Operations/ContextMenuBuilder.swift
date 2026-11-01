@@ -6,7 +6,7 @@ import ScopeEngine
 @MainActor
 final class ContextMenuBuilder: NSObject, NSMenuDelegate {
     weak var controller: BrowserWindowController?
-    /// Counts menu builds, so a late tag read can't land in a newer menu.
+    /// Counts menu builds, so a late tag or app lookup can't land in a newer menu.
     private var generation = 0
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -64,11 +64,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("toggleHidden")
         } else {
             add("open")
-            if let openWith = controller.openWithMenu() {
-                let item = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-                item.submenu = openWith
-                menu.addItem(item)
-            }
+            if let item = controller.openWithItem { addOpenWith(for: item, to: menu, controller: controller) }
             add("openInNewTab")
             add("openInSplit")
             add("quickLook")
@@ -93,6 +89,32 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             separator()
             submenu("Sort By", sortIDs)
             if selection.count == 1 { addTags(of: selection[0], to: menu, engine: controller.model.engine) }
+        }
+    }
+
+    /// Open With, filled in when the apps arrive: finding the apps that open
+    /// a file reads the disk, so it happens in the background. The line goes
+    /// away again when no app can open the file.
+    private func addOpenWith(for item: FileItem, to menu: NSMenu, controller: BrowserWindowController) {
+        let line = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+        let apps = NSMenu(title: "Open With")
+        let waiting = NSMenuItem(title: "Finding Apps…", action: nil, keyEquivalent: "")
+        waiting.isEnabled = false
+        apps.addItem(waiting)
+        line.submenu = apps
+        menu.addItem(line)
+        let build = generation
+        let url = item.url
+        let pathGuard = controller.model.engine.pathGuard
+        Task { [weak controller] in
+            let found = await BrowserWindowController.openWithApps(for: url, pathGuard: pathGuard)
+            guard build == generation, let controller else { return }
+            guard !found.isEmpty else {
+                if menu.index(of: line) >= 0 { menu.removeItem(line) }
+                return
+            }
+            apps.removeAllItems()
+            for app in found { apps.addItem(controller.openWithEntry(for: app)) }
         }
     }
 

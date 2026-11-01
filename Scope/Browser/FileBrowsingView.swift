@@ -77,6 +77,9 @@ enum FileViewKeys {
     }
 
     /// Copy when Option is held or the files come from another disk; move otherwise.
+    /// This runs on every mouse move of a drag, so it must not touch the disk:
+    /// the disks come from the kernel's mount table. The drop itself checks
+    /// them exactly, off the main thread, and copies when the badge said copy.
     static func dropOperation(_ info: NSDraggingInfo, into folder: URL) -> NSDragOperation {
         let urls = droppedURLs(info)
         guard !urls.isEmpty, !urls.contains(where: { $0 == folder || folder.path.hasPrefix($0.path + "/") }) else {
@@ -87,7 +90,6 @@ enum FileViewKeys {
             return []
         }
         if NSEvent.modifierFlags.contains(.option) { return .copy }
-        let volume = { (url: URL) in try? url.resourceValues(forKeys: [.volumeURLKey]).volume }
-        return urls.allSatisfy { volume($0) == volume(folder) } ? .move : .copy
+        return MountTable().seemOnSameDisk(urls, as: folder) ? .move : .copy
     }
 }
