@@ -50,6 +50,43 @@ import Testing
         #expect(await center.snapshots().count == 1)
     }
 
+    @Test func refusesToTrashTheFolderACopyIsWritingInto() async throws {
+        try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
+        try disk.write("small.txt", "s")
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        let copy = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        await center.pause(copy)
+
+        await #expect(throws: OperationError.self) {
+            try await center.enqueue(FileOperation(.trash([disk.url("dest")])))
+        }
+        // A second copy into the same folder is fine: it only adds to it. So is
+        // trashing something else that is in that folder.
+        try disk.write("dest/other.txt", "o")
+        _ = try await center.enqueue(FileOperation(.copy([disk.url("small.txt")], into: disk.url("dest"))))
+        _ = try await center.enqueue(FileOperation(.trash([disk.url("dest/other.txt")])))
+        await center.cancel(copy)
+        await center.waitUntilIdle()
+    }
+
+    @Test func locksMatchOtherSpellingsOfTheSamePath() async throws {
+        try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        let copy = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        await center.pause(copy)
+
+        // The file being copied, reached through a symlinked folder, and in other case.
+        try FileManager.default.createSymbolicLink(at: disk.url("alias"), withDestinationURL: disk.work)
+        await #expect(throws: OperationError.self) {
+            try await center.enqueue(FileOperation(.trash([disk.url("alias/big.bin")])))
+        }
+        await #expect(throws: OperationError.self) {
+            try await center.enqueue(FileOperation(.trash([disk.url("BIG.bin")])))
+        }
+        await center.cancel(copy)
+        await center.waitUntilIdle()
+    }
+
     @Test func pausesResumesAndCancels() async throws {
         try source.write("big.bin", Data(count: 96 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)

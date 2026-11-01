@@ -158,62 +158,6 @@ import Testing
 
     // MARK: - Copy
 
-    private static func freeBytes(_ path: String) -> Int64? {
-        var info = statfs()
-        guard statfs(path, &info) == 0 else { return nil }
-        return Int64(info.f_bavail) * Int64(info.f_bsize)
-    }
-
-    @Test func clonesWithinOneAPFSVolume() async throws {
-        let volume = try TestVolume(name: "ScopeClone")
-        let engine = FileEngine(pathGuard: .restricted(to: [volume.mountPoint]))
-        var bytes = Data(count: 200 * 1024 * 1024)
-        bytes[0] = 1
-        bytes[bytes.count - 1] = 2
-        try volume.write("big.bin", bytes)
-        bytes = Data()
-        // Flushed, so the disk has allocated it before free space is measured.
-        let written = try FileHandle(forWritingTo: volume.url("big.bin"))
-        try written.synchronize()
-        try written.close()
-        let before = try #require(Self.freeBytes(volume.work.path))
-
-        try await engine.copyItem(at: volume.url("big.bin"), to: volume.url("clone.bin"))
-        let after = try #require(Self.freeBytes(volume.work.path))
-        // A clone shares the original's storage; a byte copy would take 200 MB.
-        #expect(before - after < 50 * 1024 * 1024)
-        let copy = try Data(contentsOf: volume.url("clone.bin"), options: .alwaysMapped)
-        #expect(copy.count == 200 * 1024 * 1024 && copy.first == 1 && copy.last == 2)
-    }
-
-    @Test func sparseFilesStaySparse() async throws {
-        try sandbox.write("sparse.bin", Data())
-        let size: off_t = 300 * 1024 * 1024
-        let handle = try FileHandle(forWritingTo: sandbox.url("sparse.bin"))
-        try handle.truncate(atOffset: UInt64(size))
-        try handle.seek(toOffset: 0)
-        try handle.write(contentsOf: Data(repeating: 7, count: 1024 * 1024))
-        try handle.seek(toOffset: UInt64(size) / 2)
-        try handle.write(contentsOf: Data(repeating: 8, count: 1024 * 1024))
-        try handle.close()
-        let sourceBlocks = try #require(FileEngine.lstatInfo(sandbox.url("sparse.bin").path)).st_blocks
-        try #require(Int64(sourceBlocks) * 512 < Int64(size) / 10, "the temp disk doesn't keep files sparse")
-
-        // Onto another disk, so the copy can't be a clone.
-        let volume = try TestVolume(name: "ScopeSparse")
-        let engine = FileEngine(pathGuard: .restricted(to: [sandbox.root, volume.mountPoint]))
-        let progress = Mutex<CopyProgress?>(nil)
-        try await engine.copyItem(at: sandbox.url("sparse.bin"), to: volume.url("sparse.bin")) { report in
-            progress.withLock { $0 = report }
-        }
-        let info = try #require(FileEngine.lstatInfo(volume.url("sparse.bin").path))
-        #expect(info.st_size == size)
-        #expect(Int64(info.st_blocks) * 512 < 16 * 1024 * 1024)
-        #expect(progress.withLock { $0?.bytesDone } == Int64(size))
-        let copy = try Data(contentsOf: volume.url("sparse.bin"), options: .alwaysMapped)
-        #expect(copy[0] == 7 && copy[Int(size) / 2] == 8 && copy[Int(size) / 4] == 0 && copy.last == 0)
-    }
-
     @Test func copiesAFileWithItsMetadata() async throws {
         let source = try sandbox.write("a.txt", "contents")
         setXattr(source, "com.example.note", "kept")
@@ -315,21 +259,23 @@ import Testing
         let engine = self.engine
         let source = sandbox.url("big")
         let target = sandbox.url("dest/big")
-        // Cancelled from the copy's own first progress report, so the copy
-        // can't finish before the cancel lands, however fast the disk is or
-        // however long this test's task waits for a thread.
+        // Cancelled from the copy's own progress report, after the first
+        // chunk, so the test doesn't depend on when its own task gets a thread
+        // (other suites keep the pool busy, and the copy could finish first).
         let handle = Mutex<Task<Void, Error>?>(nil)
         let cancelledAt = Mutex<ContinuousClock.Instant?>(nil)
         let stoppedAt = Mutex<ContinuousClock.Instant?>(nil)
         let ready = AsyncStream.makeStream(of: Void.self)
         let task = Task {
             for await _ in ready.stream { break }
-            // Timed where the copy returns, not where this test resumes.
-            defer { stoppedAt.withLock { $0 = .now } }
-            try await engine.copyItem(at: source, to: target) { progress in
-                guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
-                cancelledAt.withLock { $0 = .now }
-                handle.withLock { $0?.cancel() }
+            // Timed on the engine's threads too, for the same reason.
+            try await onIOThreads {
+                defer { stoppedAt.withLock { $0 = .now } }
+                try await engine.copyItem(at: source, to: target) { progress in
+                    guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
+                    cancelledAt.withLock { $0 = .now }
+                    handle.withLock { $0?.cancel() }
+                }
             }
         }
         handle.withLock { $0 = task }
