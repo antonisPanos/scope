@@ -26,9 +26,12 @@ jobs:
         with:
           fetch-depth: 0
       - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            files="$(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- '*.swift' | tr '\n' ' ')"
+          if [ "$EVENT" = "pull_request" ]; then
+            files="$(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF...HEAD" -- '*.swift' | tr '\n' ' ')"
           else
             files="$(git ls-files '*.swift' | tr '\n' ' ')"
           fi
@@ -44,7 +47,11 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Check formatting
-        run: swift format lint --strict --configuration .swift-format ${{ needs.changed.outputs.files }}
+        # File names come from the PR, so they reach the shell through an
+        # environment variable and are never pasted into the script.
+        env:
+          FILES: ${{ needs.changed.outputs.files }}
+        run: swift format lint --strict --configuration .swift-format $FILES
 
   swiftlint:
     name: SwiftLint
@@ -55,4 +62,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Lint
-        run: swiftlint lint --reporter github-actions-logging ${{ needs.changed.outputs.files }}
+        env:
+          FILES: ${{ needs.changed.outputs.files }}
+        run: swiftlint lint --reporter github-actions-logging $FILES
