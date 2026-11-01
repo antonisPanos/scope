@@ -165,42 +165,69 @@ extension BrowserWindowController {
     // MARK: - Drops
 
     /// Files dropped on a folder: moved on the same disk, copied across disks,
-    /// copied when Option is held, as in Finder.
+    /// copied when Option is held, as in Finder. `copy` is what the drag badge
+    /// showed. A move is checked against the disks themselves, off the main
+    /// thread, and becomes a copy when they differ, so a drop never moves more
+    /// than the badge promised.
     func handleDrop(_ urls: [URL], onto folder: URL, copy: Bool) {
-        let sameDisk = urls.allSatisfy { Self.volume(of: $0) == Self.volume(of: folder) }
-        startOperation(copy || !sameDisk ? .copy(urls, into: folder) : .move(urls, into: folder))
-    }
-
-    private static func volume(of url: URL) -> URL? {
-        try? url.resourceValues(forKeys: [.volumeURLKey]).volume
+        if copy {
+            startOperation(.copy(urls, into: folder))
+            return
+        }
+        let engine = model.engine
+        Task {
+            let sameDisk = await engine.areOnSameDisk(urls, as: folder)
+            startOperation(sameDisk ? .move(urls, into: folder) : .copy(urls, into: folder))
+        }
     }
 
     // MARK: - Open With
 
-    func openWithMenu() -> NSMenu? {
-        guard selectedItems.count == 1, let item = selectedItems.first, !item.isBrowsableFolder,
-            model.engine.pathGuard.permits(item.url)
-        else { return nil }
-        let menu = NSMenu(title: "Open With")
-        let apps = NSWorkspace.shared.urlsForApplications(toOpen: item.url)
-        let preferred = NSWorkspace.shared.urlForApplication(toOpen: item.url)
-        for app in apps.prefix(20) {
-            let title = FileManager.default.displayName(atPath: app.path) + (app == preferred ? " (default)" : "")
-            let entry = NSMenuItem(title: title, action: #selector(openWithApp(_:)), keyEquivalent: "")
-            entry.representedObject = app
-            entry.target = self
-            let icon = NSWorkspace.shared.icon(forFile: app.path)
-            icon.size = NSSize(width: 16, height: 16)
-            entry.image = icon
-            menu.addItem(entry)
-        }
-        return menu.items.isEmpty ? nil : menu
+    /// The file Open With is offered for: a single selected file or package.
+    var openWithItem: FileItem? {
+        guard selectedItems.count == 1, let item = selectedItems.first, !item.isBrowsableFolder else { return nil }
+        return item
+    }
+
+    /// The apps that can open `url`, at most 20, the default one marked.
+    /// Launch Services reads the file and the app bundles to answer, and the
+    /// guard resolves the path, so this runs off the main thread. Empty when
+    /// the guard refuses the file.
+    nonisolated static func openWithApps(for url: URL, pathGuard: PathGuard) async -> [OpenWithApp] {
+        await Task.detached(priority: .userInitiated) {
+            guard pathGuard.permits(url) else { return [] }
+            let workspace = NSWorkspace.shared
+            let preferred = workspace.urlForApplication(toOpen: url)
+            return workspace.urlsForApplications(toOpen: url).prefix(20).map { app in
+                let name = FileManager.default.displayName(atPath: app.path)
+                return OpenWithApp(
+                    url: app, title: name + (app == preferred ? " (default)" : ""),
+                    icon: workspace.icon(forFile: app.path))
+            }
+        }.value
+    }
+
+    /// The Open With menu line for one app.
+    func openWithEntry(for app: OpenWithApp) -> NSMenuItem {
+        let entry = NSMenuItem(title: app.title, action: #selector(openWithApp(_:)), keyEquivalent: "")
+        entry.representedObject = app.url
+        entry.target = self
+        app.icon.size = NSSize(width: 16, height: 16)
+        entry.image = app.icon
+        return entry
     }
 
     @objc private func openWithApp(_ sender: NSMenuItem) {
         guard let app = sender.representedObject as? URL else { return }
-        let urls = selectedItems.map(\.url).filter { model.engine.pathGuard.permits($0) }
-        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        let urls = selectedItems.map(\.url)
+        let pathGuard = model.engine.pathGuard
+        Task {
+            let permitted = await Task.detached { urls.filter { pathGuard.permits($0) } }.value
+            guard !permitted.isEmpty else { return }
+            NSWorkspace.shared.open(
+                permitted, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(),
+                completionHandler: nil)
+        }
     }
 
     // MARK: - Standard Edit menu actions
@@ -220,4 +247,12 @@ extension BrowserWindowController {
 @MainActor
 private enum CutPasteboard {
     static var changeCount: Int?
+}
+
+/// An app for the Open With menu, carried from the background lookup. The
+/// icon is not touched again off the main thread.
+struct OpenWithApp: @unchecked Sendable {
+    let url: URL
+    let title: String
+    let icon: NSImage
 }
