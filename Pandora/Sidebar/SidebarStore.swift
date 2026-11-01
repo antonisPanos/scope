@@ -108,8 +108,27 @@ final class SidebarStore {
                 Self.logger.error("Eject of \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 let alert = NSAlert()
                 alert.messageText = "\(item.title) couldn't be ejected."
-                alert.informativeText = Self.describeEjectError(error)
-                if let window { alert.beginSheetModal(for: window, completionHandler: nil) } else { alert.runModal() }
+                let blocker = Volumes.blockingApp(from: error)
+                if let blocker {
+                    // Name the app holding files open, and offer to eject anyway.
+                    alert.informativeText = "\(blocker) is using files on it. Quit \(blocker) or close those files, or force eject (unsaved changes in \(blocker) may be lost)."
+                    alert.addButton(withTitle: "Cancel")
+                    alert.addButton(withTitle: "Force Eject")
+                } else {
+                    alert.informativeText = Self.describeEjectError(error)
+                }
+                let choice: NSApplication.ModalResponse
+                if let window { choice = await alert.beginSheetModal(for: window) } else { choice = alert.runModal() }
+                if blocker != nil, choice == .alertSecondButtonReturn {
+                    do {
+                        try await Volumes.forceEject(url, pathGuard: pathGuard)
+                    } catch {
+                        let failed = NSAlert()
+                        failed.messageText = "\(item.title) couldn't be ejected."
+                        failed.informativeText = error.localizedDescription
+                        if let window { failed.beginSheetModal(for: window, completionHandler: nil) } else { failed.runModal() }
+                    }
+                }
             }
             ejecting.remove(item.id)
             refresh()
