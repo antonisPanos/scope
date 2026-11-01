@@ -3,9 +3,10 @@ name: Lint
 # Checks the Swift files a PR changes: swift-format for layout, SwiftLint for
 # risky patterns. Runs on Linux, so it costs a tenth of a macOS job.
 # Files nobody has touched since lint arrived are formatted in one pass later.
+# No paths filter: the jobs skip themselves when no Swift file changed, so
+# they always report and can be required checks on main.
 on:
   pull_request:
-    paths: ["**.swift", ".swift-format", ".swiftlint.yml", ".github/workflows/lint.yml"]
   workflow_dispatch:
 
 permissions:
