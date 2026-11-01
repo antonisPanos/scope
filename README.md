@@ -16,6 +16,13 @@
   <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
 </p>
 
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/split-view-dark.png">
+  <img src="docs/images/split-view.png" alt="Scope in split view: a folder in Details view on the left and another in Icons view on the right">
+</picture>
+</p>
+
 ---
 
 ## Why Scope
@@ -48,6 +55,17 @@ uses Finder's keyboard shortcuts, and is careful with your files.
 - "Contents (Spotlight)" searches inside files.
 
 The [user guide](docs/USER_GUIDE.md) covers every feature and shortcut.
+
+## A closer look
+
+| | |
+| --- | --- |
+| <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/browser-icons-dark.png">   <img src="docs/images/browser-icons.png" alt="Icons view with Quick Look thumbnails"> </picture> | <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/details-dark.png">   <img src="docs/images/details.png" alt="Details view with sortable columns"> </picture> |
+| **Icons**: thumbnails in a grid that reflows to the window | **Details**: sortable, resizable columns |
+| <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/search-dark.png">   <img src="docs/images/search.png" alt="Search results for a glob pattern with the filter bar"> </picture> | <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png">   <img src="docs/images/activity.png" alt="The activity drawer showing a finished copy with Undo"> </picture> |
+| **Search**: names, patterns or regular expressions, with filters | **Activity**: every job with progress, speed, pause, cancel and undo |
+
+Screenshots are taken from Scope Dev on its throwaway test disk.
 
 ## Built to never lose a file
 
