@@ -11,8 +11,9 @@ public struct CopyProgress: Sendable, Equatable {
 }
 
 /// All file system work goes through here, and every path it receives passes
-/// the path guard first. The methods are nonisolated async functions, so they
-/// run on the concurrency pool and never on the main thread.
+/// the path guard first. The methods run on the engine's own I/O threads
+/// (`IOExecutor`), never on the main thread and never on Swift's concurrency
+/// pool, which blocking file system calls could use up.
 public struct FileEngine: Sendable {
     public let pathGuard: PathGuard
 
@@ -31,85 +32,101 @@ public struct FileEngine: Sendable {
     // MARK: - Listing
 
     public func contentsOfDirectory(at url: URL, includeHidden: Bool = true) async throws -> [FileItem] {
-        let directory = try pathGuard.checkTarget(url)
-        var options: FileManager.DirectoryEnumerationOptions = []
-        if !includeHidden { options.insert(.skipsHiddenFiles) }
-        let urls = try FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: FileItem.resourceKeys, options: options)
-        var items: [FileItem] = []
-        items.reserveCapacity(urls.count)
-        for (index, child) in urls.enumerated() {
-            if index % 1024 == 0 { try Task.checkCancellation() }
-            items.append(try FileItem(url: child))
+        return try await onIOThreads {
+            let directory = try pathGuard.checkTarget(url)
+            var options: FileManager.DirectoryEnumerationOptions = []
+            if !includeHidden { options.insert(.skipsHiddenFiles) }
+            let urls = try FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: FileItem.resourceKeys, options: options)
+            var items: [FileItem] = []
+            items.reserveCapacity(urls.count)
+            for (index, child) in urls.enumerated() {
+                if index % 1024 == 0 { try Task.checkCancellation() }
+                items.append(try FileItem(url: child))
+            }
+            return items
         }
-        return items
     }
 
     /// Describes specific items, such as search or Spotlight results. Items
     /// the guard doesn't permit, or that no longer exist, are left out.
     public func items(at urls: [URL]) async throws -> [FileItem] {
-        var items: [FileItem] = []
-        items.reserveCapacity(urls.count)
-        for (index, url) in urls.enumerated() {
-            if index % 256 == 0 { try Task.checkCancellation() }
-            guard pathGuard.permits(url), let item = try? FileItem(url: url) else { continue }
-            items.append(item)
+        return try await onIOThreads {
+            var items: [FileItem] = []
+            items.reserveCapacity(urls.count)
+            for (index, url) in urls.enumerated() {
+                if index % 256 == 0 { try Task.checkCancellation() }
+                guard pathGuard.permits(url), let item = try? FileItem(url: url) else { continue }
+                items.append(item)
+            }
+            return items
         }
-        return items
     }
 
     /// Finder tags of one item. Kept out of listings for speed; call it for
     /// the rows on screen.
     public func tags(for url: URL) async throws -> [String] {
-        let target = try pathGuard.checkLocation(url)
-        return try target.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []
+        return try await onIOThreads {
+            let target = try pathGuard.checkLocation(url)
+            return try target.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []
+        }
     }
 
     /// Describes one item, after the guard has checked it.
     public func item(at url: URL) async throws -> FileItem {
-        try FileItem(url: pathGuard.checkTarget(url))
+        return try await onIOThreads {
+            try FileItem(url: pathGuard.checkTarget(url))
+        }
     }
 
     // MARK: - Simple operations
 
     public func createFolder(at url: URL) async throws {
-        let target = try pathGuard.checkWriteLocation(url)
-        guard mkdir(target.path, 0o755) == 0 else { throw FileEngineError.posix("Create folder", target.path) }
+        try await onIOThreads {
+            let target = try pathGuard.checkWriteLocation(url)
+            guard mkdir(target.path, 0o755) == 0 else { throw FileEngineError.posix("Create folder", target.path) }
+        }
     }
 
     /// Renames an item in place and returns its new URL.
     @discardableResult
     public func rename(_ url: URL, to newName: String) async throws -> URL {
-        guard Self.isValidName(newName) else { throw FileEngineError.invalidName(newName) }
-        let source = try pathGuard.checkModifiable(url)
-        let destination = try pathGuard.checkWriteLocation(
-            source.deletingLastPathComponent().appendingPathComponent(newName))
-        // A case-only rename on a case-insensitive disk finds the item itself at
-        // the destination, so it must not use the exclusive rename.
-        let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
-        guard renamex_np(source.path, destination.path, flags) == 0 else {
-            throw FileEngineError.posix("Rename", source.path)
+        return try await onIOThreads {
+            guard Self.isValidName(newName) else { throw FileEngineError.invalidName(newName) }
+            let source = try pathGuard.checkModifiable(url)
+            let destination = try pathGuard.checkWriteLocation(
+                source.deletingLastPathComponent().appendingPathComponent(newName))
+            // A case-only rename on a case-insensitive disk finds the item itself at
+            // the destination, so it must not use the exclusive rename.
+            let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
+            guard renamex_np(source.path, destination.path, flags) == 0 else {
+                throw FileEngineError.posix("Rename", source.path)
+            }
+            return destination
         }
-        return destination
     }
 
     /// Moves an item to `destination` (the full new path, not its folder).
     /// Only moves within one disk are supported for now; they are a single
     /// atomic rename.
     public func moveItem(at url: URL, to destination: URL) async throws {
-        let source = try pathGuard.checkModifiable(url)
-        let target = try pathGuard.checkWriteLocation(destination)
-        guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
-        let targetFolder = target.deletingLastPathComponent().path
-        guard let sourceDevice = Self.lstatInfo(source.path)?.st_dev,
-            let targetDevice = Self.lstatInfo(targetFolder)?.st_dev
-        else {
-            throw FileEngineError.sourceMissing(targetFolder)
-        }
-        guard sourceDevice == targetDevice else { throw FileEngineError.crossVolumeMoveNotSupported(source.path) }
-        guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
-        guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
-            throw FileEngineError.posix("Move", source.path)
+        try await onIOThreads {
+            let source = try pathGuard.checkModifiable(url)
+            let target = try pathGuard.checkWriteLocation(destination)
+            guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
+            let targetFolder = target.deletingLastPathComponent().path
+            guard let sourceDevice = Self.lstatInfo(source.path)?.st_dev,
+                let targetDevice = Self.lstatInfo(targetFolder)?.st_dev
+            else {
+                throw FileEngineError.sourceMissing(targetFolder)
+            }
+            guard sourceDevice == targetDevice else { throw FileEngineError.crossVolumeMoveNotSupported(source.path) }
+            guard !Self.isInside(target.path, source.path) else {
+                throw FileEngineError.cannotCopyIntoItself(source.path)
+            }
+            guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+                throw FileEngineError.posix("Move", source.path)
+            }
         }
     }
 
@@ -117,26 +134,30 @@ public struct FileEngine: Sendable {
     /// deletes outright.
     @discardableResult
     public func trashItem(at url: URL) async throws -> URL? {
-        let target = try pathGuard.checkModifiable(url)
-        var resulting: NSURL?
-        try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
-        return resulting as URL?
+        return try await onIOThreads {
+            let target = try pathGuard.checkModifiable(url)
+            var resulting: NSURL?
+            try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
+            return resulting as URL?
+        }
     }
 
     /// Removes partial items a crashed or killed copy left in `directory`.
     /// Returns how many were removed.
     @discardableResult
     public func removeLeftoverPartials(in directory: URL) async throws -> Int {
-        try pathGuard.checkWriteLocation(directory)
-        let folder = try pathGuard.checkTarget(directory)
-        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        var removed = 0
-        for name in names where name.hasPrefix(Self.partialPrefix) {
-            let partial = try pathGuard.checkWriteLocation(folder.appendingPathComponent(name))
-            try FileManager.default.removeItem(at: partial)
-            removed += 1
+        return try await onIOThreads {
+            try pathGuard.checkWriteLocation(directory)
+            let folder = try pathGuard.checkTarget(directory)
+            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            var removed = 0
+            for name in names where name.hasPrefix(Self.partialPrefix) {
+                let partial = try pathGuard.checkWriteLocation(folder.appendingPathComponent(name))
+                try FileManager.default.removeItem(at: partial)
+                removed += 1
+            }
+            return removed
         }
-        return removed
     }
 
     // MARK: - Copy
@@ -153,7 +174,9 @@ public struct FileEngine: Sendable {
         to destination: URL,
         progress: (@Sendable (CopyProgress) -> Void)? = nil
     ) async throws {
-        try copyItem(at: url, to: destination, control: nil, progress: progress)
+        try await onIOThreads {
+            try copyItem(at: url, to: destination, control: nil, progress: progress)
+        }
     }
 
     /// The copy itself, synchronous so it can run inside an operation; checks
