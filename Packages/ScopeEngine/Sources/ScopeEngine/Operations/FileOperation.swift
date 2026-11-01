@@ -47,6 +47,25 @@ public struct FileOperation: Sendable, Hashable {
     }
 
     /// The folder new items appear in, when there is one.
+    /// Items this operation renames, moves away or trashes. Nothing else may
+    /// use them (or anything inside them) while it runs.
+    var changedItems: [URL] {
+        switch kind {
+        case .move(let items, _), .trash(let items): items
+        case .rename(let item, _): [item]
+        case .ejectVolume(let item): [item]
+        case .undo(let record): record.steps.flatMap(\.touchedItems)
+        case .copy, .duplicate, .compress, .extract, .newFolder, .mountImage: []
+        }
+    }
+
+    /// Everything the operation reads or writes into: its items and its
+    /// destination folder. Two operations conflict when one changes an item
+    /// that is, contains or lies inside one of the other's.
+    var usedItems: [URL] {
+        touchedItems + [destinationFolder].compactMap { $0 }
+    }
+
     public var destinationFolder: URL? {
         switch kind {
         case .copy(_, let folder), .move(_, let folder): folder
