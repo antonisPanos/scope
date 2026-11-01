@@ -86,6 +86,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("eject")
             add("trash")
             separator()
+            add("cut", selection.count == 1 ? "Cut “\(selection[0].name)”" : "Cut \(selection.count) Items")
             add("copy", selection.count == 1 ? "Copy “\(selection[0].name)”" : "Copy \(selection.count) Items")
             add("copyPath")
             add("addToSidebar")
