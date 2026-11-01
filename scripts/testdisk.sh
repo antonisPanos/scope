@@ -243,7 +243,11 @@ PY
   hdiutil makehybrid -iso -joliet -o disk-images/small.iso disk-images/iso-source -quiet
   rm -rf disk-images/iso-source
 
-  # Aliases and Finder tags need Foundation.
+  # Audio for the preview pane's duration (images come from the Swift helper).
+  mkdir -p media
+  say -o media/hello.aiff "Hello from the Pandora test disk" 2>/dev/null || true
+
+  # Aliases, Finder tags, Recents and images need Foundation.
   log "Writing aliases and Finder tags"
   swift "$SCRIPT_DIR/testdisk-fixtures.swift" "$root"
   # Spotlight indexes a fresh disk slowly; import the folders that Recents and
@@ -262,6 +266,8 @@ many/         a folder with many small files, for speed tests
 archives/     zip, tar, tar.gz, tar.bz2, tar.xz, 7z, gz, xz; a large zip for cancel tests;
               malicious zip and tar with ../ and absolute paths
 disk-images/  small .dmg, .sparseimage, .sparsebundle and .iso to mount and eject
+images/       a JPEG with camera data, a PNG, and a dozen photos for the gallery
+media/        a short audio clip
 TXT
   cd - >/dev/null
 }

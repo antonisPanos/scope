@@ -30,6 +30,7 @@ struct Command: Identifiable {
         switch key {
         case Self.upArrow: text += "↑"
         case Self.downArrow: text += "↓"
+        case "-": text += "−"
         default: text += key.uppercased()
         }
         return text
@@ -41,7 +42,13 @@ struct Command: Identifiable {
 
 @MainActor
 enum Commands {
-    static let all: [Command] = file + view + sortBy + go
+    static let all: [Command] = file + viewModes + view + sortBy + go
+
+    /// as Icons (Cmd+1), as Details (Cmd+2), as Columns (Cmd+3), as Gallery (Cmd+4), as List (Cmd+5).
+    private static let viewModes: [Command] = ViewMode.allCases.map { mode in
+        Command(id: "view." + mode.rawValue, title: "as \(mode.title)", menu: .view, key: mode.shortcut, modifiers: .command,
+                run: { $0.model.viewMode = mode }, isChecked: { $0.model.viewMode == mode })
+    }
 
     static func command(id: String) -> Command? {
         all.first { $0.id == id }
@@ -59,10 +66,14 @@ enum Commands {
     ]
 
     private static let view: [Command] = [
-        Command(id: "viewDetails", title: "as Details", menu: .view, key: "2", modifiers: .command,
-                run: { $0.model.viewMode = .details }, isChecked: { $0.model.viewMode == .details }),
-        Command(id: "viewList", title: "as List", menu: .view, key: "5", modifiers: .command,
-                run: { $0.model.viewMode = .list }, isChecked: { $0.model.viewMode == .list }),
+        Command(id: "biggerIcons", title: "Make Icons Bigger", menu: .view, key: "=", modifiers: .command,
+                run: { _ in AppSettings.shared.iconSize *= 1.25 }, isEnabled: { $0.model.viewMode == .icons }, startsGroup: true),
+        Command(id: "smallerIcons", title: "Make Icons Smaller", menu: .view, key: "-", modifiers: .command,
+                run: { _ in AppSettings.shared.iconSize /= 1.25 }, isEnabled: { $0.model.viewMode == .icons }),
+        Command(id: "quickLook", title: "Quick Look", menu: .view, key: "y", modifiers: .command,
+                run: { $0.toggleQuickLook() }, isEnabled: { !$0.selectedItems.isEmpty }, startsGroup: true),
+        Command(id: "togglePreview", title: "Show Preview", menu: .view, key: "p", modifiers: [.shift, .command],
+                run: { $0.togglePreview() }, isChecked: { $0.isPreviewVisible }),
         Command(id: "toggleHidden", title: "Show Hidden Files", menu: .view, key: ".", modifiers: [.shift, .command],
                 run: { _ in AppSettings.shared.showHiddenFiles.toggle() },
                 isChecked: { _ in AppSettings.shared.showHiddenFiles }, startsGroup: true),

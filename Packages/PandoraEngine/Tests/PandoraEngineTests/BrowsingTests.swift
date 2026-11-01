@@ -161,3 +161,34 @@ import Testing
         #expect(PathGuard.readOnly.permits(URL(fileURLWithPath: "/etc")))
     }
 }
+
+@Suite struct ItemDetailsTests {
+    @Test func describesAFolderAnImageAndALink() async throws {
+        let sandbox = try Sandbox()
+        try sandbox.write("folder/a.txt", "a")
+        try sandbox.write("folder/b.txt", "b")
+        try sandbox.write("folder/.hidden", "h")
+        try sandbox.symlink("link", to: "folder")
+
+        // A 3 x 2 PNG.
+        let png = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEklEQVR4nGP4z8DwnwEIQSwAP90E/GlZz9YAAAAASUVORK5CYII="))
+        try sandbox.write("image.png", png)
+
+        let folder = try await sandbox.engine.details(for: sandbox.url("folder"))
+        #expect(folder.folderItemCount == 2)
+
+        let image = try await sandbox.engine.details(for: sandbox.url("image.png"))
+        #expect(image.pixelWidth == 3 && image.pixelHeight == 2)
+
+        let link = try await sandbox.engine.details(for: sandbox.url("link"))
+        #expect(link.linkTarget == "folder")
+    }
+
+    @Test func refusesItemsOutsideTheGuard() async throws {
+        let sandbox = try Sandbox()
+        await #expect(throws: PathGuardViolation.self) {
+            try await sandbox.engine.details(for: URL(fileURLWithPath: "/etc/hosts"))
+        }
+    }
+}

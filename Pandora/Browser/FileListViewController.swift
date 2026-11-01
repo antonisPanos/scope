@@ -20,11 +20,12 @@ final class FileNode {
 /// In the list view only the name column shows and folders don't expand; in
 /// the details view folders expand in place, Finder style.
 @MainActor
-final class FileListViewController: NSViewController {
+final class FileListViewController: NSViewController, FileBrowsingView {
     let model: BrowserModel
     /// Called when the user opens items (double-click, Cmd+Down, Cmd+O).
     var onOpen: (([FileItem]) -> Void)?
     var onSelectionChange: (() -> Void)?
+    var onQuickLook: (() -> Void)?
 
     private let scrollView = NSScrollView()
     private let outlineView = FileOutlineView()
@@ -63,10 +64,10 @@ final class FileListViewController: NSViewController {
 
         var width: CGFloat {
             switch self {
-            case .name: 320
-            case .modified, .created, .added: 170
-            case .size: 80
-            case .kind: 180
+            case .name: 220
+            case .modified, .created, .added: 150
+            case .size: 70
+            case .kind: 130
             case .tags: 120
             }
         }
@@ -88,7 +89,8 @@ final class FileListViewController: NSViewController {
             let tableColumn = NSTableColumn(identifier: column.identifier)
             tableColumn.title = column.title
             tableColumn.width = column.width
-            tableColumn.minWidth = column == .name ? 120 : 50
+            // Dates and kinds stay readable; the name column absorbs the rest.
+            tableColumn.minWidth = column == .name ? 160 : column.width * 0.65
             tableColumn.isHidden = column.hiddenByDefault
             if let key = column.sortKey {
                 tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: key.rawValue, ascending: true)
@@ -107,8 +109,9 @@ final class FileListViewController: NSViewController {
         outlineView.allowsMultipleSelection = true
         outlineView.allowsColumnReordering = true
         outlineView.allowsColumnResizing = true
-        outlineView.columnAutoresizingStyle = .noColumnAutoresizing
-        outlineView.autosaveName = "FileListColumns"
+        // The name column takes up any spare width, as in Finder.
+        outlineView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        outlineView.autosaveName = "FileListColumns.v3"
         outlineView.autosaveTableColumns = true
         outlineView.autosaveExpandedItems = false
         outlineView.indentationPerLevel = 14
@@ -117,6 +120,7 @@ final class FileListViewController: NSViewController {
         outlineView.target = self
         outlineView.doubleAction = #selector(openClicked)
         outlineView.onOpenSelection = { [weak self] in self?.openSelection() }
+        outlineView.onQuickLook = { [weak self] in self?.onQuickLook?() }
 
         scrollView.documentView = outlineView
         scrollView.hasVerticalScroller = true
@@ -130,6 +134,8 @@ final class FileListViewController: NSViewController {
         }
         applyViewMode()
         applySortIndicator()
+        // When swapped in for another view, the model already has items.
+        reloadItems()
     }
 
     // MARK: - Updates from the model
@@ -164,7 +170,7 @@ final class FileListViewController: NSViewController {
         scrollView.tile()
         scrollView.hasHorizontalScroller = details
         outlineView.indentationPerLevel = details ? 14 : 0
-        outlineView.sizeLastColumnToFit()
+        outlineView.tile()
         outlineView.reloadData()
     }
 
@@ -487,19 +493,18 @@ final class PaletteRowView: NSTableRowView {
     override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
 }
 
-/// Outline view with Finder's open shortcuts: Cmd+Down and Cmd+O.
+/// Outline view with Finder's open and Quick Look keys.
 @MainActor
 final class FileOutlineView: NSOutlineView {
     var onOpenSelection: (() -> Void)?
+    var onQuickLook: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags == [.command, .numericPad, .function] || flags == [.command, .function] || flags == .command,
-           event.specialKey == .downArrow {
-            onOpenSelection?()
-            return
+        switch FileViewKeys.action(for: event) {
+        case .open?: onOpenSelection?()
+        case .quickLook?: onQuickLook?()
+        case nil: super.keyDown(with: event)
         }
-        super.keyDown(with: event)
     }
 }
 

@@ -4,8 +4,23 @@ A personal file manager for macOS that sits beside Finder: tabs, dual split, a
 preview pane, every classic view, a real operations queue and a search that
 works, with Finder's keyboard shortcuts. Requires macOS 27.2 and Xcode 27.
 
-Milestones done: M0 (project, file engine with its path guard, test disks, CI)
-and M1 (the browse window). File operations such as copy and move arrive in M3.
+Milestones done: M0 (project, file engine with its path guard, test disks, CI),
+M1 (the browse window) and M2 (views and preview). File operations such as
+copy and move arrive in M3.
+
+## What M2 adds
+
+- Five views: Icons (Cmd+1), Details (Cmd+2), Columns (Cmd+3), Gallery
+  (Cmd+4) and List (Cmd+5), from the View menu or the toolbar. The selection
+  carries over when you switch.
+- Icon grid that re-flows to the window width, with thumbnails from Quick
+  Look. Size it with the slider in the status bar, Cmd+= and Cmd+-, or a pinch.
+  Thumbnails held in memory are capped at 64 MB; Pandora keeps no disk cache.
+- Gallery: a large preview of the selected item over a strip of thumbnails.
+- Preview pane on the right in every view (Shift+Cmd+P): a Quick Look preview
+  plus size, dates, last opened, tags, where, and for images their dimensions
+  and camera, for audio and video their length, for folders their item count.
+- Quick Look on Space or Cmd+Y; arrow keys in the panel move the selection.
 
 ## What M1 does
 

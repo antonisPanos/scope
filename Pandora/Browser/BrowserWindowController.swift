@@ -1,6 +1,7 @@
 import AppKit
 import os
 import PandoraEngine
+import Quartz
 import SwiftUI
 
 /// One browser tab. Each tab is its own window, grouped with the others by
@@ -68,8 +69,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func wireUp() {
         model.onChange = { [weak self] change in self?.update(change) }
-        content.fileList.onOpen = { [weak self] items in self?.open(items) }
-        content.fileList.onSelectionChange = { [weak self] in self?.content.updateStatus() }
+        content.onOpen = { [weak self] items in self?.open(items) }
+        content.onQuickLook = { [weak self] in self?.toggleQuickLook() }
+        content.onSelectionChange = { [weak self] in self?.quickLookSelectionChanged() }
         content.pathBar.onNavigate = { [weak self] url in self?.model.navigate(to: .folder(url)) }
         content.pathBar.onSubmit = { [weak self] text in
             self?.goToTypedPath(text)
@@ -96,7 +98,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func focusFileList() {
-        content.fileList.focus()
+        content.fileView.focus()
     }
 
     // MARK: - Tabs and windows
@@ -113,6 +115,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         palette?.close()
+        content.close()
         model.close()
         onClose?(self)
     }
@@ -132,7 +135,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         return command.isEnabled(self)
     }
 
-    var selectedItems: [FileItem] { content.fileList.selectedItems }
+    var selectedItems: [FileItem] { content.fileView.selectedItems }
 
     func openSelection() {
         open(selectedItems)
@@ -141,6 +144,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var isPathBarVisible: Bool { content.isPathBarVisible }
     var isStatusBarVisible: Bool { content.isStatusBarVisible }
     var isSidebarVisible: Bool { !sidebarItem.isCollapsed }
+    var isPreviewVisible: Bool { content.isPreviewVisible }
+    func togglePreview() { content.isPreviewVisible.toggle() }
 
     func togglePathBar() { content.isPathBarVisible.toggle() }
     func toggleStatusBar() { content.isStatusBarVisible.toggle() }
