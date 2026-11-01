@@ -38,6 +38,13 @@ final class BrowserViewController: NSViewController {
         onUndo: { [weak self] id in self?.onUndoOperation?(id) },
         onClose: { [weak self] in self?.isActivityVisible = false }))
     private let activitySeparator = NSBox()
+    /// The search filters for this tab, and the bar that shows them during a search.
+    let search = SearchSettings()
+    var onSearchChange: (() -> Void)?
+    var onEndSearch: (() -> Void)?
+    private lazy var searchHost = NSHostingView(rootView: makeSearchBar())
+    private let searchSeparator = NSBox()
+    private var searchHeight: NSLayoutConstraint!
     private var activityHeight: NSLayoutConstraint!
 
     init(model: BrowserModel) {
@@ -105,7 +112,8 @@ final class BrowserViewController: NSViewController {
             statusBar.addSubview(view)
         }
         activitySeparator.boxType = .separator
-        for view in [pathBar, pathSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
+        searchSeparator.boxType = .separator
+        for view in [pathBar, pathSeparator, searchHost, searchSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -116,7 +124,13 @@ final class BrowserViewController: NSViewController {
             pathSeparator.topAnchor.constraint(equalTo: pathBar.bottomAnchor),
             pathSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             pathSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.topAnchor.constraint(equalTo: pathSeparator.bottomAnchor),
+            searchHost.topAnchor.constraint(equalTo: pathSeparator.bottomAnchor),
+            searchHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            searchHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            searchSeparator.topAnchor.constraint(equalTo: searchHost.bottomAnchor),
+            searchSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            searchSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            split.topAnchor.constraint(equalTo: searchSeparator.bottomAnchor),
             split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             split.bottomAnchor.constraint(equalTo: activitySeparator.topAnchor),
@@ -148,6 +162,10 @@ final class BrowserViewController: NSViewController {
             spinner.centerYAnchor.constraint(equalTo: fileContainer.centerYAnchor),
         ])
         statusLeft.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        searchHeight = searchHost.heightAnchor.constraint(equalToConstant: 0)
+        searchHeight.isActive = true
+        searchHost.isHidden = true
+        searchSeparator.isHidden = true
         activityHeight = activity.heightAnchor.constraint(equalToConstant: 0)
         activityHeight.isActive = true
         activity.isHidden = true
@@ -245,6 +263,7 @@ final class BrowserViewController: NSViewController {
         }
         fileView.modelDidChange(change)
         if change.contains(.items) || change.contains(.location) { selectionDidChange() }
+        if change.contains(.location) || change.contains(.status) || change.contains(.items) { updateSearchBar() }
         if change.contains(.status) { updateStatus() }
     }
 
@@ -266,6 +285,22 @@ final class BrowserViewController: NSViewController {
         } else {
             statusRight.stringValue = ""
         }
+    }
+
+    private func makeSearchBar() -> SearchBar {
+        SearchBar(settings: search, tags: SidebarStore.shared.tags.compactMap(\.tagName),
+                  resultCount: model.location.isSearch ? model.items.count : 0, isSearching: model.isSearching,
+                  onChange: { [weak self] in self?.onSearchChange?() },
+                  onStop: { [weak self] in self?.model.stopSearch() },
+                  onClose: { [weak self] in self?.onEndSearch?() })
+    }
+
+    private func updateSearchBar() {
+        let visible = model.location.isSearch
+        searchHost.isHidden = !visible
+        searchSeparator.isHidden = !visible
+        searchHeight.constant = visible ? 30 : 0
+        if visible { searchHost.rootView = makeSearchBar() }
     }
 
     @objc private func sizeChanged() {
@@ -322,6 +357,7 @@ final class BrowserViewController: NSViewController {
         case .folder: "This folder is empty."
         case .recents: "Nothing opened recently" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
         case .tag(let tag): "No items are tagged \(tag)" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
+        case .search: "Nothing found."
         }
     }
 }

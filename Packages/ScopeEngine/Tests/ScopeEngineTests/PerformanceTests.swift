@@ -23,4 +23,19 @@ struct PerformanceTests {
         #expect(listing < .seconds(10))
         #expect(sorting < .seconds(5))
     }
+
+    @Test func searchesTheWholeTestDisk() async throws {
+        let clock = ContinuousClock()
+        var found = 0
+        var firstResult: Duration?
+        let start = clock.now
+        for try await batch in try engine.search(SearchQuery(text: "file-0999"), in: Sandbox.testDisk) {
+            if firstResult == nil { firstResult = clock.now - start }
+            found += batch.count
+        }
+        let total = clock.now - start
+        print("Searched the test disk in \(total), first result after \(firstResult ?? .zero), \(found) found")
+        #expect(found == 100)
+        #expect(total < .seconds(15))
+    }
 }

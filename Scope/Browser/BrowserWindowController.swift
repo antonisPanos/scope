@@ -4,13 +4,19 @@ import ScopeEngine
 import Quartz
 import SwiftUI
 
-/// One browser tab. Each tab is its own window, grouped with the others by
-/// macOS's native window tabs, so Cmd+T, the tab bar, dragging tabs out and
-/// Merge All Windows all behave as everywhere else on the Mac.
+/// One browser window. Each window is a tab in macOS's native window tabs, so
+/// Cmd+T, the tab bar, dragging tabs out and Merge All Windows behave as
+/// everywhere else on the Mac. Split view puts two panes side by side, each
+/// with its own tabs; commands act on the pane that has focus.
 @MainActor
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
-    let model: BrowserModel
-    private let content: BrowserViewController
+    private let workspace: WorkspaceController
+    /// The tab with focus: in the focused pane, its visible tab.
+    private var content: BrowserViewController { workspace.activeContent }
+    var model: BrowserModel { content.model }
+    private var firstResponderObservation: NSKeyValueObservation?
+    /// Whether the preview pane was showing before split view hid it.
+    private var previewBeforeSplit = true
     private let splitController = NSSplitViewController()
     private let sidebarSelection = SidebarSelection()
     private var sidebarItem: NSSplitViewItem!
@@ -27,10 +33,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private static let viewModeItem = NSToolbarItem.Identifier("viewMode")
     private static let paletteItem = NSToolbarItem.Identifier("palette")
     private static let activityItem = NSToolbarItem.Identifier("activity")
+    private static let searchItem = NSToolbarItem.Identifier("search")
+    private var searchToolbarItem: NSSearchToolbarItem?
+    private var searchDebounce: Task<Void, Never>?
 
     init(location: Location) {
-        model = BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location)
-        content = BrowserViewController(model: model)
+        let first = BrowserViewController(model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+        workspace = WorkspaceController(pane: PaneController(tab: first))
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 620),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -49,7 +58,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarItem.minimumThickness = 170
         sidebarItem.maximumThickness = 320
         sidebarItem.canCollapse = true
-        let contentItem = NSSplitViewItem(viewController: content)
+        let contentItem = NSSplitViewItem(viewController: workspace)
         contentItem.titlebarSeparatorStyle = .line
         splitController.addSplitViewItem(sidebarItem)
         splitController.addSplitViewItem(contentItem)
@@ -63,47 +72,164 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
 
-        wireUp()
-        update(.location)
+        contextMenu.delegate = contextMenuBuilder
+        contextMenuBuilder.controller = self
+        wire(first)
+        wire(workspace.panes[0])
+        sidebarSelection.onSelect = { [weak self] item in self?.model.navigate(to: item.location) }
+        sidebarSelection.onEject = { [weak self] item in SidebarStore.shared.eject(item, presentingIn: self?.window) }
+        // Focus decides which pane commands act on.
+        firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
+            MainActor.assumeIsolated {
+                guard let self, let view = window.firstResponder as? NSView else { return }
+                if self.workspace.activate(containing: view) { self.activeContentChanged() }
+            }
+        }
+        windowUpdate(.location)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private func wireUp() {
-        model.onChange = { [weak self] change in self?.update(change) }
-        content.onOpen = { [weak self] items in self?.open(items) }
-        content.onQuickLook = { [weak self] in self?.toggleQuickLook() }
-        content.onSelectionChange = { [weak self] in self?.quickLookSelectionChanged() }
-        content.onDrop = { [weak self] urls, folder, copy in self?.handleDrop(urls, onto: folder, copy: copy) }
-        content.onRename = { [weak self] in
+    /// Connects one tab's views and model to the window.
+    private func wire(_ tab: BrowserViewController) {
+        tab.model.onChange = { [weak self, weak tab] change in
+            guard let self, let tab else { return }
+            tab.update(change)
+            if change.contains(.location) { self.workspace.pane(containing: tab)?.refreshStrip() }
+            if tab === self.content { self.windowUpdate(change) }
+        }
+        tab.onOpen = { [weak self] items in self?.open(items) }
+        tab.onQuickLook = { [weak self] in self?.toggleQuickLook() }
+        tab.onSelectionChange = { [weak self] in self?.quickLookSelectionChanged() }
+        tab.onDrop = { [weak self] urls, folder, copy in self?.handleDrop(urls, onto: folder, copy: copy) }
+        tab.onRename = { [weak self] in
             guard let self, self.allowsWrites else { return }
             self.renameSelection()
         }
-        content.onUndoOperation = { [weak self] id in
+        tab.onSearchChange = { [weak self] in self?.runSearch() }
+        tab.onEndSearch = { [weak self] in self?.endSearch() }
+        tab.onUndoOperation = { [weak self] id in
             let window = self?.window
             Task { await OperationsController.shared.undo(id, from: window) }
         }
-        contextMenu.delegate = contextMenuBuilder
-        contextMenuBuilder.controller = self
-        content.contextMenu = contextMenu
-        content.pathBar.onNavigate = { [weak self] url in self?.model.navigate(to: .folder(url)) }
-        content.pathBar.onSubmit = { [weak self] text in
+        tab.contextMenu = contextMenu
+        tab.pathBar.onNavigate = { [weak tab] url in tab?.model.navigate(to: .folder(url)) }
+        tab.pathBar.onSubmit = { [weak self] text in
             self?.goToTypedPath(text)
             return nil
         }
-        sidebarSelection.onSelect = { [weak self] item in self?.model.navigate(to: item.location) }
-        sidebarSelection.onEject = { [weak self] item in SidebarStore.shared.eject(item, presentingIn: self?.window) }
     }
 
-    private func update(_ change: BrowserModel.Change) {
-        content.update(change)
+    private func wire(_ pane: PaneController) {
+        pane.onActivate = { [weak self] pane in
+            guard let self, let index = self.workspace.panes.firstIndex(where: { $0 === pane }) else { return }
+            self.workspace.activate(index)
+            self.activeContentChanged()
+        }
+        pane.onNewTab = { [weak self] pane in self?.addTab(to: pane) }
+        pane.onCloseTab = { [weak self] pane, index in self?.closeTab(in: pane, at: index) }
+    }
+
+    /// Refreshes everything that follows the focused tab: title, sidebar, toolbar, search field.
+    private func activeContentChanged() {
+        searchToolbarItem?.searchField.stringValue = content.model.location.isSearch ? content.search.text : ""
+        windowUpdate([.location, .viewMode])
+    }
+
+    private func windowUpdate(_ change: BrowserModel.Change) {
         if change.contains(.location) {
+            if !model.location.isSearch, searchToolbarItem?.searchField.stringValue.isEmpty == false,
+               searchToolbarItem?.searchField.currentEditor() == nil {
+                searchToolbarItem?.searchField.stringValue = ""
+                content.search.reset()
+            }
             window?.title = model.location.title
-            window?.subtitle = ""
+            window?.subtitle = workspace.isSplit ? (workspace.otherPane?.activeTab.model.location.title).map { "and \($0)" } ?? "" : ""
             sidebarSelection.selectedID = SidebarStore.shared.item(for: model.location)?.id
         }
         if change.contains(.viewMode) || change.contains(.location) { updateToolbar() }
+    }
+
+    // MARK: - Split view and pane tabs
+
+    var isSplit: Bool { workspace.isSplit }
+
+    /// Shows a second pane beside the first, at the same folder, or closes it.
+    /// The preview pane hides while split is on.
+    func toggleSplit() {
+        if workspace.isSplit {
+            if let removed = workspace.removeOtherPane() {
+                for tab in removed.tabs { tab.close(); tab.model.close() }
+            }
+            content.isPreviewVisible = previewBeforeSplit
+            activeContentChanged()
+        } else {
+            previewBeforeSplit = content.isPreviewVisible
+            let tab = makeTab(at: model.location)
+            let pane = PaneController(tab: tab)
+            wire(pane)
+            workspace.addPane(pane)
+            for tab in workspace.allContents { tab.isPreviewVisible = false }
+            workspace.activate(1)
+            activeContentChanged()
+            tab.fileView.focus()
+        }
+    }
+
+    private func makeTab(at location: Location) -> BrowserViewController {
+        let tab = BrowserViewController(model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+        wire(tab)
+        _ = tab.view
+        if workspace.isSplit { tab.isPreviewVisible = false }
+        return tab
+    }
+
+    private func addTab(to pane: PaneController) {
+        let tab = makeTab(at: pane.activeTab.model.location)
+        if workspace.isSplit { tab.isPreviewVisible = false }
+        pane.addTab(tab)
+    }
+
+    private func closeTab(in pane: PaneController, at index: Int) {
+        if let removed = pane.removeTab(at: index) {
+            removed.close()
+            removed.model.close()
+        }
+    }
+
+    /// Cmd+W: in split view closes the focused pane's tab while it has more
+    /// than one, then the second pane; otherwise closes the window.
+    @objc func closeTabOrWindow(_ sender: Any?) {
+        if workspace.isSplit {
+            let pane = workspace.activePane
+            if pane.tabs.count > 1 {
+                closeTab(in: pane, at: pane.activeIndex)
+            } else {
+                toggleSplit()
+            }
+        } else {
+            window?.performClose(sender)
+        }
+    }
+
+    /// Moves focus to the left (0) or right (1) pane.
+    func focusPane(_ index: Int) {
+        guard workspace.panes.indices.contains(index) else { return }
+        workspace.activate(index)
+        activeContentChanged()
+        content.fileView.focus()
+    }
+
+    /// The folder shown in the other pane, for copying or moving across.
+    var otherPaneFolder: URL? {
+        workspace.otherPane?.activeTab.model.location.folderURL
+    }
+
+    func transferToOtherPane(move: Bool) {
+        let urls = selectedItems.map(\.url)
+        guard let folder = otherPaneFolder, !urls.isEmpty else { return }
+        startOperation(move ? .move(urls, into: folder) : .copy(urls, into: folder))
     }
 
     private func updateToolbar() {
@@ -119,6 +245,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     // MARK: - Tabs and windows
 
     override func newWindowForTab(_ sender: Any?) {
+        // In split view, Cmd+T opens a tab on the focused side.
+        if workspace.isSplit {
+            addTab(to: workspace.activePane)
+            return
+        }
         guard let window, let app = NSApp.delegate as? AppDelegate else { return }
         let tab = app.makeBrowser(location: model.location)
         if let tabWindow = tab.window {
@@ -130,8 +261,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         palette?.close()
-        content.close()
-        model.close()
+        firstResponderObservation = nil
+        for tab in workspace.allContents {
+            tab.close()
+            tab.model.close()
+        }
         onClose?(self)
     }
 
@@ -168,6 +302,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     #if SCOPE_DEV
     func selectForHooks(_ urls: [URL]) {
         content.fileView.select(urls, scroll: true)
+    }
+
+    /// "search:<mode>:<text>" with mode contains, glob, regex or contents.
+    func searchForHooks(_ argument: String) {
+        let parts = argument.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let mode = SearchSettings.Mode(rawValue: parts[0]) else { return }
+        content.search.mode = mode
+        content.search.text = parts[1]
+        searchToolbarItem?.searchField.stringValue = parts[1]
+        runSearch()
+    }
+
+    var searchSettingsForHooks: SearchSettings { content.search }
+
+    func logPanesForHooks() {
+        for (index, pane) in workspace.panes.enumerated() {
+            Self.logger.notice("Pane \(index)\(index == self.workspace.activePaneIndex ? " (focused)" : ""): tabs \(pane.strip.titles.joined(separator: " | "), privacy: .public), active \(pane.activeIndex), strip \(pane.showsTabStrip) \(pane.stripFrameDescription, privacy: .public), frame \(NSStringFromRect(pane.view.frame), privacy: .public)")
+        }
     }
     #endif
 
@@ -336,7 +488,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
 extension BrowserWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem, Self.paletteItem]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem,
+         Self.paletteItem, Self.searchItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -376,6 +529,16 @@ extension BrowserWindowController: NSToolbarDelegate {
                 self.showActivity(!self.isActivityVisible)
             })
             return item
+        case Self.searchItem:
+            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            item.searchField.placeholderString = "Search"
+            item.searchField.delegate = self
+            item.searchField.sendsSearchStringImmediately = false
+            item.searchField.target = self
+            item.searchField.action = #selector(searchFieldChanged(_:))
+            item.preferredWidthForSearchField = 200
+            searchToolbarItem = item
+            return item
         case Self.paletteItem:
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.image = NSImage(systemSymbolName: "command", accessibilityDescription: "Command Palette")
@@ -400,5 +563,84 @@ extension BrowserWindowController: NSToolbarDelegate {
 
     @objc private func paletteClicked() {
         showCommandPalette()
+    }
+}
+
+// MARK: - Search
+
+extension BrowserWindowController: NSSearchFieldDelegate {
+    /// Cmd+F: put the cursor in the search field.
+    func beginSearch() {
+        searchToolbarItem?.beginSearchInteraction()
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSSearchField, field === searchToolbarItem?.searchField else { return }
+        // Wait for a pause in typing before crawling.
+        searchDebounce?.cancel()
+        searchDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            self.content.search.text = field.stringValue
+            self.runSearch()
+        }
+    }
+
+    @objc func searchFieldChanged(_ sender: NSSearchField) {
+        searchDebounce?.cancel()
+        content.search.text = sender.stringValue
+        runSearch()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === searchToolbarItem?.searchField else { return false }
+        switch selector {
+        case #selector(NSResponder.cancelOperation(_:)):
+            endSearch()
+            return true
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.moveDown(_:)):
+            // Return or Down moves into the results.
+            focusFileList()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Searches the folder on screen (or the folder the current search is in)
+    /// with the field's text and the filter bar's settings.
+    func runSearch() {
+        let query = content.search.query
+        guard let root = model.location.searchRoot else { return }
+        if query.isEmpty && !model.location.isSearch { return }
+        if query.text.trimmingCharacters(in: .whitespaces).isEmpty && query.isEmpty {
+            endSearch()
+            return
+        }
+        let destination = Location.search(query, in: root)
+        if model.location.isSearch {
+            model.replace(with: destination)
+        } else {
+            model.navigate(to: destination)
+        }
+    }
+
+    /// Back to the folder that was searched.
+    func endSearch() {
+        searchDebounce?.cancel()
+        searchToolbarItem?.searchField.stringValue = ""
+        content.search.reset()
+        guard case .search(_, let root) = model.location else { return }
+        model.replace(with: .folder(root))
+        focusFileList()
+    }
+
+    /// Escape stops a running search, then ends it.
+    override func cancelOperation(_ sender: Any?) {
+        if model.isSearching {
+            model.stopSearch()
+        } else if model.location.isSearch {
+            endSearch()
+        }
     }
 }

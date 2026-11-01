@@ -28,7 +28,8 @@ enum MainMenu {
         file.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
         addCommands(.file, to: file)
         file.addItem(.separator())
-        file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        file.addItem(withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTabOrWindow(_:)), keyEquivalent: "w")
+        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W")
         add(file, to: main)
 
         let edit = NSMenu(title: "Edit")

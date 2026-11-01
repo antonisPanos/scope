@@ -63,6 +63,14 @@ final class SpotlightQuery {
         return SpotlightQuery(predicate: predicate, scopes: scopes, sortByLastUsed: true, onResults: onResults)
     }
 
+    /// Files whose contents (or name) contain `text`, from the Spotlight index,
+    /// under `folder`.
+    static func contents(_ text: String, in folder: URL, onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {
+        let predicate = NSPredicate(format: "(%K CONTAINS[cd] %@) OR (%K CONTAINS[cd] %@)",
+                                    "kMDItemTextContent", text, NSMetadataItemDisplayNameKey, text)
+        return SpotlightQuery(predicate: predicate, scopes: [folder], limit: 5000, onResults: onResults)
+    }
+
     /// Items carrying one Finder tag.
     static func tagged(_ tag: String, onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {
         let predicate = NSPredicate(format: "kMDItemUserTags == %@", tag)

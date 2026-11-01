@@ -41,11 +41,12 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     private let headerView = NSTableHeaderView()
 
     enum Column: String, CaseIterable {
-        case name, modified, created, added, size, kind, tags
+        case name, location, modified, created, added, size, kind, tags
 
         var title: String {
             switch self {
             case .name: "Name"
+            case .location: "Where"
             case .modified: "Date Modified"
             case .created: "Date Created"
             case .added: "Date Added"
@@ -63,7 +64,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             case .added: .added
             case .size: .size
             case .kind: .kind
-            case .tags: nil
+            case .tags, .location: nil
             }
         }
 
@@ -74,10 +75,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             case .size: 70
             case .kind: 130
             case .tags: 120
+            case .location: 200
             }
         }
 
-        var hiddenByDefault: Bool { self == .created || self == .added || self == .tags }
+        var hiddenByDefault: Bool { self == .created || self == .added || self == .tags || self == .location }
         var identifier: NSUserInterfaceItemIdentifier { NSUserInterfaceItemIdentifier(rawValue) }
     }
 
@@ -154,7 +156,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             nodesByURL = [:]
             tagCache = [:]
         }
-        if change.contains(.viewMode) { applyViewMode() }
+        if change.contains(.viewMode) || change.contains(.location) { applyViewMode() }
         if change.contains(.sort) { applySortIndicator() }
         if change.contains(.items) { reloadItems() }
     }
@@ -165,6 +167,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         let details = model.viewMode == .details
         for column in Column.allCases where column != .name {
             let tableColumn = outlineView.tableColumn(withIdentifier: column.identifier)
+            if column == .location {
+                // "Where" shows only for search results, in the details view.
+                tableColumn?.isHidden = !(details && model.location.isSearch)
+                continue
+            }
             if details {
                 tableColumn?.isHidden = UserDefaults.standard.bool(forKey: hiddenKey(column))
                     || (column.hiddenByDefault && UserDefaults.standard.object(forKey: hiddenKey(column)) == nil)
@@ -272,7 +279,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     private func makeHeaderMenu() -> NSMenu {
         let menu = NSMenu()
-        for column in Column.allCases where column != .name {
+        for column in Column.allCases where column != .name && column != .location {
             let item = NSMenuItem(title: column.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = column.rawValue
@@ -464,6 +471,7 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         case .size: item.size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "--"
         case .kind: item.kind
         case .tags: ""
+        case .location: PathBar.displayPath(item.url.deletingLastPathComponent())
         }
     }
 

@@ -35,6 +35,8 @@ final class BrowserModel {
     private(set) var availableCapacity: Int64?
     /// An item to select once the next listing arrives (after "Go to" a file).
     var pendingSelection: URL?
+    /// True while a search is still crawling.
+    private(set) var isSearching = false
 
     var viewMode: ViewMode {
         didSet {
@@ -96,7 +98,7 @@ final class BrowserModel {
     var canGoForward: Bool { !forwardStack.isEmpty }
 
     var canGoUp: Bool {
-        guard let url = location.folderURL else { return false }
+        guard let url = location.searchRoot else { return false }
         let parent = url.deletingLastPathComponent()
         return parent.path != url.path && engine.pathGuard.permits(parent)
     }
@@ -109,6 +111,14 @@ final class BrowserModel {
         }
         backStack.append(location)
         forwardStack.removeAll()
+        location = destination
+        load()
+    }
+
+    /// Shows another location without adding to the history; a search
+    /// being refined keystroke by keystroke shouldn't fill the Back list.
+    func replace(with destination: Location) {
+        guard destination != location else { return }
         location = destination
         load()
     }
@@ -129,7 +139,7 @@ final class BrowserModel {
     }
 
     func goUp() {
-        guard canGoUp, let url = location.folderURL else { return }
+        guard canGoUp, let url = location.searchRoot else { return }
         navigate(to: .folder(url.deletingLastPathComponent()), select: url)
     }
 
@@ -160,6 +170,14 @@ final class BrowserModel {
             spotlight = SpotlightQuery.recents { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
         case .tag(let tag):
             spotlight = SpotlightQuery.tagged(tag) { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
+        case .search(let query, let folder):
+            if query.searchContents {
+                spotlight = SpotlightQuery.contents(query.text, in: folder) { [weak self] urls in
+                    self?.loadItems(at: urls, generation: generation)
+                }
+            } else {
+                loadTask = Task { await runSearch(query, in: folder, generation: generation) }
+            }
         }
     }
 
@@ -182,6 +200,53 @@ final class BrowserModel {
             state = .failed(message)
             onChange?(.state)
         }
+    }
+
+    /// Streams search results in as the crawler finds them, re-sorting at
+    /// most every quarter second so a big result set doesn't stall the list.
+    private func runSearch(_ query: SearchQuery, in folder: URL, generation: Int) async {
+        isSearching = true
+        onChange?(.status)
+        defer {
+            if generation == self.generation {
+                isSearching = false
+                onChange?(.status)
+            }
+        }
+        do {
+            var lastSort = ContinuousClock.now
+            for try await batch in try engine.search(query, in: folder) {
+                guard generation == self.generation else { return }
+                allItems += batch
+                if ContinuousClock.now - lastSort > .milliseconds(250) {
+                    lastSort = .now
+                    await applyFilterAndSort()
+                    if state == .loading {
+                        state = .loaded
+                        onChange?(.state)
+                    }
+                }
+            }
+            guard generation == self.generation else { return }
+            await applyFilterAndSort()
+            state = .loaded
+            onChange?(.state)
+        } catch is CancellationError {
+        } catch {
+            guard generation == self.generation else { return }
+            state = .failed(error.localizedDescription)
+            onChange?(.state)
+        }
+    }
+
+    /// Stops a running search and keeps what it found so far.
+    func stopSearch() {
+        guard isSearching else { return }
+        loadTask?.cancel()
+        isSearching = false
+        Task { await applyFilterAndSort() }
+        state = .loaded
+        onChange?([.state, .status])
     }
 
     private func loadItems(at urls: [URL], generation: Int) {
@@ -235,7 +300,8 @@ final class BrowserModel {
     private func applyFilterAndSort() async {
         let source = allItems
         let sort = sort
-        let showHidden = AppSettings.shared.showHiddenFiles
+        // Search results already follow the query's own hidden-files switch.
+        let showHidden = AppSettings.shared.showHiddenFiles || location.isSearch
         let generation = generation
         let result = await Task.detached(priority: .userInitiated) {
             sort.sorted(showHidden ? source : source.filter { !$0.isHidden })

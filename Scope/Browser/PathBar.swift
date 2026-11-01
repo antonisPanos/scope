@@ -71,7 +71,7 @@ final class PathBar: NSView {
         case .folder(let url):
             crumbURLs = Self.crumbURLs(for: url)
             pathControl.pathItems = crumbURLs.map(Self.crumb)
-        case .recents, .tag:
+        case .recents, .tag, .search:
             crumbURLs = []
             let item = NSPathControlItem()
             item.title = location.title

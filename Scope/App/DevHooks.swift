@@ -1,6 +1,7 @@
 #if SCOPE_DEV
 import AppKit
 import os
+import ScopeEngine
 
 /// Development-only remote control, so Claude can drive Scope Dev from the
 /// terminal and look at the result without screen-recording access.
@@ -15,6 +16,8 @@ import os
 ///   "select:<names>"   selects items by name (comma separated) in the folder on screen
 ///   "press:<title>"    presses a button on an open sheet
 ///   "ops"              logs every operation in the activity list
+///   "search:<mode>:<text>"  searches (mode: contains, glob, regex, contents)
+///   "searchkind:<kind>" limits the search to one kind; "endsearch" ends it
 ///   "undo"             undoes the last operation
 ///   "activate"         brings Scope Dev to the front (the palette needs focus)
 ///   "dismiss"          closes any open sheet (alerts)
@@ -73,10 +76,29 @@ enum DevHooks {
                 let progress = snapshot.progress
                 logger.notice("Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)")
             }
+        case "search":
+            controller?.searchForHooks(argument)
+        case "searchkind":
+            // "searchkind:image" limits the current search to one kind.
+            if let kind = SearchQuery.Kind(rawValue: argument) {
+                controller?.searchSettingsForHooks.kinds = [kind]
+                controller?.runSearch()
+            }
+        case "endsearch":
+            controller?.endSearch()
+        case "panes":
+            controller?.logPanesForHooks()
         case "undo":
             controller?.undoLastOperation()
         case "activate":
             NSApp.activate()
+        case "snapshotcontent":
+            // The window's content view only, without the title bar and toolbar.
+            if let view = controller?.window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(argument + ".png")
+                try? rep.representation(using: .png, properties: [:])?.write(to: file)
+            }
         case "dismiss":
             for window in NSApp.windows {
                 if let sheet = window.attachedSheet { window.endSheet(sheet) }

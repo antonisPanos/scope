@@ -6,10 +6,25 @@ enum Location: Hashable, Sendable {
     case folder(URL)
     case recents
     case tag(String)
+    /// Search results for a query, under a folder.
+    case search(SearchQuery, in: URL)
 
     var folderURL: URL? {
         if case .folder(let url) = self { return url }
         return nil
+    }
+
+    /// The folder a search looks in, or the folder on screen.
+    var searchRoot: URL? {
+        switch self {
+        case .folder(let url), .search(_, let url): url
+        default: nil
+        }
+    }
+
+    var isSearch: Bool {
+        if case .search = self { return true }
+        return false
     }
 
     var title: String {
@@ -18,6 +33,8 @@ enum Location: Hashable, Sendable {
             url.path == "/" ? (Volumes.rootName ?? "Macintosh HD") : url.lastPathComponent
         case .recents: "Recents"
         case .tag(let tag): tag
+        case .search(let query, let folder):
+            query.text.isEmpty ? "Search in \(folder.lastPathComponent)" : "“\(query.text)” in \(folder.lastPathComponent)"
         }
     }
 
@@ -26,6 +43,7 @@ enum Location: Hashable, Sendable {
         case .folder: "folder"
         case .recents: "clock"
         case .tag: "tag"
+        case .search: "magnifyingglass"
         }
     }
 }

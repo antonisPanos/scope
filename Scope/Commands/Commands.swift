@@ -34,6 +34,8 @@ struct Command: Identifiable {
         switch key {
         case Self.upArrow: text += "↑"
         case Self.downArrow: text += "↓"
+        case Self.leftArrow: text += "←"
+        case Self.rightArrow: text += "→"
         case "-": text += "−"
         case Self.backspace: text += "⌫"
         default: text += key.uppercased()
@@ -43,6 +45,8 @@ struct Command: Identifiable {
 
     static let upArrow = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
     static let downArrow = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
+    static let leftArrow = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!))
+    static let rightArrow = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
     static let backspace = String(Character(UnicodeScalar(NSBackspaceCharacter)!))
 }
 
@@ -82,6 +86,13 @@ enum Commands {
         Command(id: "trash", title: "Move to Trash", menu: .file, key: Command.backspace, modifiers: .command,
                 run: { $0.trashSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites },
                 startsGroup: true, ignoresKeyRepeat: true),
+        Command(id: "copyToOther", title: "Copy to Other Side", menu: .file, key: "c", modifiers: [.control, .command],
+                run: { $0.transferToOtherPane(move: false) },
+                isEnabled: { !$0.selectedItems.isEmpty && $0.otherPaneFolder != nil && $0.allowsWrites }, startsGroup: true,
+                ignoresKeyRepeat: true),
+        Command(id: "moveToOther", title: "Move to Other Side", menu: .file, key: "m", modifiers: [.control, .command],
+                run: { $0.transferToOtherPane(move: true) },
+                isEnabled: { !$0.selectedItems.isEmpty && $0.otherPaneFolder != nil && $0.allowsWrites }, ignoresKeyRepeat: true),
         Command(id: "addToSidebar", title: "Add to Sidebar", menu: .file, key: "t", modifiers: [.control, .command],
                 run: { $0.addSelectionToSidebar() }, isEnabled: { $0.folderToAddToSidebar != nil }, startsGroup: true),
         Command(id: "eject", title: "Eject", menu: .file, key: "e", modifiers: .command,
@@ -119,6 +130,12 @@ enum Commands {
                 run: { $0.toggleStatusBar() }, isChecked: { $0.isStatusBarVisible }),
         Command(id: "toggleSidebar", title: "Show Sidebar", menu: .view, key: "s", modifiers: [.control, .command],
                 run: { $0.toggleSidebar() }, isChecked: { $0.isSidebarVisible }),
+        Command(id: "toggleSplit", title: "Split View", menu: .view, key: "s", modifiers: [.shift, .command],
+                run: { $0.toggleSplit() }, isChecked: { $0.isSplit }, startsGroup: true),
+        Command(id: "focusLeft", title: "Focus Left Side", menu: .view, key: Command.leftArrow, modifiers: [.option, .command],
+                run: { $0.focusPane(0) }, isEnabled: { $0.isSplit }),
+        Command(id: "focusRight", title: "Focus Right Side", menu: .view, key: Command.rightArrow, modifiers: [.option, .command],
+                run: { $0.focusPane(1) }, isEnabled: { $0.isSplit }),
         Command(id: "toggleActivity", title: "Show Activity", menu: .view, key: "a", modifiers: [.option, .command],
                 run: { $0.showActivity(!$0.isActivityVisible) }, isChecked: { $0.isActivityVisible }),
         Command(id: "reload", title: "Reload", menu: .view, key: "r", modifiers: .command,
@@ -161,6 +178,8 @@ enum Commands {
                 run: { $0.beginTypingPath() }, startsGroup: true),
         Command(id: "editPath", title: "Edit Path", menu: .go, key: "l", modifiers: .command,
                 run: { $0.beginTypingPath() }),
+        Command(id: "find", title: "Find…", menu: .go, key: "f", modifiers: .command,
+                run: { $0.beginSearch() }, isEnabled: { $0.model.location.searchRoot != nil }, startsGroup: true),
         Command(id: "palette", title: "Command Palette…", menu: .go, key: "k", modifiers: .command,
                 run: { $0.showCommandPalette() }, startsGroup: true),
     ]
