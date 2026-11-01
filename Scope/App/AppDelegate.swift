@@ -41,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return controller
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.showWindow(nil)
+        SettingsWindowController.shared.window?.makeKeyAndOrderFront(nil)
+    }
+
     @objc func newWindow(_ sender: Any?) {
         let controller = makeBrowser(location: .folder(BuildIdentity.current.startFolder))
         guard let window = controller.window else { return }

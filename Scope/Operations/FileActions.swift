@@ -11,9 +11,8 @@ extension BrowserWindowController {
     func startOperation(_ kind: FileOperation.Kind) {
         let window = window
         Task {
-            if await OperationsController.shared.start(kind, from: window) != nil {
-                showActivity(true)
-            }
+            // The drawer stays closed: the footer and the toolbar button show progress.
+            await OperationsController.shared.start(kind, from: window)
         }
     }
 
@@ -94,6 +93,21 @@ extension BrowserWindowController {
     func undoLastOperation() {
         let window = window
         Task { await OperationsController.shared.undoLast(from: window) }
+    }
+
+    /// Opens Get Info for the selection (up to five items), or the folder on screen.
+    func showInfo() {
+        let engine = model.engine
+        let window = window
+        if !selectedItems.isEmpty {
+            for item in selectedItems.prefix(5) { InfoWindowController.show(for: item, engine: engine, near: window) }
+            return
+        }
+        guard let folder = currentFolder else { return }
+        Task {
+            guard let item = try? await engine.item(at: folder) else { return }
+            InfoWindowController.show(for: item, engine: engine, near: window)
+        }
     }
 
     // MARK: - Names

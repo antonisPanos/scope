@@ -34,6 +34,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private static let paletteItem = NSToolbarItem.Identifier("palette")
     private static let activityItem = NSToolbarItem.Identifier("activity")
     private static let searchItem = NSToolbarItem.Identifier("search")
+    private static let previewItem = NSToolbarItem.Identifier("preview")
     private var searchToolbarItem: NSSearchToolbarItem?
     private var searchDebounce: Task<Void, Never>?
 
@@ -106,6 +107,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         tab.onRename = { [weak self] in
             guard let self, self.allowsWrites else { return }
             self.renameSelection()
+        }
+        tab.onShowActivity = { [weak self] in self?.showActivity(true) }
+        tab.onShortcut = { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .back: self.model.goBack()
+            case .forward: self.model.goForward()
+            case .reload: self.model.reload()
+            case .trash: if self.allowsWrites { self.trashSelection() }
+            case .open: self.openSelection()
+            case .rename: if self.allowsWrites { self.renameSelection() }
+            case .quickLook: self.toggleQuickLook()
+            }
         }
         tab.onSearchChange = { [weak self] in self?.runSearch() }
         tab.onEndSearch = { [weak self] in self?.endSearch() }
@@ -354,7 +368,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var isSidebarVisible: Bool { !sidebarItem.isCollapsed }
     var isPreviewVisible: Bool { content.isPreviewVisible }
     var isActivityVisible: Bool { content.isActivityVisible }
-    func showActivity(_ visible: Bool) { content.isActivityVisible = visible }
+    func showActivity(_ visible: Bool) {
+        content.isActivityVisible = visible
+        OperationsController.shared.drawerVisible = visible
+        if visible { OperationsController.shared.markAllRead() }
+    }
     func togglePreview() { content.isPreviewVisible.toggle() }
 
     func togglePathBar() { content.isPathBarVisible.toggle() }
@@ -507,7 +525,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 extension BrowserWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem,
-         Self.paletteItem, Self.searchItem]
+         Self.previewItem, Self.paletteItem, Self.searchItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -547,11 +565,20 @@ extension BrowserWindowController: NSToolbarDelegate {
                 self.showActivity(!self.isActivityVisible)
             })
             return item
+        case Self.previewItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Details Panel")
+            item.label = "Details"
+            item.toolTip = "Show or Hide the Details Panel (⇧⌘P)"
+            item.target = self
+            item.action = #selector(previewClicked)
+            return item
         case Self.searchItem:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
             item.searchField.placeholderString = "Search"
             item.searchField.delegate = self
             item.searchField.sendsSearchStringImmediately = false
+            item.searchField.focusRingType = .none
             item.searchField.target = self
             item.searchField.action = #selector(searchFieldChanged(_:))
             item.preferredWidthForSearchField = 200
@@ -577,6 +604,10 @@ extension BrowserWindowController: NSToolbarDelegate {
     @objc private func viewModeClicked(_ sender: NSToolbarItemGroup) {
         guard ViewMode.allCases.indices.contains(sender.selectedIndex) else { return }
         model.viewMode = ViewMode.allCases[sender.selectedIndex]
+    }
+
+    @objc private func previewClicked() {
+        togglePreview()
     }
 
     @objc private func paletteClicked() {

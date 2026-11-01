@@ -17,6 +17,12 @@ final class BrowserViewController: NSViewController {
     private let statusLeft = NSTextField(labelWithString: "")
     private let statusRight = NSTextField(labelWithString: "")
     private let sizeSlider = NSSlider()
+    private let zoomLabel = NSTextField(labelWithString: "")
+    private let zoomReset = NSButton()
+    private var zoomLabelHide: Task<Void, Never>?
+    /// Sizes the slider snaps to when it comes close.
+    private static let zoomStops: [Double] = [16, 24, 32, 48, 64, 96, 128, 192, 256]
+    private static let defaultZoom: Double = 64
     private let message = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let pathSeparator = NSBox()
@@ -27,8 +33,12 @@ final class BrowserViewController: NSViewController {
     var onOpen: (([FileItem]) -> Void)? { didSet { fileView.onOpen = onOpen } }
     var onQuickLook: (() -> Void)? { didSet { fileView.onQuickLook = onQuickLook } }
     var onSelectionChange: (() -> Void)?
+    var onShowActivity: (() -> Void)?
+    private lazy var footerActivity = NSHostingView(rootView: FooterActivity(
+        controller: OperationsController.shared, action: { [weak self] in self?.onShowActivity?() }))
     var onDrop: (([URL], URL, Bool) -> Void)? { didSet { fileView.onDrop = onDrop } }
     var onRename: (() -> Void)? { didSet { fileView.onRename = onRename } }
+    var onShortcut: ((FileViewKeys.Action) -> Void)? { didSet { fileView.onShortcut = onShortcut } }
     var contextMenu: NSMenu? { didSet { fileView.contextMenu = contextMenu } }
     /// Set by the window: what the activity drawer's Undo button does.
     var onUndoOperation: ((UUID) -> Void)?
@@ -97,8 +107,19 @@ final class BrowserViewController: NSViewController {
         sizeSlider.target = self
         sizeSlider.action = #selector(sizeChanged)
         sizeSlider.toolTip = "Icon size (⌘+ and ⌘−, or pinch)"
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        zoomLabel.textColor = Palette.secondaryText
+        zoomLabel.alphaValue = 0
+        zoomReset.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: "Reset icon size")
+        zoomReset.isBordered = false
+        zoomReset.toolTip = "Reset icon size"
+        zoomReset.target = self
+        zoomReset.action = #selector(resetZoom)
         sizeObserver = NotificationCenter.default.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sizeSlider.doubleValue = AppSettings.shared.iconSize }
+            MainActor.assumeIsolated {
+                self?.sizeSlider.doubleValue = AppSettings.shared.iconSize
+                self?.showZoomLabel()
+            }
         }
 
         split.isVertical = true
@@ -110,7 +131,8 @@ final class BrowserViewController: NSViewController {
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
         preview.view.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
 
-        for view in [statusLeft, sizeSlider, statusRight] as [NSView] {
+        footerActivity.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for view in [statusLeft, footerActivity, zoomLabel, zoomReset, sizeSlider, statusRight] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             statusBar.addSubview(view)
         }
@@ -157,7 +179,13 @@ final class BrowserViewController: NSViewController {
             statusLeft.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
             sizeSlider.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
             sizeSlider.widthAnchor.constraint(equalToConstant: 110),
-            sizeSlider.leadingAnchor.constraint(greaterThanOrEqualTo: statusLeft.trailingAnchor, constant: 12),
+            footerActivity.leadingAnchor.constraint(equalTo: statusLeft.trailingAnchor, constant: 16),
+            footerActivity.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            zoomLabel.leadingAnchor.constraint(greaterThanOrEqualTo: footerActivity.trailingAnchor, constant: 12),
+            zoomLabel.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            zoomReset.leadingAnchor.constraint(equalTo: zoomLabel.trailingAnchor, constant: 6),
+            zoomReset.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            sizeSlider.leadingAnchor.constraint(equalTo: zoomReset.trailingAnchor, constant: 6),
             statusRight.leadingAnchor.constraint(equalTo: sizeSlider.trailingAnchor, constant: 12),
             statusRight.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -12),
             statusRight.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
@@ -202,10 +230,12 @@ final class BrowserViewController: NSViewController {
         newView.onQuickLook = onQuickLook
         newView.onDrop = onDrop
         newView.onRename = onRename
+        newView.onShortcut = onShortcut
         newView.contextMenu = contextMenu
         newView.onSelectionChange = { [weak self] in self?.selectionDidChange() }
         pathBar.nextKeyView = subview
         sizeSlider.isHidden = model.viewMode != .icons
+        zoomReset.isHidden = sizeSlider.isHidden || AppSettings.shared.iconSize == Self.defaultZoom
     }
 
     /// Swaps in the view for the model's view mode, keeping the selection.
@@ -219,6 +249,7 @@ final class BrowserViewController: NSViewController {
         default: false
         }
         sizeSlider.isHidden = model.viewMode != .icons
+        zoomReset.isHidden = sizeSlider.isHidden || AppSettings.shared.iconSize == Self.defaultZoom
         guard !matches else { return }
 
         let selection = fileView.selectedItems.map(\.url)
@@ -311,8 +342,36 @@ final class BrowserViewController: NSViewController {
         if visible { searchHost.rootView = makeSearchBar() }
     }
 
+    /// Snaps to the nearest stop when within a few points of it.
     @objc private func sizeChanged() {
-        AppSettings.shared.iconSize = sizeSlider.doubleValue
+        var size = sizeSlider.doubleValue
+        if let stop = Self.zoomStops.min(by: { abs($0 - size) < abs($1 - size) }), abs(stop - size) <= max(3, stop * 0.08) {
+            size = stop
+            sizeSlider.doubleValue = stop
+        }
+        AppSettings.shared.iconSize = size
+    }
+
+    @objc private func resetZoom() {
+        AppSettings.shared.iconSize = Self.defaultZoom
+    }
+
+    /// Shows the zoom level next to the slider while it changes, then fades it out.
+    private func showZoomLabel() {
+        let size = AppSettings.shared.iconSize
+        zoomLabel.stringValue = "\(Int((size / Self.defaultZoom * 100).rounded()))%"
+        zoomReset.isHidden = sizeSlider.isHidden || size == Self.defaultZoom
+        guard !sizeSlider.isHidden else { return }
+        zoomLabel.animator().alphaValue = 1
+        zoomLabelHide?.cancel()
+        zoomLabelHide = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.4
+                self?.zoomLabel.animator().alphaValue = 0
+            }, completionHandler: nil)
+        }
     }
 
     func close() {
@@ -352,6 +411,7 @@ final class BrowserViewController: NSViewController {
     var isActivityVisible: Bool {
         get { !activity.isHidden }
         set {
+            if newValue { OperationsController.shared.markAllRead() }
             activity.isHidden = !newValue
             activitySeparator.isHidden = !newValue
             activityHeight.constant = newValue ? 200 : 0

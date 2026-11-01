@@ -12,6 +12,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     var onQuickLook: (() -> Void)?
     var onDrop: (([URL], URL, Bool) -> Void)?
     var onRename: (() -> Void)?
+    var onShortcut: ((FileViewKeys.Action) -> Void)?
     var contextMenu: NSMenu? {
         didSet { browser.menu = contextMenu }
     }
@@ -31,6 +32,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     override func loadView() {
         browser.delegate = self
+        browser.focusRingType = .none
         browser.target = self
         browser.action = #selector(selectionChanged)
         browser.doubleAction = #selector(openClicked)
@@ -142,6 +144,9 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
             return true
         case .rename?:
             onRename?()
+            return true
+        case let other?:
+            onShortcut?(other)
             return true
         case nil:
             return false

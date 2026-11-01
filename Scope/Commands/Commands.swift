@@ -71,6 +71,8 @@ enum Commands {
                 run: { $0.newFolder() }, isEnabled: { $0.currentFolder != nil && $0.allowsWrites }),
         Command(id: "open", title: "Open", menu: .file, key: "o", modifiers: .command,
                 run: { $0.openSelection() }, isEnabled: { !$0.selectedItems.isEmpty }, startsGroup: true),
+        Command(id: "getInfo", title: "Get Info", menu: .file, key: "i", modifiers: .command,
+                run: { $0.showInfo() }, isEnabled: { !$0.selectedItems.isEmpty || $0.currentFolder != nil }),
         Command(id: "rename", title: "Rename…", menu: .file, key: "", modifiers: [],
                 run: { $0.renameSelection() }, isEnabled: { $0.selectedItems.count == 1 && $0.allowsWrites }, startsGroup: true),
         Command(id: "duplicate", title: "Duplicate", menu: .file, key: "d", modifiers: .command,

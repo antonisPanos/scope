@@ -190,5 +190,25 @@ import Testing
         await #expect(throws: PathGuardViolation.self) {
             try await sandbox.engine.details(for: URL(fileURLWithPath: "/etc/hosts"))
         }
+        await #expect(throws: PathGuardViolation.self) {
+            try await sandbox.engine.folderSize(of: URL(fileURLWithPath: "/etc"))
+        }
+    }
+
+    @Test func addsUpAFolderWithoutFollowingLinks() async throws {
+        let sandbox = try Sandbox()
+        try sandbox.write("f/a.bin", Data(count: 1_000))
+        try sandbox.write("f/sub/b.bin", Data(count: 500))
+        try sandbox.write("f/.hidden", Data(count: 20))
+        try sandbox.symlink("f/loop", to: "..")
+        let size = try await sandbox.engine.folderSize(of: sandbox.url("f"))
+        #expect(size.bytes == 1_520)
+        #expect(size.items == 5)
+        #expect(size.allocatedBytes >= size.bytes)
+
+        chmod(sandbox.url("f/a.bin").path, 0o640)
+        let details = try await sandbox.engine.details(for: sandbox.url("f/a.bin"))
+        #expect(details.permissions == "rw-r-----")
+        #expect(details.owner == NSUserName())
     }
 }

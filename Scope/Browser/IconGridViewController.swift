@@ -16,6 +16,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     var onQuickLook: (() -> Void)?
     var onDrop: (([URL], URL, Bool) -> Void)?
     var onRename: (() -> Void)?
+    var onShortcut: ((FileViewKeys.Action) -> Void)?
     var contextMenu: NSMenu? {
         didSet { collectionView.menu = contextMenu }
     }
@@ -50,6 +51,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         layout.sectionInset = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         collectionView.collectionViewLayout = layout
         collectionView.isSelectable = true
+        collectionView.focusRingType = .none
         collectionView.allowsMultipleSelection = style == .grid
         collectionView.backgroundColors = [Palette.windowBackground]
         collectionView.register(IconItem.self, forItemWithIdentifier: Self.itemIdentifier)
@@ -195,6 +197,9 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         case .rename?:
             onRename?()
             return true
+        case let other?:
+            onShortcut?(other)
+            return true
         case nil:
             break
         }
@@ -281,7 +286,7 @@ final class IconItem: NSCollectionViewItem {
     override func loadView() {
         let root = NSView()
         background.wantsLayer = true
-        background.layer?.cornerRadius = 6
+        background.layer?.cornerRadius = 8
         icon.imageScaling = .scaleProportionallyUpOrDown
         name.alignment = .center
         name.maximumNumberOfLines = 2
@@ -299,10 +304,11 @@ final class IconItem: NSCollectionViewItem {
             icon.topAnchor.constraint(equalTo: root.topAnchor, constant: 6),
             icon.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             iconWidth, iconHeight,
-            background.centerXAnchor.constraint(equalTo: icon.centerXAnchor),
-            background.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
-            background.widthAnchor.constraint(equalTo: icon.widthAnchor, constant: 10),
-            background.heightAnchor.constraint(equalTo: icon.heightAnchor, constant: 10),
+            // One rounded shape around both the icon and its name.
+            background.topAnchor.constraint(equalTo: icon.topAnchor, constant: -4),
+            background.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 1),
+            background.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -1),
+            background.bottomAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
             name.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 6),
             name.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 2),
             name.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -2),
@@ -333,8 +339,6 @@ final class IconItem: NSCollectionViewItem {
         var selection: CGColor?
         view.effectiveAppearance.performAsCurrentDrawingAppearance { selection = Palette.selection.cgColor }
         background.layer?.backgroundColor = isSelected ? selection : nil
-        name.backgroundColor = isSelected ? Palette.selection : .clear
-        name.drawsBackground = isSelected
     }
 
     override func viewWillLayout() {

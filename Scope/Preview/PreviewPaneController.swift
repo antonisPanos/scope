@@ -162,10 +162,9 @@ final class PreviewPaneController: NSViewController {
             name.textColor = Palette.secondaryText
             name.alignment = .right
             name.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            let text = NSTextField(wrappingLabelWithString: value)
+            let text = CopyLabel(wrappingLabelWithString: value)
             text.textColor = Palette.primaryText
             text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            text.isSelectable = true
             text.preferredMaxLayoutWidth = 170
             grid.addRow(with: [name, text])
         }
@@ -188,4 +187,48 @@ final class PreviewPaneController: NSViewController {
 @MainActor
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// A details value: one click copies it, with a short highlight to show it happened.
+@MainActor
+final class CopyLabel: NSTextField {
+    convenience init(wrappingLabelWithString string: String) {
+        self.init(frame: .zero)
+        stringValue = string
+        isEditable = false
+        isSelectable = false
+        isBordered = false
+        drawsBackground = false
+        lineBreakMode = .byWordWrapping
+        cell?.wraps = true
+        setup()
+    }
+
+    private func setup() {
+        toolTip = "Click to copy"
+        wantsLayer = true
+        layer?.cornerRadius = 3
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(stringValue, forType: .string)
+        var flash: CGColor?
+        effectiveAppearance.performAsCurrentDrawingAppearance { flash = Palette.selection.cgColor }
+        layer?.backgroundColor = flash
+        let original = toolTip
+        toolTip = "Copied"
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                self?.layer?.backgroundColor = nil
+            }, completionHandler: nil)
+            self?.toolTip = original
+        }
+    }
 }

@@ -30,6 +30,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("paste")
             add("moveHere")
             separator()
+            add("getInfo", "Get Info for This Folder")
             add("copyPath", "Copy Path of This Folder")
             add("addToSidebar")
             add("toggleHidden")
@@ -41,6 +42,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
                 menu.addItem(item)
             }
             add("quickLook")
+            add("getInfo")
             separator()
             add("rename")
             add("duplicate")

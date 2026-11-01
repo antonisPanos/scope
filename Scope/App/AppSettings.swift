@@ -48,6 +48,51 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "showPreviewPane") }
     }
 
+    // MARK: - Alternative shortcuts (Settings > Shortcuts)
+
+    enum DeleteKey: String, CaseIterable, Identifiable {
+        /// Finder: Delete alone does nothing in a file list.
+        case nothing
+        case goBack
+        case moveToTrash
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .nothing: "Does nothing (Finder)"
+            case .goBack: "Goes back (Windows, Dolphin)"
+            case .moveToTrash: "Moves to the Trash"
+            }
+        }
+    }
+
+    /// Return opens the selection instead of renaming it (then F2 renames).
+    var returnOpens: Bool {
+        get { defaults.bool(forKey: "returnOpens") }
+        set { defaults.set(newValue, forKey: "returnOpens") }
+    }
+
+    var f2Renames: Bool {
+        get { defaults.object(forKey: "f2Renames") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "f2Renames") }
+    }
+
+    var f5Reloads: Bool {
+        get { defaults.object(forKey: "f5Reloads") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "f5Reloads") }
+    }
+
+    /// Option+Left and Option+Right go back and forward, like a browser.
+    var optionArrowsNavigate: Bool {
+        get { defaults.bool(forKey: "optionArrowsNavigate") }
+        set { defaults.set(newValue, forKey: "optionArrowsNavigate") }
+    }
+
+    var deleteKey: DeleteKey {
+        get { defaults.string(forKey: "deleteKey").flatMap(DeleteKey.init(rawValue:)) ?? .nothing }
+        set { defaults.set(newValue.rawValue, forKey: "deleteKey") }
+    }
+
     /// Folders the user added to the sidebar's Favorites, as paths.
     var favoritePaths: [String] {
         get { defaults.stringArray(forKey: "favoritePaths") ?? [] }

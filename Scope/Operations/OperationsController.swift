@@ -13,6 +13,27 @@ final class OperationsController {
     static let shared = OperationsController()
 
     private(set) var snapshots: [OperationCenter.Snapshot] = []
+    /// Operations started since the activity drawer was last opened.
+    private(set) var unreadIDs: Set<UUID> = []
+
+    var unreadCount: Int { unreadIDs.count }
+    /// Whether an activity drawer is open; operations started then count as seen.
+    @ObservationIgnored var drawerVisible = false
+
+    /// Called when a window opens its activity drawer.
+    func markAllRead() {
+        unreadIDs = []
+    }
+
+    /// What the footer shows: the operation running now, or the one that
+    /// finished last if that was in the last few seconds.
+    var footerSnapshot: OperationCenter.Snapshot? {
+        if let running = snapshots.first(where: { $0.state == .running || $0.state == .paused || $0.state == .cancelling }) {
+            return running
+        }
+        let recent = snapshots.filter { $0.finished.map { Date().timeIntervalSince($0) < 4 } ?? false }
+        return recent.max { ($0.finished ?? .distantPast) < ($1.finished ?? .distantPast) }
+    }
 
     @ObservationIgnored let center: OperationCenter
     @ObservationIgnored private var pollTask: Task<Void, Never>?
@@ -48,6 +69,7 @@ final class OperationsController {
         let operation = FileOperation(kind)
         do {
             let id = try await center.enqueue(operation)
+            if !drawerVisible { unreadIDs.insert(id) }
             Self.logger.notice("Queued: \(operation.title, privacy: .public)")
             refresh()
             return id
@@ -68,7 +90,7 @@ final class OperationsController {
 
     func undo(_ id: UUID, from window: NSWindow?) async {
         do {
-            try await center.undo(id)
+            if let undoID = try await center.undo(id) { unreadIDs.insert(undoID) }
             refresh()
         } catch {
             Self.showAlert("Can't undo.", error.localizedDescription, on: window)

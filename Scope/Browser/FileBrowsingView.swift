@@ -22,19 +22,39 @@ protocol FileBrowsingView: NSViewController {
     var onDrop: (([URL], URL, Bool) -> Void)? { get set }
     /// The user pressed Return: rename.
     var onRename: (() -> Void)? { get set }
+    /// Other keys from Settings > Shortcuts: back, forward, reload, trash.
+    var onShortcut: ((FileViewKeys.Action) -> Void)? { get set }
 }
 
 /// Keys every file view handles the same way: Cmd+Down and Cmd+O open,
 /// Space toggles Quick Look.
 @MainActor
 enum FileViewKeys {
-    enum Action { case open, quickLook, rename }
+    enum Action { case open, quickLook, rename, back, forward, reload, trash }
 
+    /// Finder's keys, plus the alternatives switched on in Settings > Shortcuts.
     static func action(for event: NSEvent) -> Action? {
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let settings = AppSettings.shared
         if flags == .command, event.specialKey == .downArrow { return .open }
         if flags.isEmpty, event.charactersIgnoringModifiers == " " { return .quickLook }
-        if flags.isEmpty, event.specialKey == .carriageReturn || event.specialKey == .enter { return .rename }
+        if flags.isEmpty, event.specialKey == .carriageReturn || event.specialKey == .enter {
+            return settings.returnOpens ? .open : .rename
+        }
+        if flags.isEmpty, event.specialKey == .f2, settings.f2Renames { return .rename }
+        if flags.isEmpty, event.specialKey == .f5, settings.f5Reloads { return .reload }
+        if flags == .option, settings.optionArrowsNavigate {
+            if event.specialKey == .leftArrow { return .back }
+            if event.specialKey == .rightArrow { return .forward }
+        }
+        if flags.isEmpty, event.specialKey == .delete || event.specialKey == .backspace {
+            switch settings.deleteKey {
+            case .nothing: return nil
+            case .goBack: return .back
+            // A held-down Delete must not trash item after item.
+            case .moveToTrash: return event.isARepeat ? nil : .trash
+            }
+        }
         return nil
     }
 

@@ -28,6 +28,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     var onQuickLook: (() -> Void)?
     var onDrop: (([URL], URL, Bool) -> Void)?
     var onRename: (() -> Void)?
+    var onShortcut: ((FileViewKeys.Action) -> Void)?
     var contextMenu: NSMenu? {
         didSet { outlineView.menu = contextMenu }
     }
@@ -109,6 +110,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         headerView.menu = makeHeaderMenu()
         outlineView.headerView = headerView
         outlineView.style = .fullWidth
+        // The selection colour already shows focus; skip the system ring around the list.
+        outlineView.focusRingType = .none
         outlineView.rowHeight = 22
         outlineView.intercellSpacing = NSSize(width: 6, height: 0)
         outlineView.usesAlternatingRowBackgroundColors = false
@@ -129,6 +132,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.onOpenSelection = { [weak self] in self?.openSelection() }
         outlineView.onQuickLook = { [weak self] in self?.onQuickLook?() }
         outlineView.onRename = { [weak self] in self?.onRename?() }
+        outlineView.onShortcut = { [weak self] action in self?.onShortcut?(action) }
         outlineView.registerForDraggedTypes(FileViewKeys.dropTypes)
         outlineView.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
         outlineView.setDraggingSourceOperationMask([.copy, .generic], forLocal: false)
@@ -553,12 +557,14 @@ final class FileOutlineView: NSOutlineView {
     var onOpenSelection: (() -> Void)?
     var onQuickLook: (() -> Void)?
     var onRename: (() -> Void)?
+    var onShortcut: ((FileViewKeys.Action) -> Void)?
 
     override func keyDown(with event: NSEvent) {
         switch FileViewKeys.action(for: event) {
         case .open?: onOpenSelection?()
         case .quickLook?: onQuickLook?()
         case .rename?: onRename?()
+        case let other?: onShortcut?(other)
         case nil: super.keyDown(with: event)
         }
     }

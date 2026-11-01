@@ -28,6 +28,10 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
         get { strip.onRename }
         set { strip.onRename = newValue }
     }
+    var onShortcut: ((FileViewKeys.Action) -> Void)? {
+        get { strip.onShortcut }
+        set { strip.onShortcut = newValue }
+    }
     var contextMenu: NSMenu? {
         get { strip.contextMenu }
         set { strip.contextMenu = newValue }

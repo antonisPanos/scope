@@ -32,6 +32,8 @@ final class PathBar: NSView {
         field.placeholderString = "Type a path, like ~/Documents or /Volumes/ScopeTest"
         field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         field.bezelStyle = .roundedBezel
+        // A quiet field: no animated focus ring, just the bezel.
+        field.focusRingType = .none
         field.isHidden = true
         field.delegate = self
         field.onCancel = { [weak self] in self?.endEditing() }
