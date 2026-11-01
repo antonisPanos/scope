@@ -2,8 +2,9 @@ import CryptoKit
 import Foundation
 
 /// Runs one file operation. Every path passes the path guard; nothing is ever
-/// overwritten or deleted: a replaced item goes to the Trash first, and a
-/// move across disks trashes the original only after the copy is verified.
+/// overwritten or deleted: a replaced item goes to the Trash only once its
+/// replacement is complete, and a move across disks trashes the original only
+/// after the copy is verified.
 extension FileEngine {
     public func run(
         _ operation: FileOperation,
@@ -61,6 +62,7 @@ extension FileEngine {
             let sameFolder = source.deletingLastPathComponent().path == destination.path
             if moving && sameFolder { continue }
             var target = destination.appendingPathComponent(source.lastPathComponent)
+            var replacing = false
             if Self.lstatInfo(target.path) != nil {
                 if sameFolder {
                     // Pasting a copy into its own folder makes "name copy", like Finder.
@@ -76,8 +78,8 @@ extension FileEngine {
                         guard !Self.isInside(source.path, target.path) else {
                             throw FileEngineError.cannotCopyIntoItself(source.path)
                         }
-                        let trashed = try await trashItem(at: target)
-                        if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                        // The existing item stays until its replacement is ready.
+                        replacing = true
                     case .stop:
                         throw OperationError.stoppedByUser
                     }
@@ -86,7 +88,17 @@ extension FileEngine {
 
             let sameDisk = Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
             if moving && sameDisk {
-                try await moveItem(at: source, to: target)
+                // A rename is instant, so the existing item is trashed just
+                // before it, and put back if the rename fails.
+                var trashed: URL?
+                if replacing { trashed = try trashItemNow(target) }
+                do {
+                    try await moveItem(at: source, to: target)
+                } catch {
+                    if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                    throw error
+                }
+                if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
                 undo.add(.moveBack(from: target, to: source))
                 let size = (try? measure([target]))?.bytes ?? 0
                 control.update {
@@ -97,26 +109,61 @@ extension FileEngine {
                 continue
             }
 
-            if moving {
-                try copyTracked(source, to: target, control: control) { source, partial in
-                    control.update { $0.currentItem = "Verifying \(source.lastPathComponent)" }
-                    try self.verifyCopy(source, partial, control: control)
+            // The copy is written under a partial name. Only when it is complete
+            // (and, for a move, verified) does a replaced item go to the Trash,
+            // right before the copy is renamed into its place.
+            let replaced = ReplacedItem()
+            let existing = replacing ? target : nil
+            let placeCopy: (URL, URL) throws -> Void = { original, partial in
+                if moving {
+                    control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                    try self.verifyCopy(original, partial, control: control)
                 }
-                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+                if let existing, Self.lstatInfo(existing.path) != nil {
+                    replaced.trashed = try self.trashItemNow(existing)
+                }
+            }
+            do {
+                try copyTracked(
+                    source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
+            } catch {
+                if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                throw error
+            }
+            if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+            if moving {
                 // From here the move finishes even if cancelled: the copy is in
                 // place and verified, so the original goes to the Trash.
                 let trashed = try trashItemNow(source)
                 if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
-            } else {
-                try copyTracked(source, to: target, control: control)
-                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             }
+        }
+    }
+
+    /// Puts back an item that was trashed to make room for a replacement that
+    /// then failed. If that isn't possible, the operation's undo can still do it.
+    private func restoreReplaced(_ trashed: URL, to original: URL, undo: UndoRecorder) {
+        do {
+            try placeBack(trashed, at: original)
+        } catch {
+            undo.add(.putBack(trashed: trashed, original: original))
+        }
+    }
+
+    /// A synchronous same-disk rename back from the Trash, for cleanup paths
+    /// that must not be interrupted by cancellation.
+    private func placeBack(_ trashed: URL, at original: URL) throws {
+        let from = try pathGuard.checkWriteLocation(trashed)
+        let to = try pathGuard.checkWriteLocation(original)
+        guard renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw FileEngineError.posix("Put back", from.path)
         }
     }
 
     /// Copies one item and adds its progress to the operation's totals.
     private func copyTracked(
-        _ source: URL, to target: URL, control: OperationControl,
+        _ source: URL, to target: URL, control: OperationControl, replacingExisting: Bool = false,
         beforePlacing: ((URL, URL) throws -> Void)? = nil
     ) throws {
         let base = control.progress
@@ -131,7 +178,7 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
@@ -162,7 +209,8 @@ extension FileEngine {
         }
     }
 
-    /// Trashes without a cancellation check, for the last step of a move.
+    /// Trashes without a cancellation check, for the last step of a move and
+    /// for the item a finished replacement takes the place of.
     private func trashItemNow(_ url: URL) throws -> URL? {
         let target = try pathGuard.checkModifiable(url)
         var resulting: NSURL?
@@ -297,7 +345,14 @@ struct ConflictPolicy {
         if let remembered { return remembered }
         try Task.checkCancellation()
         let (choice, applyToAll) = await resolver(conflict)
+        // A cancel while the question was open wins over the answer.
+        try Task.checkCancellation()
         if applyToAll { remembered = choice }
         return choice
     }
+}
+
+/// The item a replacement sent to the Trash, filled in by the copy's last step.
+private final class ReplacedItem {
+    var trashed: URL?
 }

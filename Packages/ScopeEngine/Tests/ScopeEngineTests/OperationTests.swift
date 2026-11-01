@@ -80,6 +80,60 @@ import Testing
         #expect(try disk.read("dest/a.txt") == "old")
     }
 
+    @Test func replaceKeepsTheExistingItemWhenTheCopyFails() async throws {
+        try disk.write("src/a/readable.txt", "new")
+        let unreadable = try disk.write("src/a/unreadable.txt", "new")
+        try disk.write("dest/a/old.txt", "old")
+        chmod(unreadable.path, 0)
+        defer { chmod(unreadable.path, 0o644) }
+        var harness = ops
+        harness.conflictAnswer = .replace
+
+        await #expect(throws: (any Error).self) {
+            try await harness.run(.copy([disk.url("src/a")], into: disk.url("dest")))
+        }
+        // The copy failed, so the existing folder was never trashed, and no
+        // partial copy is left next to it.
+        #expect(try disk.read("dest/a/old.txt") == "old")
+        #expect(try disk.names("dest") == ["a"])
+    }
+
+    @Test func cancellingWhileAConflictIsOpenKeepsTheExistingItem() async throws {
+        try disk.write("src/a.txt", "new")
+        try disk.write("dest/a.txt", "old")
+        let engine = engine
+        let source = disk.url("src/a.txt")
+        let folder = disk.url("dest")
+
+        let task = Task {
+            try await engine.run(
+                FileOperation(.copy([source], into: folder)), control: OperationControl(), undo: UndoRecorder()
+            ) { _ in
+                // The user cancels while the question is open, then answers Replace.
+                withUnsafeCurrentTask { $0?.cancel() }
+                return (.replace, false)
+            }
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try disk.read("dest/a.txt") == "old")
+        #expect(try disk.names("dest") == ["a.txt"])
+    }
+
+    @Test func replaceDuringAMoveBetweenDisksTrashesTheOldItemLast() async throws {
+        try disk.write("a.txt", "new")
+        try other.write("a.txt", "old")
+        var harness = ops
+        harness.conflictAnswer = .replace
+
+        let record = try await harness.run(.move([disk.url("a.txt")], into: other.work))
+        #expect(!disk.exists("a.txt"))
+        #expect(try other.read("a.txt") == "new")
+
+        try await harness.undo(record)
+        #expect(try disk.read("a.txt") == "new")
+        #expect(try other.read("a.txt") == "old")
+    }
+
     @Test func aVolumeRootCanNotBeTrashedRenamedOrMoved() async throws {
         // Only a test disk's own root, so a failure here can't reach real files.
         await #expect(throws: PathGuardViolation.self) { try await engine.trashItem(at: disk.mountPoint) }
