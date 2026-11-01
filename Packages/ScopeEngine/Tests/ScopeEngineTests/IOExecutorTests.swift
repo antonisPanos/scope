@@ -10,6 +10,12 @@ import Testing
         String(cString: __dispatch_queue_get_label(nil))
     }
 
+    /// Blocks the calling thread, as a slow disk would. Released by the
+    /// test; the timeout only keeps a failure from hanging.
+    private static func block(on gate: DispatchSemaphore) {
+        _ = gate.wait(timeout: .now() + 5)
+    }
+
     @Test func blockedEngineWorkLeavesThePoolFree() async throws {
         // Twice as many blocked jobs as the pool has threads.
         let blockers = ProcessInfo.processInfo.activeProcessorCount * 2
@@ -19,8 +25,7 @@ import Testing
             Task {
                 await onIOThreads {
                     started.continuation.yield()
-                    // Released below; the timeout only keeps a failure from hanging.
-                    _ = gate.wait(timeout: .now() + 5)
+                    Self.block(on: gate)
                 }
             }
         }
