@@ -108,17 +108,22 @@ public struct PathGuard: Sendable {
         return resolved
     }
 
-    /// Whether `path` is the root of a mounted volume: "/" or a folder on a
-    /// different device than its parent.
+    /// Whether `path` is the root of a mounted volume: "/", a folder the file
+    /// system reports as a mount point, or one on a different device than its
+    /// parent.
     private static func isVolumeRoot(_ path: String) -> Bool {
         if path == "/" { return true }
         var item = stat()
-        var parent = stat()
-        guard lstat(path, &item) == 0, item.st_mode & S_IFMT == S_IFDIR,
-            lstat((path as NSString).deletingLastPathComponent, &parent) == 0
-        else {
-            return false
+        guard lstat(path, &item) == 0, item.st_mode & S_IFMT == S_IFDIR else { return false }
+        var volume = statfs()
+        if statfs(path, &volume) == 0 {
+            let mountPoint = withUnsafeBytes(of: volume.f_mntonname) { bytes in
+                String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+            }
+            if mountPoint == path || realpath(mountPoint) == path { return true }
         }
+        var parent = stat()
+        guard lstat((path as NSString).deletingLastPathComponent, &parent) == 0 else { return false }
         return item.st_dev != parent.st_dev
     }
 
