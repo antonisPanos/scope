@@ -15,11 +15,13 @@ final class InfoWindowController: NSWindowController, NSWindowDelegate {
     static func show(for item: FileItem, engine: FileEngine, near window: NSWindow?) {
         let controller = InfoWindowController(item: item, engine: engine)
         open.append(controller)
-        if let window, let info = controller.window {
+        if let info = controller.window {
+            // Centred on the screen; several at once are offset a little each.
+            info.center()
             let offset = CGFloat(open.count - 1) * 22
-            info.setFrameTopLeftPoint(NSPoint(x: window.frame.maxX - info.frame.width - 40 - offset,
-                                              y: window.frame.maxY - 80 - offset))
+            info.setFrameOrigin(NSPoint(x: info.frame.minX + offset, y: info.frame.minY - offset))
         }
+        _ = window
         controller.showWindow(nil)
     }
 

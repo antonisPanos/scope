@@ -135,6 +135,10 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
+        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !selectedItems.isEmpty), let first = model.items.first {
+            select([first.url], scroll: true)
+            return true
+        }
         switch FileViewKeys.action(for: event) {
         case .open?:
             openClicked()

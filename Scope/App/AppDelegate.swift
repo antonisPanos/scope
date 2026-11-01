@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
+        if SettingsWindowController.shared.window?.isVisible != true {
+            SettingsWindowController.shared.window?.layoutIfNeeded()
+            SettingsWindowController.shared.window?.center()
+        }
         SettingsWindowController.shared.showWindow(nil)
         SettingsWindowController.shared.window?.makeKeyAndOrderFront(nil)
     }

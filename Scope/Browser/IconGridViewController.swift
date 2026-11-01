@@ -194,6 +194,10 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     /// Returns true when the key was handled.
     private func handleKey(_ event: NSEvent) -> Bool {
+        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !collectionView.selectionIndexPaths.isEmpty), let first = items.first {
+            select([first.url], scroll: true)
+            return true
+        }
         switch FileViewKeys.action(for: event) {
         case .open?:
             openSelection()
@@ -234,6 +238,11 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
         let item = collectionView.makeItem(withIdentifier: Self.itemIdentifier, for: indexPath) as! IconItem
         configure(item, with: items[indexPath.item])
         return item
+    }
+
+    /// Without this a collection view never starts a drag.
+    func collectionView(_ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent) -> Bool {
+        true
     }
 
     func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {

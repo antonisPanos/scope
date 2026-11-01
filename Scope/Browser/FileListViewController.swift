@@ -563,6 +563,11 @@ final class FileOutlineView: NSOutlineView {
     var onShortcut: ((FileViewKeys.Action) -> Void)?
 
     override func keyDown(with event: NSEvent) {
+        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: selectedRow >= 0), numberOfRows > 0 {
+            selectRowIndexes([0], byExtendingSelection: false)
+            scrollRowToVisible(0)
+            return
+        }
         switch FileViewKeys.action(for: event) {
         case .open?: onOpenSelection?()
         case .quickLook?: onQuickLook?()

@@ -24,7 +24,7 @@ final class PathBar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         pathControl.orientation = .horizontal
-        pathControl.spacing = 2
+        pathControl.spacing = 6
 
         field.placeholderString = "Type a path, like ~/Documents or /Volumes/ScopeTest"
         field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)

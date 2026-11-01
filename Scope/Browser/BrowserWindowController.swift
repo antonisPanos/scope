@@ -38,6 +38,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private static let previewItem = NSToolbarItem.Identifier("preview")
     private static let splitItem = NSToolbarItem.Identifier("split")
     private var searchToolbarItem: NSSearchToolbarItem?
+    private var splitGroup: NSToolbarItemGroup?
+    private var previewGroup: NSToolbarItemGroup?
     private var searchDebounce: Task<Void, Never>?
 
     init(location: Location) {
@@ -342,6 +344,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     private func updateToolbar() {
+        updateToggleButtons()
         navigationGroup?.subitems[0].isEnabled = model.canGoBack
         navigationGroup?.subitems[1].isEnabled = model.canGoForward
         viewModeGroup?.selectedIndex = ViewMode.allCases.firstIndex(of: model.viewMode) ?? 0
@@ -471,7 +474,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         OperationsController.shared.drawerVisible = visible
         if visible { OperationsController.shared.markAllRead() }
     }
-    func togglePreview() { content.isPreviewVisible.toggle() }
+    func togglePreview() {
+        content.isPreviewVisible.toggle()
+        updateToggleButtons()
+    }
 
     func togglePathBar() { content.isPathBarVisible.toggle() }
     func toggleStatusBar() { content.isStatusBarVisible.toggle() }
@@ -536,6 +542,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             } else if item.isSymbolicLink || item.isAlias {
                 followLink(item.url, inNewTab: openedFolderHere)
                 openedFolderHere = true
+            } else if FileEngine.isArchive(item.url), allowsWrites {
+                // Scope extracts archives itself, next to the archive, like
+                // Finder. Handing them to Archive Utility put them wherever its
+                // settings said (often Downloads).
+                startOperation(.extract(item.url))
             } else {
                 openFile(item.url)
             }
@@ -675,21 +686,27 @@ extension BrowserWindowController: NSToolbarDelegate {
             })
             return item
         case Self.splitItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "Split View")
-            item.label = "Split View"
-            item.toolTip = "Split View (⇧⌘S)"
-            item.target = self
-            item.action = #selector(splitClicked)
-            return item
+            // One-button groups, so the button shows when its pane is on,
+            // like the view buttons do.
+            let group = NSToolbarItemGroup(
+                itemIdentifier: identifier,
+                images: [NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "Split View")!],
+                selectionMode: .selectAny, labels: ["Split View"], target: self, action: #selector(splitClicked))
+            group.label = "Split View"
+            group.subitems[0].toolTip = "Split View (⇧⌘S)"
+            splitGroup = group
+            updateToggleButtons()
+            return group
         case Self.previewItem:
-            let item = NSToolbarItem(itemIdentifier: identifier)
-            item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Details Panel")
-            item.label = "Details"
-            item.toolTip = "Show or Hide the Details Panel (⇧⌘P)"
-            item.target = self
-            item.action = #selector(previewClicked)
-            return item
+            let group = NSToolbarItemGroup(
+                itemIdentifier: identifier,
+                images: [NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Details Panel")!],
+                selectionMode: .selectAny, labels: ["Details"], target: self, action: #selector(previewClicked))
+            group.label = "Details"
+            group.subitems[0].toolTip = "Show or Hide the Details Panel (⇧⌘P)"
+            previewGroup = group
+            updateToggleButtons()
+            return group
         case Self.searchItem:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
             item.searchField.placeholderString = "Search"
@@ -725,10 +742,20 @@ extension BrowserWindowController: NSToolbarDelegate {
 
     @objc private func splitClicked() {
         toggleSplit()
+        updateToggleButtons()
     }
 
     @objc private func previewClicked() {
         togglePreview()
+        updateToggleButtons()
+    }
+
+    /// Shows the split view and details panel buttons as on or off.
+    func updateToggleButtons() {
+        splitGroup?.setSelected(isSplit, at: 0)
+        previewGroup?.setSelected(isPreviewVisible, at: 0)
+        // The details panel can't be shown in split view.
+        previewGroup?.isEnabled = !isSplit
     }
 
     @objc private func paletteClicked() {

@@ -58,17 +58,28 @@ enum FileViewKeys {
         return nil
     }
 
+    /// Arrow keys with nothing selected: the event should select the first item.
+    static func isArrowWithoutSelection(_ event: NSEvent, hasSelection: Bool) -> Bool {
+        guard !hasSelection else { return false }
+        let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return flags.isEmpty && [.upArrow, .downArrow, .leftArrow, .rightArrow].contains(event.specialKey)
+    }
+
     /// The pasteboard types file views accept in a drop.
     static let dropTypes: [NSPasteboard.PasteboardType] = [.fileURL]
 
     static func droppedURLs(_ info: NSDraggingInfo) -> [URL] {
-        info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [NSURL] ?? []
+        // Drags carry file reference URLs (file:///.file/id=…); turn them into paths.
+        return urls.compactMap { ($0.filePathURL ?? $0 as URL).standardizedFileURL }
     }
 
     /// Copy when Option is held or the files come from another disk; move otherwise.
     static func dropOperation(_ info: NSDraggingInfo, into folder: URL) -> NSDragOperation {
         let urls = droppedURLs(info)
         guard !urls.isEmpty, !urls.contains(where: { $0 == folder || folder.path.hasPrefix($0.path + "/") }) else { return [] }
+        // Dropping items on the folder they're already in does nothing.
+        if urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL }) { return [] }
         if NSEvent.modifierFlags.contains(.option) { return .copy }
         let volume = { (url: URL) in try? url.resourceValues(forKeys: [.volumeURLKey]).volume }
         return urls.allSatisfy { volume($0) == volume(folder) } ? .move : .copy
