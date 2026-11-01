@@ -89,4 +89,23 @@ import Testing
         #expect(try disk.names("dest") == [])
         #expect(await center.lastUndoable() == nil)
     }
+
+    @Test func anUndoRefusedWhileItemsAreBusyCanBeRetried() async throws {
+        try disk.write("a.txt", Data(count: 96 * 1024 * 1024))
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        let renamed = try await center.enqueue(FileOperation(.rename(disk.url("a.txt"), to: "b.txt")))
+        await center.waitUntilIdle()
+
+        // A paused copy of the renamed file holds it, so the undo is refused.
+        let copy = try await center.enqueue(FileOperation(.copy([disk.url("b.txt")], into: disk.url("dest"))))
+        await center.pause(copy)
+        await #expect(throws: OperationError.self) { try await center.undo(renamed) }
+        #expect(await center.snapshots().first { $0.id == renamed }?.canUndo == true)
+
+        await center.cancel(copy)
+        await center.waitUntilIdle()
+        try await center.undo(renamed)
+        await center.waitUntilIdle()
+        #expect(disk.exists("a.txt") && !disk.exists("b.txt"))
+    }
 }
