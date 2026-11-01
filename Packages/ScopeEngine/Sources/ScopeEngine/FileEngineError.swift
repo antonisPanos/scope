@@ -8,6 +8,7 @@ public enum FileEngineError: Error, Equatable, LocalizedError {
     /// Moves between disks arrive with the operations queue in milestone M3.
     case crossVolumeMoveNotSupported(String)
     case system(operation: String, path: String, code: Int32)
+    case tooLarge(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,7 @@ public enum FileEngineError: Error, Equatable, LocalizedError {
         case .invalidName(let name): "\"\(name)\" is not a valid file name."
         case .cannotCopyIntoItself(let path): "Can't copy \(path) into itself."
         case .crossVolumeMoveNotSupported(let path): "Moving \(path) to another disk is not supported yet."
+        case .tooLarge(let path): "\((path as NSString).lastPathComponent) is too large to open here."
         case .system(let operation, let path, let code):
             "\(operation) failed for \(path): \(String(cString: strerror(code)))"
         }

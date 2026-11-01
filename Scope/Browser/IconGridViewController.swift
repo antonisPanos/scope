@@ -334,6 +334,9 @@ final class IconItem: NSCollectionViewItem {
         background.wantsLayer = true
         background.layer?.cornerRadius = 8
         icon.imageScaling = .scaleProportionallyUpOrDown
+        // Image views accept dropped files by default, which would take the
+        // drop away from the collection view and its folder items.
+        icon.unregisterDraggedTypes()
         name.alignment = .center
         name.maximumNumberOfLines = 2
         name.lineBreakMode = .byTruncatingMiddle
@@ -380,11 +383,25 @@ final class IconItem: NSCollectionViewItem {
         didSet { updateHighlight() }
     }
 
+    /// Set while a selection rectangle is drawn or a drag hovers, before the
+    /// selection itself changes.
+    override var highlightState: NSCollectionViewItem.HighlightState {
+        didSet { updateHighlight() }
+    }
+
+    private var showsSelection: Bool {
+        switch highlightState {
+        case .forSelection, .asDropTarget: true
+        case .forDeselection: false
+        default: isSelected
+        }
+    }
+
     private func updateHighlight() {
         // A layer's CGColor is fixed when it's made, so resolve it in the view's own appearance.
         var selection: CGColor?
         view.effectiveAppearance.performAsCurrentDrawingAppearance { selection = Palette.selection.cgColor }
-        background.layer?.backgroundColor = isSelected ? selection : nil
+        background.layer?.backgroundColor = showsSelection ? selection : nil
     }
 
     override func viewWillLayout() {

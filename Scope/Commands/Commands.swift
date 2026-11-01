@@ -80,6 +80,9 @@ enum Commands {
             id: "getInfo", title: "Get Info", menu: .file, key: "i", modifiers: .command,
             run: { $0.showInfo() }, isEnabled: { !$0.selectedItems.isEmpty || $0.currentFolder != nil }),
         Command(
+            id: "print", title: "Print…", menu: .file, key: "p", modifiers: .command,
+            run: { $0.printSelection() }, isEnabled: { $0.canPrintSelection }),
+        Command(
             id: "rename", title: "Rename…", menu: .file, key: "", modifiers: [],
             run: { $0.renameSelection() }, isEnabled: { $0.selectedItems.count == 1 && $0.allowsWrites },
             startsGroup: true),

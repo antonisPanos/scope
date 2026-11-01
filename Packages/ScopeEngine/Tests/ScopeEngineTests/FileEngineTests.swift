@@ -37,6 +37,19 @@ import Testing
         }
     }
 
+    @Test func readsAFilesContents() async throws {
+        try sandbox.write("doc.txt", "hello")
+        #expect(try await engine.contents(of: sandbox.url("doc.txt")) == Data("hello".utf8))
+        await #expect(throws: FileEngineError.tooLarge(sandbox.url("doc.txt").path)) {
+            try await engine.contents(of: sandbox.url("doc.txt"), limit: 4)
+        }
+        try sandbox.mkdir("folder")
+        await #expect(throws: FileEngineError.self) { try await engine.contents(of: sandbox.url("folder")) }
+        await #expect(throws: PathGuardViolation.self) {
+            try await engine.contents(of: URL(fileURLWithPath: NSHomeDirectory() + "/.zshrc"))
+        }
+    }
+
     // MARK: - Create, rename, move, trash
 
     @Test func createsAFolder() async throws {
