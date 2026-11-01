@@ -1,0 +1,30 @@
+#!/bin/bash
+# Rejects commit messages that aren't Conventional Commits (https://www.conventionalcommits.org).
+# Installed by `make hooks`. Skip once with `git commit --no-verify`.
+msg_file="$1"
+first_line="$(grep -v '^#' "$msg_file" | head -n 1)"
+
+# Git's own messages pass: merges, reverts, fixup!/squash! for autosquash.
+if [[ "$first_line" =~ ^(Merge|Revert\ \"|fixup!|squash!|amend!) ]]; then
+  exit 0
+fi
+
+types="feat|fix|perf|refactor|style|docs|test|build|ci|chore|revert"
+pattern="^($types)(\([a-z0-9-]+\))?!?: [^ ].*"
+
+if ! [[ "$first_line" =~ $pattern ]]; then
+  cat >&2 <<MSG
+commit-msg: "$first_line"
+is not a conventional commit. Use: type(scope): summary
+  types:  ${types//|/, }
+  scope:  optional, e.g. engine, browser, search, operations, release
+  e.g.    feat(search): add a date added filter
+          fix(operations)!: cancel stops copies at once
+MSG
+  exit 1
+fi
+
+if (( ${#first_line} > 100 )); then
+  echo "commit-msg: keep the first line under 100 characters (it is ${#first_line})." >&2
+  exit 1
+fi

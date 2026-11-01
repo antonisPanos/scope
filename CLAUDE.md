@@ -6,6 +6,15 @@ and early history still use that name.
 Personal macOS file manager. The owner doesn't write Swift; Claude writes all the code.
 The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/artifact/AwuXcqF6wVVC3vtkijEZ8K.
 
+## Branches and commits
+
+- `main` is the trunk. Branch from the latest `origin/main`, open a PR into `main`, and
+  never commit to `main` directly. PRs are squash-merged.
+- Commit messages and PR titles are Conventional Commits (`feat(search): add a date filter`).
+  Types, scopes and examples are in `CONTRIBUTING.md`. Run `make hooks` in a fresh clone.
+- `claude/project-thread-neh6mq` is the pre-`main` history, kept for reference. `main` starts
+  from a squash of it at 95d4a50; don't merge that branch into `main`.
+
 ## Safety rules (never relax these)
 
 - All file system access goes through `FileEngine` in `Packages/ScopeEngine`, and every
