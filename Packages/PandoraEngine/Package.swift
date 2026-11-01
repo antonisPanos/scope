@@ -10,8 +10,14 @@ let package = Package(
         .library(name: "PandoraEngine", targets: ["PandoraEngine"]),
     ],
     targets: [
+        // Declarations for the libarchive that ships with macOS.
+        .target(
+            name: "CArchive",
+            linkerSettings: [.linkedLibrary("archive")]
+        ),
         .target(
             name: "PandoraEngine",
+            dependencies: ["CArchive"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

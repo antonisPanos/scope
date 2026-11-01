@@ -151,13 +151,24 @@ public struct FileEngine: Sendable {
         to destination: URL,
         progress: (@Sendable (CopyProgress) -> Void)? = nil
     ) async throws {
+        try copyItem(at: url, to: destination, control: nil, progress: progress)
+    }
+
+    /// The copy itself, synchronous so it can run inside an operation; checks
+    /// for cancellation and pauses between chunks.
+    func copyItem(
+        at url: URL,
+        to destination: URL,
+        control: OperationControl?,
+        progress: (@Sendable (CopyProgress) -> Void)?
+    ) throws {
         let source = try pathGuard.checkLocation(url)
         let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
         guard Self.lstatInfo(target.path) == nil else { throw FileEngineError.destinationExists(target.path) }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
-        var job = CopyJob(progress: progress)
+        var job = CopyJob(progress: progress, control: control)
         try job.measure(source.path)
 
         let partial = target.deletingLastPathComponent()
@@ -175,6 +186,13 @@ public struct FileEngine: Sendable {
             throw error
         }
         job.finish(at: target.path)
+    }
+
+    /// Total bytes and items under `urls`, as a copy would count them.
+    public func measure(_ urls: [URL]) throws -> (bytes: Int64, items: Int) {
+        var job = CopyJob(progress: nil, control: nil)
+        for url in urls { try job.measure(try pathGuard.checkLocation(url).path) }
+        return (job.state.bytesTotal, job.state.itemsTotal)
     }
 
     // MARK: - Helpers
@@ -217,8 +235,11 @@ private struct CopyJob {
     /// clean up (a locked file or a read-only folder can't be removed).
     var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32)] = []
 
-    init(progress: (@Sendable (CopyProgress) -> Void)?) {
+    let control: OperationControl?
+
+    init(progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?) {
         self.progressHandler = progress
+        self.control = control
     }
 
     mutating func measure(_ path: String) throws {
@@ -283,6 +304,7 @@ private struct CopyJob {
         defer { buffer.deallocate() }
         while true {
             try Task.checkCancellation()
+            try control?.waitWhilePaused()
             let read = Darwin.read(input, buffer, FileEngine.chunkSize)
             if read < 0 {
                 if errno == EINTR { continue }
