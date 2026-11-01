@@ -34,7 +34,8 @@ enum Location: Hashable, Sendable {
         case .recents: "Recents"
         case .tag(let tag): tag
         case .search(let query, let folder):
-            query.text.isEmpty ? "Search in \(folder.lastPathComponent)" : "“\(query.text)” in \(folder.lastPathComponent)"
+            query.text.isEmpty
+                ? "Search in \(folder.lastPathComponent)" : "“\(query.text)” in \(folder.lastPathComponent)"
         }
     }
 

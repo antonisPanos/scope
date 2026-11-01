@@ -43,12 +43,17 @@ extension FileEngine {
 
     // MARK: - Copy and move
 
-    private func transfer(_ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
-                          undo: UndoRecorder, conflicts: inout ConflictPolicy) async throws {
+    private func transfer(
+        _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
+        undo: UndoRecorder, conflicts: inout ConflictPolicy
+    ) async throws {
         let destination = try pathGuard.checkWriteLocation(folder)
         let sources = try items.map { try pathGuard.checkLocation($0) }
         let totals = try measure(sources)
-        control.update { $0.bytesTotal = totals.bytes; $0.itemsTotal = totals.items }
+        control.update {
+            $0.bytesTotal = totals.bytes
+            $0.itemsTotal = totals.items
+        }
 
         for source in sources {
             try Task.checkCancellation()
@@ -68,7 +73,9 @@ extension FileEngine {
                     case .keepBoth:
                         target = try uniqueName(source.lastPathComponent, in: destination, style: .numbered)
                     case .replace:
-                        guard !Self.isInside(source.path, target.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
+                        guard !Self.isInside(source.path, target.path) else {
+                            throw FileEngineError.cannotCopyIntoItself(source.path)
+                        }
                         let trashed = try await trashItem(at: target)
                         if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
                     case .stop:
@@ -82,7 +89,11 @@ extension FileEngine {
                 try await moveItem(at: source, to: target)
                 undo.add(.moveBack(from: target, to: source))
                 let size = (try? measure([target]))?.bytes ?? 0
-                control.update { $0.bytesDone += size; $0.itemsDone += 1; $0.currentItem = source.lastPathComponent }
+                control.update {
+                    $0.bytesDone += size
+                    $0.itemsDone += 1
+                    $0.currentItem = source.lastPathComponent
+                }
                 continue
             }
 
@@ -104,23 +115,32 @@ extension FileEngine {
     }
 
     /// Copies one item and adds its progress to the operation's totals.
-    private func copyTracked(_ source: URL, to target: URL, control: OperationControl,
-                             beforePlacing: ((URL, URL) throws -> Void)? = nil) throws {
+    private func copyTracked(
+        _ source: URL, to target: URL, control: OperationControl,
+        beforePlacing: ((URL, URL) throws -> Void)? = nil
+    ) throws {
         let base = control.progress
-        try copyItem(at: source, to: target, control: control, progress: { progress in
-            control.update {
-                $0.bytesDone = base.bytesDone + progress.bytesDone
-                $0.itemsDone = base.itemsDone + progress.itemsDone
-                $0.currentItem = progress.currentItem.isEmpty ? source.lastPathComponent
-                    : source.lastPathComponent + "/" + progress.currentItem
-            }
-        }, beforePlacing: beforePlacing)
+        try copyItem(
+            at: source, to: target, control: control,
+            progress: { progress in
+                control.update {
+                    $0.bytesDone = base.bytesDone + progress.bytesDone
+                    $0.itemsDone = base.itemsDone + progress.itemsDone
+                    $0.currentItem =
+                        progress.currentItem.isEmpty
+                        ? source.lastPathComponent
+                        : source.lastPathComponent + "/" + progress.currentItem
+                }
+            }, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
         let sources = try items.map { try pathGuard.checkLocation($0) }
         let totals = try measure(sources)
-        control.update { $0.bytesTotal = totals.bytes; $0.itemsTotal = totals.items }
+        control.update {
+            $0.bytesTotal = totals.bytes
+            $0.itemsTotal = totals.items
+        }
         for source in sources {
             try Task.checkCancellation()
             let target = try uniqueName(source.lastPathComponent, in: source.deletingLastPathComponent(), style: .copy)
@@ -157,7 +177,8 @@ extension FileEngine {
     func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws {
         try Task.checkCancellation()
         guard let a = Self.lstatInfo(original.path), let b = Self.lstatInfo(copy.path),
-              a.st_mode & S_IFMT == b.st_mode & S_IFMT else {
+            a.st_mode & S_IFMT == b.st_mode & S_IFMT
+        else {
             throw OperationError.verificationFailed(original.path)
         }
         switch a.st_mode & S_IFMT {
@@ -166,7 +187,8 @@ extension FileEngine {
             let right = try FileManager.default.contentsOfDirectory(atPath: copy.path).sorted()
             guard left == right else { throw OperationError.verificationFailed(original.path) }
             for name in left {
-                try verifyCopy(original.appendingPathComponent(name), copy.appendingPathComponent(name), control: control)
+                try verifyCopy(
+                    original.appendingPathComponent(name), copy.appendingPathComponent(name), control: control)
             }
         case S_IFLNK:
             let left = try FileManager.default.destinationOfSymbolicLink(atPath: original.path)
@@ -174,7 +196,8 @@ extension FileEngine {
             guard left == right else { throw OperationError.verificationFailed(original.path) }
         case S_IFREG:
             guard a.st_size == b.st_size,
-                  try Self.sha256(original, control: control) == Self.sha256(copy, control: control) else {
+                try Self.sha256(original, control: control) == Self.sha256(copy, control: control)
+            else {
                 throw OperationError.verificationFailed(original.path)
             }
         default:
@@ -212,7 +235,9 @@ extension FileEngine {
                 guard Self.lstatInfo(from.path) != nil else {
                     throw OperationError.undoNotPossible("“\(from.lastPathComponent)” isn't there anymore.")
                 }
-                if from.lastPathComponent != to.lastPathComponent, from.deletingLastPathComponent() == to.deletingLastPathComponent() {
+                if from.lastPathComponent != to.lastPathComponent,
+                    from.deletingLastPathComponent() == to.deletingLastPathComponent()
+                {
                     try await rename(from, to: to.lastPathComponent)
                 } else {
                     try await moveItem(at: from, to: to)

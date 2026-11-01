@@ -39,7 +39,10 @@ struct ActivityRing: View {
             .animation(.spring(duration: 0.3), value: controller.unreadCount)
         }
         .buttonStyle(.borderless)
-        .help(controller.active.isEmpty ? "Activity (⌥⌘A)" : "\(controller.active.count) operation\(controller.active.count == 1 ? "" : "s") running")
+        .help(
+            controller.active.isEmpty
+                ? "Activity (⌥⌘A)"
+                : "\(controller.active.count) operation\(controller.active.count == 1 ? "" : "s") running")
     }
 }
 

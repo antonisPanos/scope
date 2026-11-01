@@ -19,12 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = MainMenu.make()
         NSWindow.allowsAutomaticWindowTabbing = true
         SidebarStore.shared.start()
-        _ = SystemNotifier.shared // becomes the notification delegate before any click arrives
+        _ = SystemNotifier.shared  // becomes the notification delegate before any click arrives
         #if SCOPE_DEV
         DevHooks.install()
         #endif
         let identity = BuildIdentity.current
-        Self.logger.notice("Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites)")
+        Self.logger.notice(
+            "Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites)"
+        )
         newWindow(nil)
     }
 
@@ -57,7 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard running > 0 else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = running == 1 ? "A job is still running." : "\(running) jobs are still running."
-        alert.informativeText = "Quit When Done keeps Scope in the Dock until they finish. Quit Now cancels them; finished items stay, unfinished copies are removed."
+        alert.informativeText =
+            "Quit When Done keeps Scope in the Dock until they finish. Quit Now cancels them; finished items stay, unfinished copies are removed."
         alert.addButton(withTitle: "Quit When Done")
         alert.addButton(withTitle: "Quit Now")
         alert.addButton(withTitle: "Cancel")
@@ -65,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             operations.quitWhenIdle = true
-            for window in NSApp.windows where window.isVisible || window.windowController is BrowserWindowController { window.close() }
+            for window in NSApp.windows where window.isVisible || window.windowController is BrowserWindowController {
+                window.close()
+            }
             return .terminateCancel
         case .alertSecondButtonReturn:
             operations.quitWhenIdle = false
@@ -88,7 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showActivityInFrontWindow() {
         let existing = NSApp.orderedWindows.lazy.compactMap { $0.windowController as? BrowserWindowController }.first
         if existing == nil { newWindow(nil) }
-        guard let controller = existing ?? NSApp.orderedWindows.lazy.compactMap({ $0.windowController as? BrowserWindowController }).first else { return }
+        guard
+            let controller = existing
+                ?? NSApp.orderedWindows.lazy.compactMap({ $0.windowController as? BrowserWindowController }).first
+        else { return }
         OperationsController.shared.quitWhenIdle = false
         controller.window?.makeKeyAndOrderFront(nil)
         controller.showActivity(true)

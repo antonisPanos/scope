@@ -33,9 +33,11 @@ public struct SearchQuery: Sendable, Hashable {
     /// The crawler ignores this; the app routes such queries to Spotlight.
     public var searchContents = false
 
-    public init(text: String = "", mode: Mode = .contains, includeHidden: Bool = false, includeSubfolders: Bool = true,
-                includePackages: Bool = false, kinds: Set<Kind> = [], minimumSize: Int64? = nil, maximumSize: Int64? = nil,
-                modifiedAfter: Date? = nil, modifiedBefore: Date? = nil, tag: String? = nil) {
+    public init(
+        text: String = "", mode: Mode = .contains, includeHidden: Bool = false, includeSubfolders: Bool = true,
+        includePackages: Bool = false, kinds: Set<Kind> = [], minimumSize: Int64? = nil, maximumSize: Int64? = nil,
+        modifiedAfter: Date? = nil, modifiedBefore: Date? = nil, tag: String? = nil
+    ) {
         self.text = text
         self.mode = mode
         self.includeHidden = includeHidden
@@ -126,7 +128,8 @@ struct SearchMatcher: @unchecked Sendable {
         if item.isBrowsableFolder { return .folder }
         let pathExtension = item.url.pathExtension
         if FileEngine.isArchive(item.url) { return .archive }
-        guard let type = UTType(filenameExtension: pathExtension, conformingTo: item.isPackage ? .package : .data) else {
+        guard let type = UTType(filenameExtension: pathExtension, conformingTo: item.isPackage ? .package : .data)
+        else {
             return .other
         }
         if type.conforms(to: .application) || type.conforms(to: .applicationBundle) { return .application }
@@ -135,7 +138,8 @@ struct SearchMatcher: @unchecked Sendable {
         if type.conforms(to: .audio) { return .audio }
         if type.conforms(to: .archive) || type.conforms(to: .diskImage) { return .archive }
         if type.conforms(to: .text) || type.conforms(to: .pdf) || type.conforms(to: .presentation)
-            || type.conforms(to: .spreadsheet) || type.conforms(to: .rtf) || type.conforms(to: .compositeContent) {
+            || type.conforms(to: .spreadsheet) || type.conforms(to: .rtf) || type.conforms(to: .compositeContent)
+        {
             return .document
         }
         return .other
@@ -148,7 +152,9 @@ extension FileEngine {
     /// batches as they're found. Folders are listed in parallel; stopping the
     /// iteration, or cancelling the task, stops the crawl at once. Symlinks
     /// are never followed, so a crawl can't loop or leave the folder.
-    public func search(_ query: SearchQuery, in folder: URL, batchSize: Int = 200) throws -> AsyncThrowingStream<[FileItem], Error> {
+    public func search(
+        _ query: SearchQuery, in folder: URL, batchSize: Int = 200
+    ) throws -> AsyncThrowingStream<[FileItem], Error> {
         let root = try pathGuard.checkTarget(folder)
         let matcher = try SearchMatcher(query)
         let engine = self
@@ -168,8 +174,10 @@ extension FileEngine {
         return stream
     }
 
-    private func crawl(_ root: URL, matcher: SearchMatcher, batchSize: Int,
-                       emit: @escaping @Sendable ([FileItem]) -> Void) async throws {
+    private func crawl(
+        _ root: URL, matcher: SearchMatcher, batchSize: Int,
+        emit: @escaping @Sendable ([FileItem]) -> Void
+    ) async throws {
         let query = matcher.query
         let width = max(2, ProcessInfo.processInfo.activeProcessorCount)
         var pending: [URL] = [root]
@@ -199,13 +207,17 @@ extension FileEngine {
     }
 
     /// Lists one folder: its matching items, and the subfolders to visit next.
-    private static func scan(_ folder: URL, matcher: SearchMatcher,
-                             query: SearchQuery) throws -> (matches: [FileItem], subfolders: [URL]) {
+    private static func scan(
+        _ folder: URL, matcher: SearchMatcher,
+        query: SearchQuery
+    ) throws -> (matches: [FileItem], subfolders: [URL]) {
         try Task.checkCancellation()
         var options: FileManager.DirectoryEnumerationOptions = []
         if !query.includeHidden { options.insert(.skipsHiddenFiles) }
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: FileItem.resourceKeys, options: options) else {
+        guard
+            let urls = try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: FileItem.resourceKeys, options: options)
+        else {
             // Folders we can't read are skipped, as Finder does.
             return ([], [])
         }
@@ -215,7 +227,8 @@ extension FileEngine {
             if index % 512 == 0 { try Task.checkCancellation() }
             guard let item = try? FileItem(url: url) else { continue }
             if query.includeSubfolders, item.isDirectory, !item.isSymbolicLink,
-               !item.isPackage || query.includePackages {
+                !item.isPackage || query.includePackages
+            {
                 subfolders.append(url)
             }
             guard matcher.matches(item) else { continue }

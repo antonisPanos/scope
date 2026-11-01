@@ -10,8 +10,10 @@ final class SpotlightQuery {
     private var observers: [NSObjectProtocol] = []
     private let onResults: ([URL]) -> Void
 
-    init(predicate: NSPredicate, scopes: [Any], sortByLastUsed: Bool = false, limit: Int = 500,
-         onResults: @escaping ([URL]) -> Void) {
+    init(
+        predicate: NSPredicate, scopes: [Any], sortByLastUsed: Bool = false, limit: Int = 500,
+        onResults: @escaping ([URL]) -> Void
+    ) {
         self.onResults = onResults
         query.predicate = predicate
         query.searchScopes = scopes
@@ -20,9 +22,10 @@ final class SpotlightQuery {
         }
         let center = NotificationCenter.default
         for name in [Notification.Name.NSMetadataQueryDidFinishGathering, .NSMetadataQueryDidUpdate] {
-            observers.append(center.addObserver(forName: name, object: query, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.publish(limit: limit) }
-            })
+            observers.append(
+                center.addObserver(forName: name, object: query, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publish(limit: limit) }
+                })
         }
         query.start()
     }
@@ -41,7 +44,8 @@ final class SpotlightQuery {
         urls.reserveCapacity(count)
         for index in 0..<count {
             guard let item = query.result(at: index) as? NSMetadataItem,
-                  let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
+                let path = item.value(forAttribute: NSMetadataItemPathKey) as? String
+            else { continue }
             urls.append(URL(fileURLWithPath: path))
         }
         onResults(urls)
@@ -57,17 +61,19 @@ final class SpotlightQuery {
     /// Files used in the last 30 days, newest first, like Finder's Recents.
     static func recents(onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {
         let cutoff = Date().addingTimeInterval(-30 * 24 * 3600)
-        let predicate = NSPredicate(format: "%K > %@ AND %K != 'public.folder'",
-                                    NSMetadataItemLastUsedDateKey, cutoff as NSDate,
-                                    NSMetadataItemContentTypeKey)
+        let predicate = NSPredicate(
+            format: "%K > %@ AND %K != 'public.folder'",
+            NSMetadataItemLastUsedDateKey, cutoff as NSDate,
+            NSMetadataItemContentTypeKey)
         return SpotlightQuery(predicate: predicate, scopes: scopes, sortByLastUsed: true, onResults: onResults)
     }
 
     /// Files whose contents (or name) contain `text`, from the Spotlight index,
     /// under `folder`.
     static func contents(_ text: String, in folder: URL, onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {
-        let predicate = NSPredicate(format: "(%K CONTAINS[cd] %@) OR (%K CONTAINS[cd] %@)",
-                                    "kMDItemTextContent", text, NSMetadataItemDisplayNameKey, text)
+        let predicate = NSPredicate(
+            format: "(%K CONTAINS[cd] %@) OR (%K CONTAINS[cd] %@)",
+            "kMDItemTextContent", text, NSMetadataItemDisplayNameKey, text)
         return SpotlightQuery(predicate: predicate, scopes: [folder], limit: 5000, onResults: onResults)
     }
 
@@ -95,9 +101,10 @@ final class TagCatalog {
         query.predicate = NSPredicate(fromMetadataQueryString: "\(Self.attribute) == '*'")
         query.searchScopes = SpotlightQuery.scopes
         for name in [Notification.Name.NSMetadataQueryDidFinishGathering, .NSMetadataQueryDidUpdate] {
-            observers.append(NotificationCenter.default.addObserver(forName: name, object: query, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.collect() }
-            })
+            observers.append(
+                NotificationCenter.default.addObserver(forName: name, object: query, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.collect() }
+                })
         }
         query.start()
     }
@@ -110,7 +117,8 @@ final class TagCatalog {
         var found = Set<String>()
         for index in 0..<min(query.resultCount, 5000) {
             if let item = query.result(at: index) as? NSMetadataItem,
-               let tags = item.value(forAttribute: Self.attribute) as? [String] {
+                let tags = item.value(forAttribute: Self.attribute) as? [String]
+            {
                 found.formUnion(tags)
             }
         }

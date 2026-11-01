@@ -12,7 +12,9 @@ final class KeepAlive {
     func update(busy: Bool) {
         if busy, activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
+                options: [
+                    .userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled,
+                ],
                 reason: "Copying, moving or deleting files")
             Self.logger.notice("Keeping awake while jobs run")
         } else if !busy, let current = activity {

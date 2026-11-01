@@ -67,11 +67,14 @@ final class PathBar: NSView {
         switch location {
         case .folder(let url):
             crumbURLs = Self.crumbURLs(for: url)
-            setCrumbs(crumbURLs.map { url in
-                let isDisk = url.path == "/" || Self.isVolumeRoot(url)
-                return (url.path == "/" ? (Volumes.rootName ?? "Macintosh HD") : url.lastPathComponent,
-                        isDisk ? "externaldrive" : "folder")
-            })
+            setCrumbs(
+                crumbURLs.map { url in
+                    let isDisk = url.path == "/" || Self.isVolumeRoot(url)
+                    return (
+                        url.path == "/" ? (Volumes.rootName ?? "Macintosh HD") : url.lastPathComponent,
+                        isDisk ? "externaldrive" : "folder"
+                    )
+                })
         case .recents, .tag, .search:
             crumbURLs = []
             setCrumbs([(location.title, location.symbolName)])
@@ -116,13 +119,15 @@ final class PathBar: NSView {
         pathControl.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, crumb) in crumbs.enumerated() {
             if index > 0 {
-                let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)!)
+                let chevron = NSImageView(
+                    image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)!)
                 chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
                 chevron.contentTintColor = Palette.secondaryText
                 pathControl.addArrangedSubview(chevron)
             }
-            let button = NSButton(title: crumb.title, image: NSImage(systemSymbolName: crumb.symbol, accessibilityDescription: nil)!,
-                                  target: self, action: #selector(crumbClicked(_:)))
+            let button = NSButton(
+                title: crumb.title, image: NSImage(systemSymbolName: crumb.symbol, accessibilityDescription: nil)!,
+                target: self, action: #selector(crumbClicked(_:)))
             button.isBordered = false
             button.imagePosition = .imageLeading
             button.font = .systemFont(ofSize: NSFont.systemFontSize)

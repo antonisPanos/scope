@@ -15,8 +15,9 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
 
         func add(_ id: String, _ title: String? = nil) {
             guard let command = Commands.command(id: id), command.isEnabled(controller) else { return }
-            let item = NSMenuItem(title: title ?? command.title, action: #selector(BrowserWindowController.runCommand(_:)),
-                                  keyEquivalent: "")
+            let item = NSMenuItem(
+                title: title ?? command.title, action: #selector(BrowserWindowController.runCommand(_:)),
+                keyEquivalent: "")
             item.representedObject = id
             menu.addItem(item)
         }
@@ -26,7 +27,8 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             for id in ids {
                 guard let command = Commands.command(id: id) else { continue }
                 if id == "sort.ascending" { sub.addItem(.separator()) }
-                let item = NSMenuItem(title: command.title, action: #selector(BrowserWindowController.runCommand(_:)), keyEquivalent: "")
+                let item = NSMenuItem(
+                    title: command.title, action: #selector(BrowserWindowController.runCommand(_:)), keyEquivalent: "")
                 item.representedObject = id
                 item.state = command.isChecked?(controller) == true ? .on : .off
                 sub.addItem(item)
@@ -35,8 +37,10 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             item.submenu = sub
             menu.addItem(item)
         }
-        let sortIDs = ["sort.name", "sort.kind", "sort.added", "sort.modified", "sort.created", "sort.size",
-                       "sort.ascending", "sort.descending"]
+        let sortIDs = [
+            "sort.name", "sort.kind", "sort.added", "sort.modified", "sort.created", "sort.size",
+            "sort.ascending", "sort.descending",
+        ]
         let viewIDs = ViewMode.allCases.map { "view." + $0.rawValue }
         func separator() {
             if let last = menu.items.last, !last.isSeparatorItem { menu.addItem(.separator()) }
@@ -69,7 +73,9 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             separator()
             add("rename")
             add("duplicate")
-            add("compress", selection.count == 1 ? "Compress “\(selection[0].name)”" : "Compress \(selection.count) Items")
+            add(
+                "compress",
+                selection.count == 1 ? "Compress “\(selection[0].name)”" : "Compress \(selection.count) Items")
             add("extract")
             add("mount")
             add("mountReadOnly")
@@ -93,7 +99,8 @@ extension BrowserWindowController {
     /// The selection's tags, read-only for now (editing tags comes in phase 1).
     func tagsMenu(for selection: [FileItem]) -> NSMenuItem? {
         guard selection.count == 1, let url = selection.first?.url,
-              let tags = try? url.resourceValues(forKeys: [.tagNamesKey]).tagNames, !tags.isEmpty else { return nil }
+            let tags = try? url.resourceValues(forKeys: [.tagNamesKey]).tagNames, !tags.isEmpty
+        else { return nil }
         let item = NSMenuItem(title: "Tags: " + tags.joined(separator: ", "), action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item

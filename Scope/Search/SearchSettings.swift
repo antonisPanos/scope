@@ -62,9 +62,10 @@ final class SearchSettings {
     var tag: String?
 
     var query: SearchQuery {
-        var query = SearchQuery(text: text, mode: mode == .glob ? .glob : mode == .regex ? .regex : .contains,
-                                includeHidden: includeHidden, includeSubfolders: includeSubfolders,
-                                includePackages: includePackages, kinds: kinds, tag: tag)
+        var query = SearchQuery(
+            text: text, mode: mode == .glob ? .glob : mode == .regex ? .regex : .contains,
+            includeHidden: includeHidden, includeSubfolders: includeSubfolders,
+            includePackages: includePackages, kinds: kinds, tag: tag)
         query.searchContents = mode == .contents
         switch size {
         case .any: break

@@ -28,20 +28,24 @@ public enum Volumes {
 
     /// Mounted volumes that Finder would show, the startup disk first.
     public static func mounted() -> [VolumeInfo] {
-        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys,
-                                                         options: [.skipHiddenVolumes]) ?? []
+        let urls =
+            FileManager.default.mountedVolumeURLs(
+                includingResourceValuesForKeys: keys,
+                options: [.skipHiddenVolumes]) ?? []
         let session = DASessionCreate(kCFAllocatorDefault)
         let volumes = urls.compactMap { url -> VolumeInfo? in
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  values.volumeIsBrowsable ?? true else { return nil }
+                values.volumeIsBrowsable ?? true
+            else { return nil }
             let imagePath = session.flatMap { diskImagePath(for: url, session: $0) }
             let isRoot = values.volumeIsRootFileSystem ?? false
             return VolumeInfo(
                 url: url,
                 name: values.volumeLocalizedName ?? url.lastPathComponent,
                 isInternal: values.volumeIsInternal ?? false,
-                isEjectable: !isRoot && (imagePath != nil || values.volumeIsEjectable == true
-                                         || values.volumeIsRemovable == true || values.volumeIsInternal == false),
+                isEjectable: !isRoot
+                    && (imagePath != nil || values.volumeIsEjectable == true
+                        || values.volumeIsRemovable == true || values.volumeIsInternal == false),
                 isRootVolume: isRoot,
                 imagePath: imagePath,
                 totalCapacity: values.volumeTotalCapacity.map(Int64.init),
@@ -75,23 +79,30 @@ public enum Volumes {
     public static func forceEject(_ url: URL, pathGuard: PathGuard) async throws {
         let volume = try pathGuard.checkLocation(url)
         guard let session = DASessionCreate(kCFAllocatorDefault),
-              let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, volume as CFURL) else {
+            let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, volume as CFURL)
+        else {
             throw CocoaError(.fileNoSuchFile)
         }
         DASessionSetDispatchQueue(session, DispatchQueue.global())
         let whole = DADiskCopyWholeDisk(disk) ?? disk
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let box = Unmanaged.passRetained(ContinuationBox(continuation)).toOpaque()
-            DADiskUnmount(whole, DADiskUnmountOptions(kDADiskUnmountOptionForce | kDADiskUnmountOptionWhole), { _, dissenter, context in
-                let box = Unmanaged<ContinuationBox>.fromOpaque(context!).takeRetainedValue()
-                if let dissenter {
-                    box.continuation.resume(throwing: CocoaError(.fileWriteUnknown, userInfo: [
-                        NSLocalizedDescriptionKey: "Couldn't force eject (status \(DADissenterGetStatus(dissenter))).",
-                    ]))
-                } else {
-                    box.continuation.resume()
-                }
-            }, box)
+            DADiskUnmount(
+                whole, DADiskUnmountOptions(kDADiskUnmountOptionForce | kDADiskUnmountOptionWhole),
+                { _, dissenter, context in
+                    let box = Unmanaged<ContinuationBox>.fromOpaque(context!).takeRetainedValue()
+                    if let dissenter {
+                        box.continuation.resume(
+                            throwing: CocoaError(
+                                .fileWriteUnknown,
+                                userInfo: [
+                                    NSLocalizedDescriptionKey:
+                                        "Couldn't force eject (status \(DADissenterGetStatus(dissenter)))."
+                                ]))
+                    } else {
+                        box.continuation.resume()
+                    }
+                }, box)
         }
         DADiskEject(whole, DADiskEjectOptions(kDADiskEjectOptionDefault), nil, nil)
         DASessionSetDispatchQueue(session, nil)
@@ -108,13 +119,18 @@ public enum Volumes {
         defer { IOObjectRelease(media) }
         let options = IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)
 
-        if let value = IORegistryEntrySearchCFProperty(media, kIOServicePlane, "DiskImageURL" as CFString,
-                                                       kCFAllocatorDefault, options) as? String,
-           let imageURL = URL(string: value), imageURL.isFileURL {
+        if let value = IORegistryEntrySearchCFProperty(
+            media, kIOServicePlane, "DiskImageURL" as CFString,
+            kCFAllocatorDefault, options) as? String,
+            let imageURL = URL(string: value), imageURL.isFileURL
+        {
             return imageURL.path
         }
-        guard let value = IORegistryEntrySearchCFProperty(media, kIOServicePlane, "image-path" as CFString,
-                                                          kCFAllocatorDefault, options) else { return nil }
+        guard
+            let value = IORegistryEntrySearchCFProperty(
+                media, kIOServicePlane, "image-path" as CFString,
+                kCFAllocatorDefault, options)
+        else { return nil }
         if let data = value as? Data {
             return String(decoding: data.prefix { $0 != 0 }, as: UTF8.self)
         }

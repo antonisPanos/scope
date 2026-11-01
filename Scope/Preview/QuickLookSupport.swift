@@ -16,7 +16,8 @@ extension BrowserWindowController: @preconcurrency QLPreviewPanelDataSource, @pr
     /// Keeps an open panel in step with the selection.
     func quickLookSelectionChanged() {
         guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(), panel.isVisible,
-              panel.dataSource === self else { return }
+            panel.dataSource === self
+        else { return }
         panel.reloadData()
     }
 

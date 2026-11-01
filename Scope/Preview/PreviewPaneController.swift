@@ -1,6 +1,6 @@
 import AppKit
-import ScopeEngine
 import Quartz
+import ScopeEngine
 
 /// The preview pane on the right of every view: a Quick Look preview of the
 /// selected item and, below it, the details Finder's Get Info would show,
@@ -140,7 +140,9 @@ final class PreviewPaneController: NSViewController {
         var rows: [(String, String)] = []
         if let count = details.folderItemCount { rows.append(("Contains", count == 1 ? "1 item" : "\(count) items")) }
         if let size = item.size { rows.append(("Size", Self.sizeText(size))) }
-        if let width = details.pixelWidth, let height = details.pixelHeight { rows.append(("Dimensions", "\(width) × \(height)")) }
+        if let width = details.pixelWidth, let height = details.pixelHeight {
+            rows.append(("Dimensions", "\(width) × \(height)"))
+        }
         if let camera = details.cameraModel { rows.append(("Camera", camera)) }
         if let taken = details.dateTaken { rows.append(("Taken", taken)) }
         if let duration = details.duration { rows.append(("Duration", Self.durationText(duration))) }
@@ -224,10 +226,11 @@ final class CopyLabel: NSTextField {
         toolTip = "Copied"
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.3
-                self?.layer?.backgroundColor = nil
-            }, completionHandler: nil)
+            NSAnimationContext.runAnimationGroup(
+                { context in
+                    context.duration = 0.3
+                    self?.layer?.backgroundColor = nil
+                }, completionHandler: nil)
             self?.toolTip = original
         }
     }

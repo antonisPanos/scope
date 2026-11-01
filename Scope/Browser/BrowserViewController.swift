@@ -34,8 +34,9 @@ final class BrowserViewController: NSViewController {
     var onQuickLook: (() -> Void)? { didSet { fileView.onQuickLook = onQuickLook } }
     var onSelectionChange: (() -> Void)?
     var onShowActivity: (() -> Void)?
-    private lazy var footerActivity = NSHostingView(rootView: FooterActivity(
-        controller: OperationsController.shared, action: { [weak self] in self?.onShowActivity?() }))
+    private lazy var footerActivity = NSHostingView(
+        rootView: FooterActivity(
+            controller: OperationsController.shared, action: { [weak self] in self?.onShowActivity?() }))
     var onDrop: (([URL], URL, Bool) -> Void)? { didSet { fileView.onDrop = onDrop } }
     var onRename: (() -> Void)? { didSet { fileView.onRename = onRename } }
     var onShortcut: ((FileViewKeys.Action) -> Void)? { didSet { fileView.onShortcut = onShortcut } }
@@ -43,10 +44,11 @@ final class BrowserViewController: NSViewController {
     /// Set by the window: what the activity drawer's Undo button does.
     var onUndoOperation: ((UUID) -> Void)?
 
-    private lazy var activity = NSHostingView(rootView: ActivityPanel(
-        controller: OperationsController.shared,
-        onUndo: { [weak self] id in self?.onUndoOperation?(id) },
-        onClose: { [weak self] in self?.isActivityVisible = false }))
+    private lazy var activity = NSHostingView(
+        rootView: ActivityPanel(
+            controller: OperationsController.shared,
+            onUndo: { [weak self] id in self?.onUndoOperation?(id) },
+            onClose: { [weak self] in self?.isActivityVisible = false }))
     private let activitySeparator = NSBox()
     /// The search filters for this tab, and the bar that shows them during a search.
     let search = SearchSettings()
@@ -110,12 +112,15 @@ final class BrowserViewController: NSViewController {
         zoomLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         zoomLabel.textColor = Palette.secondaryText
         zoomLabel.alphaValue = 0
-        zoomReset.image = NSImage(systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: "Reset icon size")
+        zoomReset.image = NSImage(
+            systemSymbolName: "arrow.uturn.backward.circle", accessibilityDescription: "Reset icon size")
         zoomReset.isBordered = false
         zoomReset.toolTip = "Reset icon size"
         zoomReset.target = self
         zoomReset.action = #selector(resetZoom)
-        sizeObserver = NotificationCenter.default.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
+        sizeObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.iconSizeDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.sizeSlider.doubleValue = AppSettings.shared.iconSize
                 self?.showZoomLabel()
@@ -138,7 +143,10 @@ final class BrowserViewController: NSViewController {
         }
         activitySeparator.boxType = .separator
         searchSeparator.boxType = .separator
-        for view in [pathBar, pathSeparator, accessory, searchHost, searchSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
+        for view in [
+            pathBar, pathSeparator, accessory, searchHost, searchSeparator, split, activitySeparator, activity,
+            statusSeparator, statusBar, message, spinner,
+        ] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -251,13 +259,14 @@ final class BrowserViewController: NSViewController {
     /// Swaps in the view for the model's view mode, keeping the selection.
     private func switchViewIfNeeded() {
         let wantsList = model.viewMode == .details || model.viewMode == .list
-        let matches: Bool = switch fileView {
-        case is FileListViewController: wantsList
-        case is IconGridViewController: model.viewMode == .icons
-        case is ColumnViewController: model.viewMode == .columns
-        case is GalleryViewController: model.viewMode == .gallery
-        default: false
-        }
+        let matches: Bool =
+            switch fileView {
+            case is FileListViewController: wantsList
+            case is IconGridViewController: model.viewMode == .icons
+            case is ColumnViewController: model.viewMode == .columns
+            case is GalleryViewController: model.viewMode == .gallery
+            default: false
+            }
         sizeSlider.isHidden = model.viewMode != .icons
         zoomReset.isHidden = sizeSlider.isHidden || AppSettings.shared.iconSize == Self.defaultZoom
         guard !matches else { return }
@@ -337,11 +346,12 @@ final class BrowserViewController: NSViewController {
     }
 
     private func makeSearchBar() -> SearchBar {
-        SearchBar(settings: search, tags: SidebarStore.shared.tags.compactMap(\.tagName),
-                  resultCount: model.location.isSearch ? model.items.count : 0, isSearching: model.isSearching,
-                  onChange: { [weak self] in self?.onSearchChange?() },
-                  onStop: { [weak self] in self?.model.stopSearch() },
-                  onClose: { [weak self] in self?.onEndSearch?() })
+        SearchBar(
+            settings: search, tags: SidebarStore.shared.tags.compactMap(\.tagName),
+            resultCount: model.location.isSearch ? model.items.count : 0, isSearching: model.isSearching,
+            onChange: { [weak self] in self?.onSearchChange?() },
+            onStop: { [weak self] in self?.model.stopSearch() },
+            onClose: { [weak self] in self?.onEndSearch?() })
     }
 
     private func updateSearchBar() {
@@ -355,7 +365,9 @@ final class BrowserViewController: NSViewController {
     /// Snaps to the nearest stop when within a few points of it.
     @objc private func sizeChanged() {
         var size = sizeSlider.doubleValue
-        if let stop = Self.zoomStops.min(by: { abs($0 - size) < abs($1 - size) }), abs(stop - size) <= max(3, stop * 0.08) {
+        if let stop = Self.zoomStops.min(by: { abs($0 - size) < abs($1 - size) }),
+            abs(stop - size) <= max(3, stop * 0.08)
+        {
             size = stop
             sizeSlider.doubleValue = stop
         }
@@ -377,10 +389,11 @@ final class BrowserViewController: NSViewController {
         zoomLabelHide = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.4
-                self?.zoomLabel.animator().alphaValue = 0
-            }, completionHandler: nil)
+            NSAnimationContext.runAnimationGroup(
+                { context in
+                    context.duration = 0.4
+                    self?.zoomLabel.animator().alphaValue = 0
+                }, completionHandler: nil)
         }
     }
 
@@ -393,12 +406,20 @@ final class BrowserViewController: NSViewController {
 
     var isPathBarVisible: Bool {
         get { !pathBar.isHidden }
-        set { pathBar.isHidden = !newValue; pathSeparator.isHidden = !newValue; collapse(pathBar, !newValue) }
+        set {
+            pathBar.isHidden = !newValue
+            pathSeparator.isHidden = !newValue
+            collapse(pathBar, !newValue)
+        }
     }
 
     var isStatusBarVisible: Bool {
         get { !statusBar.isHidden }
-        set { statusBar.isHidden = !newValue; statusSeparator.isHidden = !newValue; collapse(statusBar, !newValue) }
+        set {
+            statusBar.isHidden = !newValue
+            statusSeparator.isHidden = !newValue
+            collapse(statusBar, !newValue)
+        }
     }
 
     /// Shows `view` in the row under the path bar, or empties it.
@@ -450,7 +471,8 @@ final class BrowserViewController: NSViewController {
         switch location {
         case .folder: "This folder is empty."
         case .recents: "Nothing opened recently" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
-        case .tag(let tag): "No items are tagged \(tag)" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
+        case .tag(let tag):
+            "No items are tagged \(tag)" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
         case .search: "Nothing found."
         }
     }

@@ -43,7 +43,9 @@ extension FileEngine {
         let item = try FileItem(url: location)
         var details = ItemDetails(item: item)
 
-        let values = try? location.resourceValues(forKeys: [.tagNamesKey, .contentAccessDateKey, .volumeLocalizedNameKey])
+        let values = try? location.resourceValues(forKeys: [
+            .tagNamesKey, .contentAccessDateKey, .volumeLocalizedNameKey,
+        ])
         details.tags = values?.tagNames ?? []
         details.volumeName = values?.volumeLocalizedName
         if let info = Self.lstatInfo(location.path) {
@@ -57,11 +59,13 @@ extension FileEngine {
         if item.isSymbolicLink {
             details.linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: location.path)
         } else if item.isAlias {
-            details.linkTarget = (try? URL(resolvingAliasFileAt: location, options: [.withoutUI, .withoutMounting]))?.path
+            details.linkTarget =
+                (try? URL(resolvingAliasFileAt: location, options: [.withoutUI, .withoutMounting]))?.path
         }
 
         if item.isBrowsableFolder && !item.isSymbolicLink {
-            details.folderItemCount = (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
+            details.folderItemCount =
+                (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
                 .filter { !$0.hasPrefix(".") }.count
             return details
         }
@@ -69,8 +73,9 @@ extension FileEngine {
 
         try Task.checkCancellation()
         if let source = CGImageSourceCreateWithURL(location as CFURL, nil),
-           CGImageSourceGetCount(source) > 0,
-           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+            CGImageSourceGetCount(source) > 0,
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        {
             details.pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int
             details.pixelHeight = properties[kCGImagePropertyPixelHeight] as? Int
             let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
@@ -85,7 +90,8 @@ extension FileEngine {
         let kind = item.kind.lowercased()
         let mediaExtensions = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "mov", "mp4", "m4v"]
         if ["audio", "movie", "video", "mpeg"].contains(where: kind.contains)
-            || mediaExtensions.contains(location.pathExtension.lowercased()) {
+            || mediaExtensions.contains(location.pathExtension.lowercased())
+        {
             let asset = AVURLAsset(url: location)
             if let duration = try? await asset.load(.duration), duration.isNumeric {
                 details.duration = duration.seconds
@@ -99,8 +105,11 @@ extension FileEngine {
     public func folderSize(of url: URL, progress: (@Sendable (FolderSize) -> Void)? = nil) async throws -> FolderSize {
         let folder = try pathGuard.checkTarget(url)
         let keys: [URLResourceKey] = [.fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey]
-        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: [],
-                                                              errorHandler: { _, _ in true }) else { return FolderSize() }
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: folder, includingPropertiesForKeys: keys, options: [],
+                errorHandler: { _, _ in true })
+        else { return FolderSize() }
         var total = FolderSize()
         while let next = enumerator.nextObject() as? URL {
             total.items += 1
@@ -109,7 +118,8 @@ extension FileEngine {
                 progress?(total)
             }
             guard let values = try? next.resourceValues(forKeys: Set(keys)), values.isDirectory != true,
-                  values.isSymbolicLink != true else { continue }
+                values.isSymbolicLink != true
+            else { continue }
             total.bytes += Int64(values.fileSize ?? 0)
             total.allocatedBytes += Int64(values.totalFileAllocatedSize ?? 0)
         }
@@ -118,15 +128,18 @@ extension FileEngine {
     }
 
     static func modeString(_ mode: mode_t) -> String {
-        let bits: [(mode_t, Character)] = [(S_IRUSR, "r"), (S_IWUSR, "w"), (S_IXUSR, "x"), (S_IRGRP, "r"), (S_IWGRP, "w"),
-                                           (S_IXGRP, "x"), (S_IROTH, "r"), (S_IWOTH, "w"), (S_IXOTH, "x")]
+        let bits: [(mode_t, Character)] = [
+            (S_IRUSR, "r"), (S_IWUSR, "w"), (S_IXUSR, "x"), (S_IRGRP, "r"), (S_IWGRP, "w"),
+            (S_IXGRP, "x"), (S_IROTH, "r"), (S_IWOTH, "w"), (S_IXOTH, "x"),
+        ]
         return String(bits.map { mode & $0.0 != 0 ? $0.1 : "-" })
     }
 
     /// The "last opened" date Finder shows, kept by macOS in an extended attribute.
     private static func lastUsedDate(_ url: URL) -> Date? {
         var time = timespec()
-        let size = getxattr(url.path, "com.apple.lastuseddate#PS", &time, MemoryLayout<timespec>.size, 0, XATTR_NOFOLLOW)
+        let size = getxattr(
+            url.path, "com.apple.lastuseddate#PS", &time, MemoryLayout<timespec>.size, 0, XATTR_NOFOLLOW)
         guard size == MemoryLayout<timespec>.size else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(time.tv_sec) + TimeInterval(time.tv_nsec) / 1e9)
     }

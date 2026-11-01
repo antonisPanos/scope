@@ -27,8 +27,9 @@ final class InfoWindowController: NSWindowController, NSWindowDelegate {
 
     private init(item: FileItem, engine: FileEngine) {
         model = InfoModel(item: item, engine: engine)
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 340, height: 520),
-                             styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
+        let window = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 520),
+            styleMask: [.titled, .closable, .resizable, .utilityWindow], backing: .buffered, defer: false)
         window.title = "\(item.name) Info"
         window.isFloatingPanel = false
         window.becomesKeyOnlyIfNeeded = false
@@ -66,22 +67,24 @@ final class InfoModel {
     func load() {
         let engine = engine
         let url = item.url
-        tasks.append(Task { [weak self] in
-            let details = try? await engine.details(for: url)
-            self?.details = details
-        })
+        tasks.append(
+            Task { [weak self] in
+                let details = try? await engine.details(for: url)
+                self?.details = details
+            })
         guard item.isBrowsableFolder || item.isPackage else { return }
         isCounting = true
-        tasks.append(Task { [weak self] in
-            let result = try? await Task.detached(priority: .utility) {
-                try await engine.folderSize(of: url) { partial in
-                    Task { @MainActor in self?.folderSize = partial }
-                }
-            }.value
-            guard let self, !Task.isCancelled else { return }
-            if let result { self.folderSize = result }
-            self.isCounting = false
-        })
+        tasks.append(
+            Task { [weak self] in
+                let result = try? await Task.detached(priority: .utility) {
+                    try await engine.folderSize(of: url) { partial in
+                        Task { @MainActor in self?.folderSize = partial }
+                    }
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                if let result { self.folderSize = result }
+                self.isCounting = false
+            })
     }
 
     func cancel() {
@@ -171,10 +174,14 @@ struct InfoView: View {
     private var moreRows: [(String, String)] {
         guard let details = model.details else { return [] }
         var rows: [(String, String)] = []
-        if let width = details.pixelWidth, let height = details.pixelHeight { rows.append(("Dimensions", "\(width) × \(height)")) }
+        if let width = details.pixelWidth, let height = details.pixelHeight {
+            rows.append(("Dimensions", "\(width) × \(height)"))
+        }
         if let camera = details.cameraModel { rows.append(("Camera", camera)) }
         if let taken = details.dateTaken { rows.append(("Taken", taken)) }
-        if let duration = details.duration { rows.append(("Duration", Duration.seconds(duration).formatted(.time(pattern: .minuteSecond)))) }
+        if let duration = details.duration {
+            rows.append(("Duration", Duration.seconds(duration).formatted(.time(pattern: .minuteSecond))))
+        }
         if let target = details.linkTarget { rows.append(("Points to", target)) }
         if model.item.isHidden { rows.append(("Hidden", "Yes")) }
         return rows
@@ -204,8 +211,10 @@ struct CopyableValue: View {
             .truncationMode(.middle)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
-            .background(RoundedRectangle(cornerRadius: 4)
-                .fill(copied ? Color.accentColor.opacity(0.25) : hovering ? Color.secondary.opacity(0.12) : .clear))
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(copied ? Color.accentColor.opacity(0.25) : hovering ? Color.secondary.opacity(0.12) : .clear)
+            )
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)
             .help("Click to copy")

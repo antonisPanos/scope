@@ -43,7 +43,9 @@ enum DevHooks {
     private static func handle(_ request: String) {
         let (verb, argument) = split(request)
         // The key window may be a sheet or the command palette; use the browser behind it.
-        let controller = ([NSApp.keyWindow?.sheetParent, NSApp.keyWindow?.parent, NSApp.keyWindow, NSApp.mainWindow] + NSApp.orderedWindows)
+        let controller =
+            ([NSApp.keyWindow?.sheetParent, NSApp.keyWindow?.parent, NSApp.keyWindow, NSApp.mainWindow]
+            + NSApp.orderedWindows)
             .lazy.compactMap { $0?.windowController as? BrowserWindowController }.first
         logger.notice("Hook: \(request, privacy: .public)")
         switch verb {
@@ -74,7 +76,9 @@ enum DevHooks {
         case "ops":
             for snapshot in OperationsController.shared.snapshots {
                 let progress = snapshot.progress
-                logger.notice("Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)")
+                logger.notice(
+                    "Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)"
+                )
             }
         case "search":
             controller?.searchForHooks(argument)
@@ -91,12 +95,15 @@ enum DevHooks {
         case "overlays":
             // Lists every view drawn over the focused path bar, front to back.
             guard let window = controller?.window, let frameView = window.contentView?.superview,
-                  let bar = controller?.pathBarForHooks else { return }
+                let bar = controller?.pathBarForHooks
+            else { return }
             let target = bar.convert(bar.bounds, to: nil)
             func walk(_ view: NSView, depth: Int) {
                 let rect = view.convert(view.bounds, to: nil)
                 if rect.intersects(target), !view.isHidden, view.alphaValue > 0 {
-                    logger.notice("Overlay \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(rect), privacy: .public)")
+                    logger.notice(
+                        "Overlay \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(rect), privacy: .public)"
+                    )
                 }
                 for sub in view.subviews { walk(sub, depth: depth + 1) }
             }
@@ -104,21 +111,29 @@ enum DevHooks {
         case "zoom":
             controller?.window?.zoom(nil)
             if let window = controller?.window {
-                logger.notice("Zoomed to \(NSStringFromRect(window.frame), privacy: .public), screen \(NSStringFromRect(window.screen?.visibleFrame ?? .zero), privacy: .public)")
+                logger.notice(
+                    "Zoomed to \(NSStringFromRect(window.frame), privacy: .public), screen \(NSStringFromRect(window.screen?.visibleFrame ?? .zero), privacy: .public)"
+                )
             }
         case "pathbar":
             guard let bar = controller?.pathBarForHooks else { return }
             func dump(_ view: NSView, _ depth: Int) {
-                logger.notice("PB \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(view.frame), privacy: .public) hidden \(view.isHidden) alpha \(view.alphaValue) layer \(view.layer != nil) opacity \(view.layer?.opacity ?? -1)")
+                logger.notice(
+                    "PB \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(view.frame), privacy: .public) hidden \(view.isHidden) alpha \(view.alphaValue) layer \(view.layer != nil) opacity \(view.layer?.opacity ?? -1)"
+                )
                 for sub in view.subviews { dump(sub, depth + 1) }
             }
             var ancestor: NSView? = bar
             while let current = ancestor {
-                logger.notice("PB up \(String(describing: type(of: current)), privacy: .public) \(NSStringFromRect(current.frame), privacy: .public) bounds \(NSStringFromRect(current.bounds), privacy: .public) hidden \(current.isHidden) alpha \(current.alphaValue) opacity \(current.layer?.opacity ?? -1)")
+                logger.notice(
+                    "PB up \(String(describing: type(of: current)), privacy: .public) \(NSStringFromRect(current.frame), privacy: .public) bounds \(NSStringFromRect(current.bounds), privacy: .public) hidden \(current.isHidden) alpha \(current.alphaValue) opacity \(current.layer?.opacity ?? -1)"
+                )
                 ancestor = current.superview
             }
             dump(bar, 0)
-            logger.notice("PB window rect \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) visible \(NSStringFromRect(bar.visibleRect), privacy: .public)")
+            logger.notice(
+                "PB window rect \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) visible \(NSStringFromRect(bar.visibleRect), privacy: .public)"
+            )
         case "sidebarwidth":
             controller?.setSidebarWidthForHooks(CGFloat(Double(argument) ?? 200))
         case "resize":
@@ -134,7 +149,9 @@ enum DevHooks {
             NSApp.activate()
         case "snapshotcontent":
             // The window's content view only, without the title bar and toolbar.
-            if let view = controller?.window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            if let view = controller?.window?.contentView,
+                let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            {
                 view.cacheDisplay(in: view.bounds, to: rep)
                 let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(argument + ".png")
                 try? rep.representation(using: .png, properties: [:])?.write(to: file)
@@ -144,15 +161,21 @@ enum DevHooks {
                 if let sheet = window.attachedSheet { window.endSheet(sheet) }
             }
         case "appearance":
-            NSApp.appearance = argument == "dark" ? NSAppearance(named: .darkAqua)
+            NSApp.appearance =
+                argument == "dark"
+                ? NSAppearance(named: .darkAqua)
                 : argument == "light" ? NSAppearance(named: .aqua) : nil
         case "state":
             if let controller {
                 let model = controller.model
-                logger.notice("State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1), activity drawer \(controller.isActivityVisible ? "shown" : "hidden", privacy: .public), app active \(NSApp.isActive)")
+                logger.notice(
+                    "State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1), activity drawer \(controller.isActivityVisible ? "shown" : "hidden", privacy: .public), app active \(NSApp.isActive)"
+                )
             }
             for item in SidebarStore.shared.allItems {
-                logger.notice("Sidebar: \(item.title, privacy: .public) [\(item.isEnabled ? "on" : "off", privacy: .public)] \(item.subtitle ?? "", privacy: .public)")
+                logger.notice(
+                    "Sidebar: \(item.title, privacy: .public) [\(item.isEnabled ? "on" : "off", privacy: .public)] \(item.subtitle ?? "", privacy: .public)"
+                )
             }
         default:
             logger.error("Unknown hook \(request, privacy: .public)")
@@ -176,7 +199,8 @@ enum DevHooks {
     private static func snapshot(_ window: NSWindow, name: String) {
         // The frame view includes the title bar and toolbar.
         guard let view = window.contentView?.superview ?? window.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
         let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name + ".png")
         do {

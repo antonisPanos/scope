@@ -7,7 +7,9 @@ import Foundation
 /// `latency`. The stream is created for folders on screen and ends when its
 /// consumer stops iterating, so nothing is watched in the background.
 public enum FolderWatcher {
-    public static func changes(in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25) throws -> AsyncStream<Void> {
+    public static func changes(
+        in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25
+    ) throws -> AsyncStream<Void> {
         let resolved = try pathGuard.checkTarget(folder)
         let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         let box = WatcherBox(folder: resolved.path, continuation: continuation)
@@ -28,11 +30,13 @@ public enum FolderWatcher {
             box.handle(paths: paths, flags: flags)
         }
 
-        let flags = UInt32(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents
-                           | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer)
-        guard let eventStream = FSEventStreamCreate(
-            kCFAllocatorDefault, callback, &context, [resolved.path] as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
+        let flags = UInt32(
+            kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents
+                | kFSEventStreamCreateFlagWatchRoot | kFSEventStreamCreateFlagNoDefer)
+        guard
+            let eventStream = FSEventStreamCreate(
+                kCFAllocatorDefault, callback, &context, [resolved.path] as CFArray,
+                FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
         else {
             continuation.finish()
             return stream

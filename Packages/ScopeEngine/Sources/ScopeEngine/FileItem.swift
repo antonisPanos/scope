@@ -77,8 +77,10 @@ final class KindCache: @unchecked Sendable {
         lock.unlock()
         if let cached { return cached }
 
-        let kind = (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey]).localizedTypeDescription)
-            ?? UTType(filenameExtension: pathExtension, conformingTo: isPackage ? .package : .data)?.localizedDescription
+        let kind =
+            (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey]).localizedTypeDescription)
+            ?? UTType(filenameExtension: pathExtension, conformingTo: isPackage ? .package : .data)?
+            .localizedDescription
             ?? (pathExtension.isEmpty ? "Document" : "\(pathExtension.uppercased()) file")
         lock.lock()
         kinds[key] = kind

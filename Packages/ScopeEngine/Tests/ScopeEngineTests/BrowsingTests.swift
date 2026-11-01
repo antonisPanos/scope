@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 @Suite struct FileSortTests {
@@ -35,9 +36,11 @@ import Testing
     @Test func sortsByDate() async throws {
         let old = try sandbox.write("old.txt", "o")
         try sandbox.write("new.txt", "n")
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 0)], ofItemAtPath: old.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)], ofItemAtPath: old.path)
         #expect(FileSort(key: .modified).sorted(try await items()).map(\.name) == ["old.txt", "new.txt"])
-        #expect(FileSort(key: .modified, ascending: false).sorted(try await items()).map(\.name) == ["new.txt", "old.txt"])
+        #expect(
+            FileSort(key: .modified, ascending: false).sorted(try await items()).map(\.name) == ["new.txt", "old.txt"])
     }
 
     @Test func describesKinds() async throws {
@@ -98,7 +101,8 @@ import Testing
     @Test func reportsChangesToDirectChildren() async throws {
         let sandbox = try Sandbox()
         try sandbox.mkdir("watched/sub")
-        let stream = try FolderWatcher.changes(in: sandbox.url("watched"), pathGuard: sandbox.engine.pathGuard, latency: 0.05)
+        let stream = try FolderWatcher.changes(
+            in: sandbox.url("watched"), pathGuard: sandbox.engine.pathGuard, latency: 0.05)
 
         // FSEvents needs a moment to start delivering.
         try await Task.sleep(for: .milliseconds(300))
@@ -171,8 +175,11 @@ import Testing
         try sandbox.symlink("link", to: "folder")
 
         // A 3 x 2 PNG.
-        let png = try #require(Data(base64Encoded:
-            "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEklEQVR4nGP4z8DwnwEIQSwAP90E/GlZz9YAAAAASUVORK5CYII="))
+        let png = try #require(
+            Data(
+                base64Encoded:
+                    "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAIAAAASFvFNAAAAEklEQVR4nGP4z8DwnwEIQSwAP90E/GlZz9YAAAAASUVORK5CYII="
+            ))
         try sandbox.write("image.png", png)
 
         let folder = try await sandbox.engine.details(for: sandbox.url("folder"))

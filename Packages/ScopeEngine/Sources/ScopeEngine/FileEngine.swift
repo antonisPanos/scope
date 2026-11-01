@@ -82,7 +82,8 @@ public struct FileEngine: Sendable {
     public func rename(_ url: URL, to newName: String) async throws -> URL {
         guard Self.isValidName(newName) else { throw FileEngineError.invalidName(newName) }
         let source = try pathGuard.checkWriteLocation(url)
-        let destination = try pathGuard.checkWriteLocation(source.deletingLastPathComponent().appendingPathComponent(newName))
+        let destination = try pathGuard.checkWriteLocation(
+            source.deletingLastPathComponent().appendingPathComponent(newName))
         // A case-only rename on a case-insensitive disk finds the item itself at
         // the destination, so it must not use the exclusive rename.
         let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
@@ -101,7 +102,8 @@ public struct FileEngine: Sendable {
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
         let targetFolder = target.deletingLastPathComponent().path
         guard let sourceDevice = Self.lstatInfo(source.path)?.st_dev,
-              let targetDevice = Self.lstatInfo(targetFolder)?.st_dev else {
+            let targetDevice = Self.lstatInfo(targetFolder)?.st_dev
+        else {
             throw FileEngineError.sourceMissing(targetFolder)
         }
         guard sourceDevice == targetDevice else { throw FileEngineError.crossVolumeMoveNotSupported(source.path) }

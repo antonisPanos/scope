@@ -20,7 +20,8 @@ extension FileEngine {
         if let mountPoint {
             try pathGuard.checkWriteLocation(mountPoint)
             // diskutil makes the mount point itself, but its folder must exist.
-            try FileManager.default.createDirectory(at: mountPoint.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: mountPoint.deletingLastPathComponent(), withIntermediateDirectories: true)
         }
         guard ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil else {
             throw OperationError.needsUnsandboxedBuild
@@ -35,7 +36,8 @@ extension FileEngine {
         let output = try await Self.runTool("/usr/sbin/diskutil", arguments, input: passphrase, timeout: 60)
         guard output.status == 0 else {
             let message = output.error.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw OperationError.mountFailed(message.isEmpty ? "“\(image.lastPathComponent)” couldn't be mounted." : message)
+            throw OperationError.mountFailed(
+                message.isEmpty ? "“\(image.lastPathComponent)” couldn't be mounted." : message)
         }
         return Self.mountPoint(fromPlist: output.standardOutput) ?? mountPoint
     }
@@ -46,7 +48,11 @@ extension FileEngine {
         func search(_ value: Any) -> String? {
             if let dictionary = value as? [String: Any] {
                 for (key, inner) in dictionary {
-                    if key.lowercased().replacingOccurrences(of: "-", with: "") == "mountpoint", let path = inner as? String { return path }
+                    if key.lowercased().replacingOccurrences(of: "-", with: "") == "mountpoint",
+                        let path = inner as? String
+                    {
+                        return path
+                    }
                     if let found = search(inner) { return found }
                 }
             } else if let array = value as? [Any] {
@@ -65,7 +71,9 @@ extension FileEngine {
 
     /// Runs a system tool with a timeout, off the main thread. Cancelling the
     /// task terminates the tool, so a stuck image never hangs the operation.
-    static func runTool(_ path: String, _ arguments: [String], input: String?, timeout: TimeInterval) async throws -> ToolOutput {
+    static func runTool(
+        _ path: String, _ arguments: [String], input: String?, timeout: TimeInterval
+    ) async throws -> ToolOutput {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
@@ -82,7 +90,8 @@ extension FileEngine {
                 process.terminationHandler = { finished in
                     let output = stdout.fileHandleForReading.readDataToEndOfFile()
                     let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    continuation.resume(returning: ToolOutput(status: finished.terminationStatus, standardOutput: output, error: error))
+                    continuation.resume(
+                        returning: ToolOutput(status: finished.terminationStatus, standardOutput: output, error: error))
                 }
                 do {
                     try process.run()

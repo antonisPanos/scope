@@ -28,9 +28,12 @@ struct SearchBar: View {
                 .fixedSize()
                 Menu(kindTitle) {
                     ForEach(SearchQuery.Kind.allCases, id: \.self) { kind in
-                        Toggle(kind.rawValue.capitalized, isOn: Binding(
-                            get: { settings.kinds.contains(kind) },
-                            set: { on in if on { settings.kinds.insert(kind) } else { settings.kinds.remove(kind) } }))
+                        Toggle(
+                            kind.rawValue.capitalized,
+                            isOn: Binding(
+                                get: { settings.kinds.contains(kind) },
+                                set: { on in if on { settings.kinds.insert(kind) } else { settings.kinds.remove(kind) }
+                                }))
                     }
                     Divider()
                     Button("Any kind") { settings.kinds = [] }
@@ -61,9 +64,13 @@ struct SearchBar: View {
             } else {
                 Text("\(resultCount.formatted()) found").foregroundStyle(.secondary).monospacedDigit().fixedSize()
             }
-            Button { onClose() } label: { Image(systemName: "xmark.circle.fill") }
-                .buttonStyle(.borderless)
-                .help("End search (Esc)")
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("End search (Esc)")
         }
         .controlSize(.small)
         .padding(.horizontal, 10)
@@ -87,6 +94,7 @@ struct SearchBar: View {
     }
 
     private var kindTitle: String {
-        settings.kinds.isEmpty ? "Any kind" : settings.kinds.map(\.rawValue.capitalized).sorted().joined(separator: ", ")
+        settings.kinds.isEmpty
+            ? "Any kind" : settings.kinds.map(\.rawValue.capitalized).sorted().joined(separator: ", ")
     }
 }

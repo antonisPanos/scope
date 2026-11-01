@@ -225,8 +225,9 @@ final class PaneTabStripBar: NSView {
         for (index, title) in strip.titles.enumerated() {
             stack.addArrangedSubview(tabView(index: index, title: title))
         }
-        let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")!,
-                           target: self, action: #selector(newTab))
+        let add = NSButton(
+            image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")!,
+            target: self, action: #selector(newTab))
         add.isBordered = false
         add.toolTip = "New Tab on This Side (⌘T)"
         stack.addArrangedSubview(add)
@@ -253,8 +254,9 @@ final class PaneTabStripBar: NSView {
         let row = NSStackView(views: [label])
         row.spacing = 4
         if strip.titles.count > 1 {
-            let close = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")!,
-                                 target: self, action: #selector(closeTab(_:)))
+            let close = NSButton(
+                image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")!,
+                target: self, action: #selector(closeTab(_:)))
             close.isBordered = false
             close.tag = index
             close.symbolConfiguration = .init(pointSize: 8, weight: .bold)

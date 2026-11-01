@@ -34,7 +34,8 @@ public struct FileOperation: Sendable, Hashable {
     /// The items the operation reads or changes, for locking and conflict checks.
     public var touchedItems: [URL] {
         switch kind {
-        case .copy(let items, _), .move(let items, _), .duplicate(let items), .trash(let items), .compress(let items, _):
+        case .copy(let items, _), .move(let items, _), .duplicate(let items), .trash(let items),
+            .compress(let items, _):
             items
         case .rename(let item, _), .extract(let item), .mountImage(let item, _, _), .ejectVolume(let item):
             [item]
@@ -170,7 +171,9 @@ public final class OperationControl: Sendable {
     /// Bytes per second over the last few seconds.
     public var speed: Double? {
         state.withLock { state in
-            guard let first = state.samples.first, let last = state.samples.last, last.time > first.time + 0.3 else { return nil }
+            guard let first = state.samples.first, let last = state.samples.last, last.time > first.time + 0.3 else {
+                return nil
+            }
             return Double(last.bytes - first.bytes) / (last.time - first.time)
         }
     }
@@ -248,7 +251,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .itemsBusy(let names): "\(names.joined(separator: ", ")) \(names.count == 1 ? "is" : "are") in use by another operation."
+        case .itemsBusy(let names):
+            "\(names.joined(separator: ", ")) \(names.count == 1 ? "is" : "are") in use by another operation."
         case .stoppedByUser: "Stopped."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."

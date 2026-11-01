@@ -23,8 +23,9 @@ final class CommandPalette: NSObject {
 
     init(controller: BrowserWindowController) {
         self.controller = controller
-        panel = PalettePanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
-                             styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: true)
+        panel = PalettePanel(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
+            styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: true)
         super.init()
         buildUI()
     }
@@ -115,15 +116,19 @@ final class CommandPalette: NSObject {
         var entries: [Entry] = []
         for command in Commands.all where command.isEnabled(controller) && command.id != "palette" {
             let title = command.menu == .sortBy ? "Sort by \(command.title)" : command.title
-            entries.append(Entry(title: title, detail: command.shortcutText, symbolName: "command") { [weak controller] in
-                if let controller { command.run(controller) }
-            })
+            entries.append(
+                Entry(title: title, detail: command.shortcutText, symbolName: "command") { [weak controller] in
+                    if let controller { command.run(controller) }
+                })
         }
         for item in SidebarStore.shared.allItems where item.isEnabled {
-            entries.append(Entry(title: "Go to \(item.title)", detail: item.kind == .tag ? "Tag" : "Place",
-                                 symbolName: item.kind == .tag ? "tag" : item.symbolName) { [weak controller] in
-                controller?.model.navigate(to: item.location)
-            })
+            entries.append(
+                Entry(
+                    title: "Go to \(item.title)", detail: item.kind == .tag ? "Tag" : "Place",
+                    symbolName: item.kind == .tag ? "tag" : item.symbolName
+                ) { [weak controller] in
+                    controller?.model.navigate(to: item.location)
+                })
         }
         return entries
     }
@@ -132,14 +137,16 @@ final class CommandPalette: NSObject {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
         var results: [Entry] = []
         if query.hasPrefix("/") || query.hasPrefix("~") || query.hasPrefix("./") || query.hasPrefix("../") {
-            results.append(Entry(title: "Go to \(query)", detail: "Path", symbolName: "arrow.right.circle") { [weak controller] in
-                controller?.goToTypedPath(query)
-            })
+            results.append(
+                Entry(title: "Go to \(query)", detail: "Path", symbolName: "arrow.right.circle") { [weak controller] in
+                    controller?.goToTypedPath(query)
+                })
         }
         if query.isEmpty {
             results += allEntries
         } else {
-            results += allEntries
+            results +=
+                allEntries
                 .compactMap { entry in Self.score(query, in: entry.title).map { (entry, $0) } }
                 .sorted { $0.1 > $1.1 }
                 .map(\.0)

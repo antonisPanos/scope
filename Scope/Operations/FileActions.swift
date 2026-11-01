@@ -34,7 +34,8 @@ extension BrowserWindowController {
     }
 
     var pasteboardFiles: [URL] {
-        NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+            ?? []
     }
 
     /// Pastes copied files into the current folder; `move` is Finder's "Move Item Here".
@@ -83,7 +84,8 @@ extension BrowserWindowController {
         // path guard lets Scope browse the mounted volume.
         var mountPoint: URL?
         if BuildIdentity.current.isDevelopment,
-           let disk = BuildIdentity.testDiskRoots.first(where: { image.path.hasPrefix($0.path + "/") }) {
+            let disk = BuildIdentity.testDiskRoots.first(where: { image.path.hasPrefix($0.path + "/") })
+        {
             let name = (image.lastPathComponent as NSString).deletingPathExtension
             mountPoint = disk.appendingPathComponent("Mounted").appendingPathComponent(name)
         }
@@ -164,7 +166,8 @@ extension BrowserWindowController {
 
     func openWithMenu() -> NSMenu? {
         guard selectedItems.count == 1, let item = selectedItems.first, !item.isBrowsableFolder,
-              model.engine.pathGuard.permits(item.url) else { return nil }
+            model.engine.pathGuard.permits(item.url)
+        else { return nil }
         let menu = NSMenu(title: "Open With")
         let apps = NSWorkspace.shared.urlsForApplications(toOpen: item.url)
         let preferred = NSWorkspace.shared.urlForApplication(toOpen: item.url)
