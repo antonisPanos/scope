@@ -6,9 +6,12 @@ import ScopeEngine
 @MainActor
 final class ContextMenuBuilder: NSObject, NSMenuDelegate {
     weak var controller: BrowserWindowController?
+    /// Counts menu builds, so a late tag read can't land in a newer menu.
+    private var generation = 0
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        generation += 1
         guard let controller else { return }
         controller.prepareForContextMenu()
         let selection = controller.selectedItems
@@ -87,22 +90,23 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("addToSidebar")
             separator()
             submenu("Sort By", sortIDs)
-            if let tags = controller.tagsMenu(for: selection) {
-                separator()
-                menu.addItem(tags)
-            }
+            if selection.count == 1 { addTags(of: selection[0], to: menu, engine: controller.model.engine) }
         }
     }
-}
 
-extension BrowserWindowController {
-    /// The selection's tags, read-only for now (editing tags comes in phase 1).
-    func tagsMenu(for selection: [FileItem]) -> NSMenuItem? {
-        guard selection.count == 1, let url = selection.first?.url,
-            let tags = try? url.resourceValues(forKeys: [.tagNamesKey]).tagNames, !tags.isEmpty
-        else { return nil }
-        let item = NSMenuItem(title: "Tags: " + tags.joined(separator: ", "), action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
+    /// The item's tags, read-only for now (editing tags comes in phase 1).
+    /// Reading them is disk work, so it happens in the background and the
+    /// line is added to the open menu when they arrive; an item without tags
+    /// gets none.
+    private func addTags(of item: FileItem, to menu: NSMenu, engine: FileEngine) {
+        let build = generation
+        let url = item.url
+        Task {
+            guard let tags = try? await engine.tags(for: url), !tags.isEmpty, build == generation else { return }
+            if let last = menu.items.last, !last.isSeparatorItem { menu.addItem(.separator()) }
+            let line = NSMenuItem(title: "Tags: " + tags.joined(separator: ", "), action: nil, keyEquivalent: "")
+            line.isEnabled = false
+            menu.addItem(line)
+        }
     }
 }
