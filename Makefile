@@ -1,6 +1,6 @@
 # One entry point for everyday tasks. Run `make` or `make help` to list them.
 .DEFAULT_GOAL := help
-.PHONY: help setup hooks build build-all test testdisk install-dev devhook
+.PHONY: help setup hooks build build-all test format lint testdisk install-dev devhook
 
 DERIVED := build/DerivedData
 XCB := xcodebuild -project Scope.xcodeproj -derivedDataPath $(DERIVED)
@@ -23,6 +23,15 @@ build-all: ## Build all three schemes
 
 test: ## Run the engine tests
 	cd Packages/ScopeEngine && swift test
+
+format: ## Format Swift files changed from main (FILES=... to pick files, ALL=1 for everything)
+	@files="$${FILES:-$$(if [ -n "$(ALL)" ]; then git ls-files '*.swift'; else git diff --name-only --diff-filter=ACMR origin/main -- '*.swift'; git ls-files --others --exclude-standard '*.swift'; fi)}"; \
+	if [ -z "$$files" ]; then echo "No Swift files to format."; else xcrun swift-format format --in-place --configuration .swift-format $$files; fi
+
+lint: ## Lint Swift files changed from main, like CI (needs: brew install swiftlint)
+	@files="$${FILES:-$$(git diff --name-only --diff-filter=ACMR origin/main -- '*.swift'; git ls-files --others --exclude-standard '*.swift')}"; \
+	if [ -z "$$files" ]; then echo "No Swift files to lint."; else \
+	  xcrun swift-format lint --strict --configuration .swift-format $$files && swiftlint lint --quiet $$files; fi
 
 testdisk: ## Create and mount the test disks (scripts/testdisk.sh create)
 	scripts/testdisk.sh create

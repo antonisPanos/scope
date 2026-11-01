@@ -1,0 +1,79 @@
+# SwiftLint catches bugs and risky patterns; swift-format owns layout,
+# so the rules that only check whitespace and wrapping are off here.
+included:
+  - Scope
+  - Packages/ScopeEngine/Sources
+  - Packages/ScopeEngine/Tests
+  - scripts
+excluded:
+  - build
+  - Packages/ScopeEngine/.build
+
+disabled_rules:
+  - trailing_comma
+  - opening_brace
+  - vertical_whitespace
+  - trailing_whitespace
+  - comma
+  - colon
+  - operator_whitespace
+  - statement_position
+  - todo
+
+opt_in_rules:
+  - closure_end_indentation
+  - discouraged_optional_boolean
+  - empty_count
+  - empty_string
+  - fatal_error_message
+  - first_where
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - last_where
+  - legacy_multiple
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - unowned_variable_capture
+  - weak_delegate
+  - yoda_condition
+
+# Existing code predates these limits, so long lines and complex switches
+# warn instead of failing; new code should stay under them.
+line_length:
+  warning: 140
+  error: 1000
+  ignores_comments: true
+  ignores_urls: true
+type_body_length:
+  warning: 500
+  error: 900
+file_length:
+  warning: 900
+  error: 1500
+function_body_length:
+  warning: 80
+  error: 200
+cyclomatic_complexity:
+  warning: 15
+  error: 30
+  ignores_case_statements: true
+large_tuple:
+  warning: 3
+  error: 5
+force_cast: warning
+identifier_name:
+  min_length: 1
+  excluded: [id, x, y, i, j, ok, to]
+nesting:
+  type_level: 3
+
+custom_rules:
+  # CLAUDE.md: all file system access goes through FileEngine in the engine package.
+  file_manager_writes_outside_engine:
+    name: File changes go through FileEngine
+    regex: 'FileManager\.default\.(removeItem|moveItem|copyItem|createDirectory|createFile|trashItem|replaceItem|linkItem|createSymbolicLink|setAttributes)'
+    excluded:
+      - 'Packages/ScopeEngine/'
+      - 'scripts/'
+    message: Change files only through FileEngine, so PathGuard checks every path.
+    severity: error
