@@ -58,8 +58,40 @@ final class PaneController: NSViewController {
 
     /// The strip sits in the visible tab, under its path bar. (Placed above
     /// the tab, at the top of the pane, it ended up hidden under the toolbar.)
+    /// In split view the pane's path bar and tab strip live in a header that
+    /// the window adds as a top accessory of the pane's split item. That is
+    /// the place AppKit keeps clear of the toolbar's scroll edge effect;
+    /// rows placed under the toolbar by hand get hidden by it.
+    let headerPathBar = PathBar()
+    var onSubmitPath: ((String) -> Void)?
+
+    private(set) lazy var header: NSSplitViewItemAccessoryViewController = {
+        let controller = NSSplitViewItemAccessoryViewController()
+        let separator = NSBox()
+        separator.boxType = .separator
+        let stack = NSStackView(views: [headerPathBar, separator, stripHost])
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.alignment = .leading
+        for view in [headerPathBar, separator, stripHost] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        stripHost.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        headerPathBar.onNavigate = { [weak self] url in self?.activeTab.model.navigate(to: .folder(url)) }
+        headerPathBar.onSubmit = { [weak self] text in
+            self?.onSubmitPath?(text)
+            return nil
+        }
+        controller.view = stack
+        return controller
+    }()
+
     var showsTabStrip = false {
-        didSet { activeTab.setAccessory(showsTabStrip ? stripHost : nil, height: 28) }
+        didSet {
+            activeTab.isPathBarVisible = !showsTabStrip
+            refreshStrip()
+        }
     }
 
     func addTab(_ tab: BrowserViewController) {
@@ -72,7 +104,7 @@ final class PaneController: NSViewController {
     func removeTab(at index: Int) -> BrowserViewController? {
         guard tabs.count > 1, tabs.indices.contains(index) else { return nil }
         let removed = tabs.remove(at: index)
-        removed.setAccessory(nil, height: 0)
+        removed.isPathBarVisible = true
         if removed.view.superview != nil {
             removed.view.removeFromSuperview()
             removed.removeFromParent()
@@ -89,7 +121,7 @@ final class PaneController: NSViewController {
         let old = activeTab
         activeIndex = index
         if old !== activeTab {
-            old.setAccessory(nil, height: 0)
+            old.isPathBarVisible = true
             old.view.removeFromSuperview()
             old.removeFromParent()
             install(activeTab)
@@ -101,7 +133,7 @@ final class PaneController: NSViewController {
 
     private func install(_ tab: BrowserViewController) {
         guard tab.parent == nil else { return }
-        defer { tab.setAccessory(showsTabStrip ? stripHost : nil, height: 28) }
+        defer { tab.isPathBarVisible = !showsTabStrip }
         addChild(tab)
         let subview = tab.view
         subview.translatesAutoresizingMaskIntoConstraints = false
@@ -119,6 +151,7 @@ final class PaneController: NSViewController {
         strip.titles = tabs.map { $0.model.location.title }
         strip.activeIndex = activeIndex
         stripHost.rebuild()
+        headerPathBar.show(activeTab.model.location)
     }
 
     var isFocused = false {

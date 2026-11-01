@@ -88,6 +88,43 @@ enum DevHooks {
             controller?.endSearch()
         case "panes":
             controller?.logPanesForHooks()
+        case "overlays":
+            // Lists every view drawn over the focused path bar, front to back.
+            guard let window = controller?.window, let frameView = window.contentView?.superview,
+                  let bar = controller?.pathBarForHooks else { return }
+            let target = bar.convert(bar.bounds, to: nil)
+            func walk(_ view: NSView, depth: Int) {
+                let rect = view.convert(view.bounds, to: nil)
+                if rect.intersects(target), !view.isHidden, view.alphaValue > 0 {
+                    logger.notice("Overlay \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(rect), privacy: .public)")
+                }
+                for sub in view.subviews { walk(sub, depth: depth + 1) }
+            }
+            walk(frameView, depth: 0)
+        case "zoom":
+            controller?.window?.zoom(nil)
+            if let window = controller?.window {
+                logger.notice("Zoomed to \(NSStringFromRect(window.frame), privacy: .public), screen \(NSStringFromRect(window.screen?.visibleFrame ?? .zero), privacy: .public)")
+            }
+        case "pathbar":
+            guard let bar = controller?.pathBarForHooks else { return }
+            func dump(_ view: NSView, _ depth: Int) {
+                logger.notice("PB \(String(repeating: " ", count: depth), privacy: .public)\(String(describing: type(of: view)), privacy: .public) \(NSStringFromRect(view.frame), privacy: .public) hidden \(view.isHidden) alpha \(view.alphaValue) layer \(view.layer != nil) opacity \(view.layer?.opacity ?? -1)")
+                for sub in view.subviews { dump(sub, depth + 1) }
+            }
+            var ancestor: NSView? = bar
+            while let current = ancestor {
+                logger.notice("PB up \(String(describing: type(of: current)), privacy: .public) \(NSStringFromRect(current.frame), privacy: .public) bounds \(NSStringFromRect(current.bounds), privacy: .public) hidden \(current.isHidden) alpha \(current.alphaValue) opacity \(current.layer?.opacity ?? -1)")
+                ancestor = current.superview
+            }
+            dump(bar, 0)
+        case "resize":
+            if let width = Double(argument), let window = controller?.window {
+                var frame = window.frame
+                frame.size.width = width
+                window.setFrame(frame, display: true)
+                logger.notice("Resized to \(window.frame.width) (asked \(width)), min \(window.minSize.width)")
+            }
         case "undo":
             controller?.undoLastOperation()
         case "activate":

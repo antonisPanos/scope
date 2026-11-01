@@ -198,6 +198,11 @@ final class BrowserViewController: NSViewController {
         statusLeft.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         accessoryHeight = accessory.heightAnchor.constraint(equalToConstant: 0)
         accessoryHeight.isActive = true
+        // SwiftUI hosts otherwise impose their content's minimum width on the
+        // window, even while hidden; two panes then can't fit the screen.
+        searchHost.sizingOptions = []
+        activity.sizingOptions = []
+        footerActivity.sizingOptions = [.intrinsicContentSize]
         searchHeight = searchHost.heightAnchor.constraint(equalToConstant: 0)
         searchHeight.isActive = true
         searchHost.isHidden = true

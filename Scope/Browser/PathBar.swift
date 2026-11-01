@@ -12,7 +12,9 @@ final class PathBar: NSView {
     /// Called with typed text; returns an error message to show, or nil when it worked.
     var onSubmit: ((String) -> String?)?
 
-    private let pathControl = NSPathControl()
+    /// The breadcrumbs: our own buttons rather than NSPathControl, which drew
+    /// nothing (while staying clickable) inside split view.
+    private let pathControl = NSStackView()
     private let field = PathField()
     private let errorLabel = NSTextField(labelWithString: "")
     private var location: Location?
@@ -21,13 +23,8 @@ final class PathBar: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        pathControl.pathStyle = .standard
-        pathControl.focusRingType = .none
-        pathControl.isEditable = false
-        pathControl.target = self
-        pathControl.action = #selector(crumbClicked)
-        pathControl.font = .systemFont(ofSize: NSFont.systemFontSize)
-        pathControl.backgroundColor = .clear
+        pathControl.orientation = .horizontal
+        pathControl.spacing = 2
 
         field.placeholderString = "Type a path, like ~/Documents or /Volumes/ScopeTest"
         field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
@@ -43,17 +40,15 @@ final class PathBar: NSView {
         errorLabel.isHidden = true
         errorLabel.lineBreakMode = .byTruncatingTail
 
-        for view in [pathControl, field, errorLabel] as [NSView] {
+        for view in [pathControl, errorLabel] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        field.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             pathControl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             pathControl.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             pathControl.centerYAnchor.constraint(equalTo: centerYAnchor),
-            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            field.trailingAnchor.constraint(equalTo: errorLabel.leadingAnchor, constant: -8),
-            field.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             errorLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.45),
@@ -72,13 +67,14 @@ final class PathBar: NSView {
         switch location {
         case .folder(let url):
             crumbURLs = Self.crumbURLs(for: url)
-            pathControl.pathItems = crumbURLs.map(Self.crumb)
+            setCrumbs(crumbURLs.map { url in
+                let isDisk = url.path == "/" || Self.isVolumeRoot(url)
+                return (url.path == "/" ? (Volumes.rootName ?? "Macintosh HD") : url.lastPathComponent,
+                        isDisk ? "externaldrive" : "folder")
+            })
         case .recents, .tag, .search:
             crumbURLs = []
-            let item = NSPathControlItem()
-            item.title = location.title
-            item.image = NSImage(systemSymbolName: location.symbolName, accessibilityDescription: nil)
-            pathControl.pathItems = [item]
+            setCrumbs([(location.title, location.symbolName)])
         }
     }
 
@@ -86,6 +82,16 @@ final class PathBar: NSView {
     func beginEditing(prefill: String? = nil) {
         errorLabel.isHidden = true
         field.stringValue = prefill ?? location?.folderURL.map { Self.displayPath($0) } ?? ""
+        // The text field joins the bar only while typing. Kept in the bar
+        // while hidden, it stopped the whole bar from drawing in split view.
+        if field.superview == nil {
+            addSubview(field)
+            NSLayoutConstraint.activate([
+                field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+                field.trailingAnchor.constraint(equalTo: errorLabel.leadingAnchor, constant: -8),
+                field.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
         field.isHidden = false
         pathControl.isHidden = true
         window?.makeFirstResponder(field)
@@ -94,6 +100,7 @@ final class PathBar: NSView {
 
     func endEditing() {
         field.isHidden = true
+        field.removeFromSuperview()
         errorLabel.isHidden = true
         pathControl.isHidden = false
         // Hand focus back to the file list.
@@ -105,11 +112,31 @@ final class PathBar: NSView {
         if !isEditing { beginEditing() }
     }
 
-    @objc private func crumbClicked() {
-        guard let clicked = pathControl.clickedPathItem,
-              let index = pathControl.pathItems.firstIndex(where: { $0 === clicked }),
-              crumbURLs.indices.contains(index) else { return }
-        onNavigate?(crumbURLs[index])
+    private func setCrumbs(_ crumbs: [(title: String, symbol: String)]) {
+        pathControl.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (index, crumb) in crumbs.enumerated() {
+            if index > 0 {
+                let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)!)
+                chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+                chevron.contentTintColor = Palette.secondaryText
+                pathControl.addArrangedSubview(chevron)
+            }
+            let button = NSButton(title: crumb.title, image: NSImage(systemSymbolName: crumb.symbol, accessibilityDescription: nil)!,
+                                  target: self, action: #selector(crumbClicked(_:)))
+            button.isBordered = false
+            button.imagePosition = .imageLeading
+            button.font = .systemFont(ofSize: NSFont.systemFontSize)
+            button.contentTintColor = index == crumbs.count - 1 ? Palette.primaryText : Palette.secondaryText
+            button.tag = index
+            button.lineBreakMode = .byTruncatingMiddle
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            pathControl.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func crumbClicked(_ sender: NSButton) {
+        guard crumbURLs.indices.contains(sender.tag) else { return }
+        onNavigate?(crumbURLs[sender.tag])
     }
 
     private func submit() {
@@ -149,13 +176,6 @@ final class PathBar: NSView {
         return components.count == 3 && components[1] == "Volumes"
     }
 
-    private static func crumb(_ url: URL) -> NSPathControlItem {
-        let item = NSPathControlItem()
-        let isDisk = url.path == "/" || isVolumeRoot(url)
-        item.title = url.path == "/" ? (Volumes.rootName ?? "Macintosh HD") : url.lastPathComponent
-        item.image = NSImage(systemSymbolName: isDisk ? "externaldrive" : "folder", accessibilityDescription: nil)
-        return item
-    }
 }
 
 extension PathBar: NSTextFieldDelegate {

@@ -18,6 +18,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Whether the preview pane was showing before split view hid it.
     private var previewBeforeSplit = true
     private let splitController = NSSplitViewController()
+    private var contentItem: NSSplitViewItem!
     private let sidebarSelection = SidebarSelection()
     private var sidebarItem: NSSplitViewItem!
     private var palette: CommandPalette?
@@ -60,8 +61,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarItem.minimumThickness = 170
         sidebarItem.maximumThickness = 320
         sidebarItem.canCollapse = true
-        let contentItem = NSSplitViewItem(viewController: workspace)
+        contentItem = NSSplitViewItem(viewController: workspace)
         contentItem.titlebarSeparatorStyle = .line
+        contentItem.automaticallyAdjustsSafeAreaInsets = true
         splitController.addSplitViewItem(sidebarItem)
         splitController.addSplitViewItem(contentItem)
         splitController.splitView.autosaveName = "BrowserSplit"
@@ -146,6 +148,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         pane.onNewTab = { [weak self] pane in self?.addTab(to: pane) }
         pane.onCloseTab = { [weak self] pane, index in self?.closeTab(in: pane, at: index) }
+        pane.onSubmitPath = { [weak self] text in self?.goToTypedPath(text) }
         pane.onTabAction = { [weak self] pane, index, action in self?.tabAction(action, in: pane, at: index) }
     }
 
@@ -181,6 +184,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 if let item = splitController.splitViewItems.first(where: { $0.viewController === removed }) {
                     splitController.removeSplitViewItem(item)
                 }
+                if let index = contentItem.topAlignedAccessoryViewControllers.firstIndex(where: { $0 === workspace.panes[0].header }) {
+                    contentItem.removeTopAlignedAccessoryViewController(at: index)
+                }
                 for tab in removed.tabs { tab.close(); tab.model.close() }
             }
             content.isPreviewVisible = previewBeforeSplit
@@ -193,7 +199,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             workspace.addPane(pane)
             let item = NSSplitViewItem(viewController: pane)
             item.titlebarSeparatorStyle = .line
+            item.minimumThickness = 280
+            item.automaticallyAdjustsSafeAreaInsets = true
+            // Adding an item makes the split view grow the window to fit it;
+            // keep the window where it was and share its width instead.
+            let frame = window?.frame
             splitController.addSplitViewItem(item)
+            if let frame { window?.setFrame(frame, display: true) }
+            contentItem.addTopAlignedAccessoryViewController(workspace.panes[0].header)
+            item.addTopAlignedAccessoryViewController(pane.header)
             let split = splitController.splitView
             split.adjustSubviews()
             let left = sidebarItem.isCollapsed ? 0 : sidebarItem.viewController.view.frame.width
@@ -350,6 +364,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         tab.focusFileList()
     }
 
+    /// Zoom (double-clicking the title bar) fills the screen and no more,
+    /// with one pane or two.
+    func windowWillUseStandardFrame(_ window: NSWindow, defaultFrame newFrame: NSRect) -> NSRect {
+        window.screen?.visibleFrame ?? newFrame
+    }
+
     func windowWillClose(_ notification: Notification) {
         palette?.close()
         firstResponderObservation = nil
@@ -406,6 +426,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     var searchSettingsForHooks: SearchSettings { content.search }
+    var pathBarForHooks: NSView { workspace.isSplit ? workspace.activePane.headerPathBar : content.pathBar }
 
     func logPanesForHooks() {
         if let window {
@@ -446,6 +467,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func toggleSidebar() { sidebarItem.animator().isCollapsed.toggle() }
 
     func beginTypingPath() {
+        if workspace.isSplit {
+            workspace.activePane.headerPathBar.beginEditing()
+            return
+        }
         if !content.isPathBarVisible { content.isPathBarVisible = true }
         content.pathBar.beginEditing()
     }
