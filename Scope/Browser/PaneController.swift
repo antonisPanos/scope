@@ -83,7 +83,18 @@ final class PaneController: NSViewController {
             self?.onSubmitPath?(text)
             return nil
         }
-        controller.view = stack
+        // Inside the accessory too, keep clear of the floating sidebar.
+        let holder = NSView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(stack)
+        NSLayoutConstraint.activate([
+            // The accessory starts under the toolbar; its safe area starts below it.
+            stack.topAnchor.constraint(equalTo: holder.safeAreaLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: holder.safeAreaLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: holder.safeAreaLayoutGuide.trailingAnchor),
+        ])
+        controller.view = holder
         return controller
     }()
 

@@ -118,6 +118,7 @@ enum DevHooks {
                 ancestor = current.superview
             }
             dump(bar, 0)
+            logger.notice("PB window rect \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) visible \(NSStringFromRect(bar.visibleRect), privacy: .public)")
         case "resize":
             if let width = Double(argument), let window = controller?.window {
                 var frame = window.frame
