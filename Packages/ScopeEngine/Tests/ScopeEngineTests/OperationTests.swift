@@ -224,6 +224,66 @@ import Testing
         #expect(try other.names() == [])
     }
 
+    @Test func aMoveToADiskThatGoesAwayKeepsTheSource() async throws {
+        // Big enough that the copy is still running when it gets paused.
+        try disk.write("big/one.bin", Data(repeating: 3, count: 200 * 1024 * 1024))
+        let before = try TreeSnapshot(disk.url("big"))
+        let control = OperationControl()
+        let engine = engine
+        let source = disk.url("big")
+        let destination = other.work
+        let task = Task {
+            let undo = UndoRecorder()
+            try await engine.run(FileOperation(.move([source], into: destination)), control: control, undo: undo) { _ in
+                (.stop, false)
+            }
+        }
+        // Held mid-copy, then the destination disk is pulled out from under it.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while control.progress.bytesDone == 0 {
+            try #require(ContinuousClock.now < deadline, "the move never started copying")
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        control.isPaused = true
+        try other.detach()
+        control.isPaused = false
+        await #expect(throws: (any Error).self) { try await task.value }
+
+        #expect(try TreeSnapshot(disk.url("big")) == before)
+    }
+
+    @Test func aCopyThatFillsTheDiskLeavesNothingBehind() async throws {
+        let small = try TestVolume(name: "ScopeFull", sizeMB: 96)
+        try small.write("kept.txt", "kept")
+        try disk.write("big.bin", Data(repeating: 1, count: 150 * 1024 * 1024))
+        let engine = FileEngine(pathGuard: .restricted(to: [disk.mountPoint, small.mountPoint]))
+
+        await #expect(throws: (any Error).self) {
+            try await engine.copyItem(at: disk.url("big.bin"), to: small.url("big.bin"))
+        }
+        #expect(try small.names() == ["kept.txt"])
+        #expect(try small.read("kept.txt") == "kept")
+    }
+
+    @Test func conflictsCatchOtherSpellingsOfTheSameName() async throws {
+        // On a case-insensitive disk that ignores Unicode forms, these are the same names.
+        let composed = "caf\u{E9}.txt"
+        let decomposed = "cafe\u{301}.txt"
+        try disk.write("dest/\(composed)", "old accent")
+        try disk.write("dest/Report.txt", "old case")
+        try disk.write("src/\(decomposed)", "new accent")
+        try disk.write("src/report.txt", "new case")
+        var harness = ops
+        harness.conflictAnswer = .keepBoth
+
+        let sources = [disk.url("src/\(decomposed)"), disk.url("src/report.txt")]
+        try await harness.run(.copy(sources, into: disk.url("dest")))
+        let names = try disk.names("dest").map { $0.precomposedStringWithCanonicalMapping.lowercased() }
+        #expect(names.sorted() == ["caf\u{E9} 2.txt", "caf\u{E9}.txt", "report 2.txt", "report.txt"])
+        #expect(try disk.read("dest/\(composed)") == "old accent")
+        #expect(try disk.read("dest/Report.txt") == "old case")
+    }
+
     @Test func refusesToMoveAFolderIntoItself() async throws {
         try disk.write("folder/sub/a.txt", "a")
         await #expect(throws: FileEngineError.self) {

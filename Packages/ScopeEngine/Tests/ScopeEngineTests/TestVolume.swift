@@ -41,6 +41,11 @@ final class TestVolume {
 
     func url(_ relative: String) -> URL { work.appendingPathComponent(relative) }
 
+    /// Force-detaches the volume mid-test, as pulling the disk out would.
+    func detach() throws {
+        try Self.run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force", "-quiet"])
+    }
+
     @discardableResult
     func write(_ relative: String, _ contents: String) throws -> URL {
         try write(relative, Data(contents.utf8))
