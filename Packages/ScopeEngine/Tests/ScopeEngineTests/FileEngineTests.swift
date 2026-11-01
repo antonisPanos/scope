@@ -255,22 +255,36 @@ import Testing
         try sandbox.write("big/one.bin", Data(count: 64 * 1024 * 1024))
         try sandbox.write("big/two.bin", Data(count: 64 * 1024 * 1024))
         try sandbox.mkdir("dest")
-        let started = AsyncStream.makeStream(of: Void.self)
 
         let engine = self.engine
         let source = sandbox.url("big")
         let target = sandbox.url("dest/big")
+        // Cancelled from the copy's own progress report, after the first
+        // chunk, so the test doesn't depend on when its own task gets a thread
+        // (other suites keep the pool busy, and the copy could finish first).
+        let handle = Mutex<Task<Void, Error>?>(nil)
+        let cancelledAt = Mutex<ContinuousClock.Instant?>(nil)
+        let stoppedAt = Mutex<ContinuousClock.Instant?>(nil)
+        let ready = AsyncStream.makeStream(of: Void.self)
         let task = Task {
-            try await engine.copyItem(at: source, to: target) { progress in
-                if progress.bytesDone > 0 { started.continuation.yield() }
+            for await _ in ready.stream { break }
+            // Timed on the engine's threads too, for the same reason.
+            try await onIOThreads {
+                defer { stoppedAt.withLock { $0 = .now } }
+                try await engine.copyItem(at: source, to: target) { progress in
+                    guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
+                    cancelledAt.withLock { $0 = .now }
+                    handle.withLock { $0?.cancel() }
+                }
             }
         }
-        for await _ in started.stream { break }
-        let cancelledAt = ContinuousClock.now
-        task.cancel()
+        handle.withLock { $0 = task }
+        ready.continuation.yield()
         await #expect(throws: CancellationError.self) { try await task.value }
 
-        #expect(ContinuousClock.now - cancelledAt < .milliseconds(500))
+        let cancelled = try #require(cancelledAt.withLock { $0 })
+        let stopped = try #require(stoppedAt.withLock { $0 })
+        #expect(stopped - cancelled < .milliseconds(500))
         #expect(try sandbox.names(in: "dest") == [])
     }
 

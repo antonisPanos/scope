@@ -107,7 +107,9 @@ extension FileEngine {
     public func folderSize(of url: URL, progress: (@Sendable (FolderSize) -> Void)? = nil) async throws -> FolderSize {
         return try await onIOThreads {
             let folder = try pathGuard.checkTarget(url)
-            let keys: [URLResourceKey] = [.fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey]
+            let keys: [URLResourceKey] = [
+                .fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey,
+            ]
             guard
                 let enumerator = FileManager.default.enumerator(
                     at: folder, includingPropertiesForKeys: keys, options: [],
