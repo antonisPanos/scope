@@ -160,7 +160,8 @@ public struct FileEngine: Sendable {
         at url: URL,
         to destination: URL,
         control: OperationControl?,
-        progress: (@Sendable (CopyProgress) -> Void)?
+        progress: (@Sendable (CopyProgress) -> Void)?,
+        beforePlacing: ((_ source: URL, _ partial: URL) throws -> Void)? = nil
     ) throws {
         let source = try pathGuard.checkLocation(url)
         let target = try pathGuard.checkWriteLocation(destination)
@@ -178,6 +179,9 @@ public struct FileEngine: Sendable {
 
         do {
             try job.copy(from: source.path, to: partial.path, relative: "")
+            // A move verifies the copy here, while it still has its partial
+            // name, so a cancel or a mismatch never leaves a second copy behind.
+            try beforePlacing?(source, partial)
             guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
                 throw FileEngineError.posix("Copy", target.path)
             }

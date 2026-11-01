@@ -116,7 +116,9 @@ import Testing
             let undo = UndoRecorder()
             try await engine.run(FileOperation(.move([source], into: destination)), control: control, undo: undo) { _ in (.stop, false) }
         }
+        // Pausing as soon as data flows holds the move mid-copy, however fast the disk.
         while control.progress.bytesDone == 0 { try await Task.sleep(for: .milliseconds(1)) }
+        control.isPaused = true
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
 

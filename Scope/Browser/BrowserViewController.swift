@@ -44,6 +44,9 @@ final class BrowserViewController: NSViewController {
     var onEndSearch: (() -> Void)?
     private lazy var searchHost = NSHostingView(rootView: makeSearchBar())
     private let searchSeparator = NSBox()
+    /// A row under the path bar for the pane's tab strip in split view.
+    private let accessory = NSView()
+    private var accessoryHeight: NSLayoutConstraint!
     private var searchHeight: NSLayoutConstraint!
     private var activityHeight: NSLayoutConstraint!
 
@@ -113,7 +116,7 @@ final class BrowserViewController: NSViewController {
         }
         activitySeparator.boxType = .separator
         searchSeparator.boxType = .separator
-        for view in [pathBar, pathSeparator, searchHost, searchSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
+        for view in [pathBar, pathSeparator, accessory, searchHost, searchSeparator, split, activitySeparator, activity, statusSeparator, statusBar, message, spinner] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -124,7 +127,10 @@ final class BrowserViewController: NSViewController {
             pathSeparator.topAnchor.constraint(equalTo: pathBar.bottomAnchor),
             pathSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             pathSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            searchHost.topAnchor.constraint(equalTo: pathSeparator.bottomAnchor),
+            accessory.topAnchor.constraint(equalTo: pathSeparator.bottomAnchor),
+            accessory.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            accessory.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            searchHost.topAnchor.constraint(equalTo: accessory.bottomAnchor),
             searchHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             searchHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             searchSeparator.topAnchor.constraint(equalTo: searchHost.bottomAnchor),
@@ -162,6 +168,8 @@ final class BrowserViewController: NSViewController {
             spinner.centerYAnchor.constraint(equalTo: fileContainer.centerYAnchor),
         ])
         statusLeft.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        accessoryHeight = accessory.heightAnchor.constraint(equalToConstant: 0)
+        accessoryHeight.isActive = true
         searchHeight = searchHost.heightAnchor.constraint(equalToConstant: 0)
         searchHeight.isActive = true
         searchHost.isHidden = true
@@ -322,6 +330,22 @@ final class BrowserViewController: NSViewController {
     var isStatusBarVisible: Bool {
         get { !statusBar.isHidden }
         set { statusBar.isHidden = !newValue; statusSeparator.isHidden = !newValue; collapse(statusBar, !newValue) }
+    }
+
+    /// Shows `view` in the row under the path bar, or empties it.
+    func setAccessory(_ view: NSView?, height: CGFloat) {
+        _ = self.view
+        accessory.subviews.forEach { $0.removeFromSuperview() }
+        accessoryHeight.constant = view == nil ? 0 : height
+        guard let view else { return }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        accessory.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: accessory.topAnchor),
+            view.leadingAnchor.constraint(equalTo: accessory.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: accessory.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: accessory.bottomAnchor),
+        ])
     }
 
     /// The activity drawer at the bottom of the window.

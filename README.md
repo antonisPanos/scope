@@ -5,7 +5,23 @@ preview pane, every classic view, a real operations queue and a search that
 works, with Finder's keyboard shortcuts. Requires macOS 27.2 and Xcode 27.
 
 Milestones done: M0 (project, file engine with its path guard, test disks, CI),
-M1 (the browse window), M2 (views and preview) and M3 (file operations).
+M1 (the browse window), M2 (views and preview), M3 (file operations) and M4
+(split view and search), which completes the MVP list.
+
+## What M4 adds
+
+- Search (Cmd+F or the toolbar field) in the folder on screen and its
+  subfolders, with Scope's own crawler instead of the Spotlight index:
+  name contains, a pattern (`*.pdf`, `IMG_2026*`) or a regular expression.
+  The filter bar adds hidden files, subfolders (on by default), inside
+  packages, kind, size, date modified and tag. Results stream in as they're
+  found; Stop or Escape ends the crawl at once. A Where column shows each
+  result's folder. "Contents (Spotlight)" searches inside files instead.
+- Split view (Shift+Cmd+S): two panes side by side, each with its own tabs
+  (Cmd+T adds one on the focused side, Cmd+W closes it). Focus follows clicks,
+  or Option+Cmd+Left/Right. Copy to Other Side (Ctrl+Cmd+C) and Move to Other
+  Side (Ctrl+Cmd+M), or drag between the panes. The preview pane hides while
+  split is on.
 
 ## What M3 adds
 

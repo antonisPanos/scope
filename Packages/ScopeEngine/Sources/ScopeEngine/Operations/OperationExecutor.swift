@@ -86,28 +86,35 @@ extension FileEngine {
                 continue
             }
 
-            try copyTracked(source, to: target, control: control)
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             if moving {
-                control.update { $0.currentItem = "Verifying \(source.lastPathComponent)" }
-                try verifyCopy(source, target, control: control)
-                let trashed = try await trashItem(at: source)
+                try copyTracked(source, to: target, control: control) { source, partial in
+                    control.update { $0.currentItem = "Verifying \(source.lastPathComponent)" }
+                    try self.verifyCopy(source, partial, control: control)
+                }
+                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+                // From here the move finishes even if cancelled: the copy is in
+                // place and verified, so the original goes to the Trash.
+                let trashed = try trashItemNow(source)
                 if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+            } else {
+                try copyTracked(source, to: target, control: control)
+                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             }
         }
     }
 
     /// Copies one item and adds its progress to the operation's totals.
-    private func copyTracked(_ source: URL, to target: URL, control: OperationControl) throws {
+    private func copyTracked(_ source: URL, to target: URL, control: OperationControl,
+                             beforePlacing: ((URL, URL) throws -> Void)? = nil) throws {
         let base = control.progress
-        try copyItem(at: source, to: target, control: control) { progress in
+        try copyItem(at: source, to: target, control: control, progress: { progress in
             control.update {
                 $0.bytesDone = base.bytesDone + progress.bytesDone
                 $0.itemsDone = base.itemsDone + progress.itemsDone
                 $0.currentItem = progress.currentItem.isEmpty ? source.lastPathComponent
                     : source.lastPathComponent + "/" + progress.currentItem
             }
-        }
+        }, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
@@ -133,6 +140,14 @@ extension FileEngine {
             }
             control.update { $0.itemsDone += 1 }
         }
+    }
+
+    /// Trashes without a cancellation check, for the last step of a move.
+    private func trashItemNow(_ url: URL) throws -> URL? {
+        let target = try pathGuard.checkWriteLocation(url)
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
+        return resulting as URL?
     }
 
     // MARK: - Verification

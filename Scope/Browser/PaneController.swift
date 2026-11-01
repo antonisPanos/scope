@@ -11,8 +11,6 @@ final class PaneController: NSViewController {
     let strip = PaneTabStrip()
     private let container = NSView()
     private lazy var stripHost = PaneTabStripBar(strip: strip)
-    private var stripHeight: NSLayoutConstraint!
-    private var stripTop: NSLayoutConstraint!
 
     var onActivate: ((PaneController) -> Void)?
     var onNewTab: ((PaneController) -> Void)?
@@ -30,20 +28,10 @@ final class PaneController: NSViewController {
 
     override func loadView() {
         let root = NSView()
-        let separator = NSBox()
-        separator.boxType = .separator
-        for view in [stripHost, container] as [NSView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(view)
-        }
-        stripHeight = stripHost.heightAnchor.constraint(equalToConstant: 0)
-        stripTop = stripHost.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor)
+        container.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(container)
         NSLayoutConstraint.activate([
-            stripTop,
-            stripHost.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            stripHost.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            stripHeight,
-            container.topAnchor.constraint(equalTo: stripHost.bottomAnchor),
+            container.topAnchor.constraint(equalTo: root.topAnchor),
             container.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -62,22 +50,10 @@ final class PaneController: NSViewController {
         refreshStrip()
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        // Inside a split view the safe area doesn't account for the toolbar,
-        // so pin the strip below the window's title bar and toolbar directly.
-        if let guide = view.window?.contentLayoutGuide as? NSLayoutGuide {
-            stripTop.isActive = false
-            stripTop = stripHost.topAnchor.constraint(equalTo: guide.topAnchor)
-            stripTop.isActive = true
-        }
-    }
-
+    /// The strip sits in the visible tab, under its path bar. (Placed above
+    /// the tab, at the top of the pane, it ended up hidden under the toolbar.)
     var showsTabStrip = false {
-        didSet {
-            stripHost.isHidden = !showsTabStrip
-            stripHeight.constant = showsTabStrip ? 28 : 0
-        }
+        didSet { activeTab.setAccessory(showsTabStrip ? stripHost : nil, height: 28) }
     }
 
     func addTab(_ tab: BrowserViewController) {
@@ -90,6 +66,7 @@ final class PaneController: NSViewController {
     func removeTab(at index: Int) -> BrowserViewController? {
         guard tabs.count > 1, tabs.indices.contains(index) else { return nil }
         let removed = tabs.remove(at: index)
+        removed.setAccessory(nil, height: 0)
         if removed.view.superview != nil {
             removed.view.removeFromSuperview()
             removed.removeFromParent()
@@ -106,6 +83,7 @@ final class PaneController: NSViewController {
         let old = activeTab
         activeIndex = index
         if old !== activeTab {
+            old.setAccessory(nil, height: 0)
             old.view.removeFromSuperview()
             old.removeFromParent()
             install(activeTab)
@@ -117,6 +95,7 @@ final class PaneController: NSViewController {
 
     private func install(_ tab: BrowserViewController) {
         guard tab.parent == nil else { return }
+        defer { tab.setAccessory(showsTabStrip ? stripHost : nil, height: 28) }
         addChild(tab)
         let subview = tab.view
         subview.translatesAutoresizingMaskIntoConstraints = false
@@ -134,11 +113,6 @@ final class PaneController: NSViewController {
         strip.titles = tabs.map { $0.model.location.title }
         strip.activeIndex = activeIndex
         stripHost.rebuild()
-    }
-
-    /// For development logging: where the strip ended up.
-    var stripFrameDescription: String {
-        "\(NSStringFromRect(stripHost.convert(stripHost.bounds, to: nil))) hidden \(stripHost.isHidden) views \(stripHost.subviews.first?.subviews.count ?? 0)"
     }
 
     var isFocused = false {
@@ -175,7 +149,6 @@ final class PaneTabStripBar: NSView {
     init(strip: PaneTabStrip) {
         self.strip = strip
         super.init(frame: .zero)
-        wantsLayer = true
         stack.orientation = .horizontal
         stack.spacing = 2
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
@@ -293,23 +266,21 @@ final class WorkspaceController: NSViewController {
         view = split
     }
 
+    /// Records the second pane. The window shows it as its own split item
+    /// beside this one: nested inside this view, its top rows ended up hidden
+    /// under the toolbar.
     func addPane(_ pane: PaneController) {
         guard panes.count == 1 else { return }
         panes.append(pane)
-        addChild(pane)
-        split.addArrangedSubview(pane.view)
-        split.adjustSubviews()
-        split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
         for pane in panes { pane.showsTabStrip = true }
     }
 
-    /// Removes the inactive side and returns it, so its tabs can be closed.
-    func removeOtherPane() -> PaneController? {
+    /// Forgets the right-hand pane and returns it, so the window can remove
+    /// its split item and close its tabs.
+    func removeRightPane() -> PaneController? {
         guard isSplit else { return nil }
-        let removed = panes.remove(at: 1 - activePaneIndex)
+        let removed = panes.removeLast()
         activePaneIndex = 0
-        removed.view.removeFromSuperview()
-        removed.removeFromParent()
         panes[0].showsTabStrip = false
         panes[0].isFocused = false
         return removed

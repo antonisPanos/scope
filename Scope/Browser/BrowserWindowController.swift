@@ -145,7 +145,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 content.search.reset()
             }
             window?.title = model.location.title
-            window?.subtitle = workspace.isSplit ? (workspace.otherPane?.activeTab.model.location.title).map { "and \($0)" } ?? "" : ""
+            window?.subtitle = ""
             sidebarSelection.selectedID = SidebarStore.shared.item(for: model.location)?.id
         }
         if change.contains(.viewMode) || change.contains(.location) { updateToolbar() }
@@ -159,7 +159,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// The preview pane hides while split is on.
     func toggleSplit() {
         if workspace.isSplit {
-            if let removed = workspace.removeOtherPane() {
+            if let removed = workspace.removeRightPane() {
+                if let item = splitController.splitViewItems.first(where: { $0.viewController === removed }) {
+                    splitController.removeSplitViewItem(item)
+                }
                 for tab in removed.tabs { tab.close(); tab.model.close() }
             }
             content.isPreviewVisible = previewBeforeSplit
@@ -170,6 +173,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let pane = PaneController(tab: tab)
             wire(pane)
             workspace.addPane(pane)
+            let item = NSSplitViewItem(viewController: pane)
+            item.titlebarSeparatorStyle = .line
+            splitController.addSplitViewItem(item)
+            let split = splitController.splitView
+            split.adjustSubviews()
+            let left = sidebarItem.isCollapsed ? 0 : sidebarItem.viewController.view.frame.width
+            split.setPosition(left + (split.bounds.width - left) / 2, ofDividerAt: 1)
             for tab in workspace.allContents { tab.isPreviewVisible = false }
             workspace.activate(1)
             activeContentChanged()
@@ -199,7 +209,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     /// Cmd+W: in split view closes the focused pane's tab while it has more
-    /// than one, then the second pane; otherwise closes the window.
+    /// than one, then ends split view (keeping the left side); otherwise
+    /// closes the window.
     @objc func closeTabOrWindow(_ sender: Any?) {
         if workspace.isSplit {
             let pane = workspace.activePane
@@ -317,8 +328,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var searchSettingsForHooks: SearchSettings { content.search }
 
     func logPanesForHooks() {
+        if let window {
+            Self.logger.notice("Window content layout \(NSStringFromRect(window.contentLayoutRect), privacy: .public), frame \(NSStringFromRect(window.frame), privacy: .public), accessories \(window.titlebarAccessoryViewControllers.count), tab bar \(window.tabGroup?.isTabBarVisible ?? false)")
+            for tab in workspace.allContents {
+                let bar = tab.pathBar
+                Self.logger.notice("Path bar \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) hidden \(bar.isHidden) safe top \(tab.view.safeAreaInsets.top)")
+            }
+        }
         for (index, pane) in workspace.panes.enumerated() {
-            Self.logger.notice("Pane \(index)\(index == self.workspace.activePaneIndex ? " (focused)" : ""): tabs \(pane.strip.titles.joined(separator: " | "), privacy: .public), active \(pane.activeIndex), strip \(pane.showsTabStrip) \(pane.stripFrameDescription, privacy: .public), frame \(NSStringFromRect(pane.view.frame), privacy: .public)")
+            Self.logger.notice("Pane \(index)\(index == self.workspace.activePaneIndex ? " (focused)" : ""): tabs \(pane.strip.titles.joined(separator: " | "), privacy: .public), active \(pane.activeIndex), strip \(pane.showsTabStrip), frame \(NSStringFromRect(pane.view.frame), privacy: .public)")
         }
     }
     #endif
