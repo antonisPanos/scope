@@ -149,7 +149,7 @@ enum DevHooks {
         case "state":
             if let controller {
                 let model = controller.model
-                logger.notice("State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1)")
+                logger.notice("State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1), activity drawer \(controller.isActivityVisible ? "shown" : "hidden", privacy: .public), app active \(NSApp.isActive)")
             }
             for item in SidebarStore.shared.allItems {
                 logger.notice("Sidebar: \(item.title, privacy: .public) [\(item.isEnabled ? "on" : "off", privacy: .public)] \(item.subtitle ?? "", privacy: .public)")
