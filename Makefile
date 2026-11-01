@@ -23,7 +23,7 @@ build-all: ## Build all three schemes
 	for s in "Scope Dev" "Scope Dev (No Sandbox)" "Scope"; do $(XCB) -scheme "$$s" build -quiet || exit 1; done
 
 test: ## Run the engine tests
-	cd Packages/ScopeEngine && swift test
+	cd Packages/ScopeEngine && swift test --no-parallel
 
 format: ## Format Swift files changed from main (FILES=... to pick files, ALL=1 for everything)
 	@files="$${FILES:-$$(if [ -n "$(ALL)" ]; then git ls-files '*.swift'; else git diff --name-only --diff-filter=ACMR origin/main -- '*.swift'; git ls-files --others --exclude-standard '*.swift'; fi)}"; \
