@@ -224,11 +224,10 @@ import Testing
     }
 
     @Test func aMoveToADiskThatGoesAwayKeepsTheSource() async throws {
-        try disk.write("big/one.bin", Data(repeating: 3, count: 24 * 1024 * 1024))
+        // Big enough that the copy is still running when it gets paused.
+        try disk.write("big/one.bin", Data(repeating: 3, count: 200 * 1024 * 1024))
         let before = try TreeSnapshot(disk.url("big"))
         let control = OperationControl()
-        // Paused from the start, so the move waits at its first chunk.
-        control.isPaused = true
         let engine = engine
         let source = disk.url("big")
         let destination = other.work
@@ -238,11 +237,13 @@ import Testing
                 (.stop, false)
             }
         }
-        let deadline = ContinuousClock.now + .seconds(10)
-        while (try? other.names())?.contains(where: { $0.hasPrefix(FileEngine.partialPrefix) }) != true {
+        // Held mid-copy, then the destination disk is pulled out from under it.
+        let deadline = ContinuousClock.now + .seconds(30)
+        while control.progress.bytesDone == 0 {
             try #require(ContinuousClock.now < deadline, "the move never started copying")
-            try await Task.sleep(for: .milliseconds(5))
+            try await Task.sleep(for: .milliseconds(1))
         }
+        control.isPaused = true
         try other.detach()
         control.isPaused = false
         await #expect(throws: (any Error).self) { try await task.value }
