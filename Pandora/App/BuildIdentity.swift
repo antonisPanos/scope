@@ -32,6 +32,18 @@ struct BuildIdentity {
         #endif
     }()
 
+    /// The user's real home folder. NSHomeDirectory() is the sandbox
+    /// container in sandboxed builds.
+    static let realHome: URL = {
+        if let entry = getpwuid(getuid()) { return URL(fileURLWithPath: String(cString: entry.pointee.pw_dir)) }
+        return URL(fileURLWithPath: NSHomeDirectory())
+    }()
+
+    /// Where a new window opens: the test disk in development builds, home otherwise.
+    var startFolder: URL {
+        isDevelopment ? Self.testDiskRoots[0] : Self.realHome
+    }
+
     var pathGuard: PathGuard {
         if isDevelopment { return .restricted(to: allowedRoots) }
         #if PANDORA_ALLOW_WRITES

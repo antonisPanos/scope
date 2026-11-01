@@ -33,3 +33,20 @@ for (name, tags) in [("red.txt", ["Red"]), ("work-and-blue.txt", ["Work", "Blue"
     try tag(path, tags)
 }
 try tag("attributes/tagged", ["Green"])
+
+// Recents: Finder's Recents lists files with a recent "last used" date, which
+// macOS keeps in this extended attribute (a timespec). Mark a few files used
+// over the last few days so Pandora's Recents has something to show.
+func markUsed(_ path: String, daysAgo: Double) {
+    let date = Date().addingTimeInterval(-daysAgo * 24 * 3600)
+    var time = timespec(tv_sec: Int(date.timeIntervalSince1970), tv_nsec: 0)
+    let url = root.appendingPathComponent(path)
+    _ = withUnsafeBytes(of: &time) { bytes in
+        setxattr(url.path, "com.apple.lastuseddate#PS", bytes.baseAddress, bytes.count, 0, 0)
+    }
+}
+markUsed("README.txt", daysAgo: 0)
+markUsed("names/🦊 fox 🚀.txt", daysAgo: 1)
+markUsed("sizes/1mb.bin", daysAgo: 2)
+markUsed("archives/sample.zip", daysAgo: 3)
+markUsed("attributes/tagged/red.txt", daysAgo: 4)

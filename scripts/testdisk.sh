@@ -67,6 +67,9 @@ attach() {
   [[ ! -e "$mount" ]] || die "$mount already exists but is not a Pandora test disk; eject it first"
   output="$(diskutil image attach "$image")"
   grep -qF "$mount" <<<"$output" || die "$image mounted somewhere other than $mount:"$'\n'"$output"
+  # Disk images aren't indexed by default. Pandora's Recents and Tags come
+  # from Spotlight, so index the test disks like a normal drive.
+  mdutil -i on "$mount" >/dev/null 2>&1 || log "Could not turn on Spotlight for $mount"
   log "Mounted $mount"
 }
 
@@ -243,6 +246,9 @@ PY
   # Aliases and Finder tags need Foundation.
   log "Writing aliases and Finder tags"
   swift "$SCRIPT_DIR/testdisk-fixtures.swift" "$root"
+  # Spotlight indexes a fresh disk slowly; import the folders that Recents and
+  # Tags rely on right away.
+  mdimport "$root" "$root/names" "$root/sizes" "$root/archives" "$root/attributes" "$root/attributes/tagged" >/dev/null 2>&1 || true
 
   cat > README.txt <<'TXT'
 Pandora test disk. Everything here is disposable: scripts/testdisk.sh reset rebuilds it.

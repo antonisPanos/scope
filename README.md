@@ -4,9 +4,29 @@ A personal file manager for macOS that sits beside Finder: tabs, dual split, a
 preview pane, every classic view, a real operations queue and a search that
 works, with Finder's keyboard shortcuts. Requires macOS 27.2 and Xcode 27.
 
-This is milestone M0: the project, the file engine with its path guard, the
-test disks and CI. There is no browser window yet; Pandora Dev opens a status
-window that shows the build type and lists the test disk.
+Milestones done: M0 (project, file engine with its path guard, test disks, CI)
+and M1 (the browse window). File operations such as copy and move arrive in M3.
+
+## What M1 does
+
+- Tabs: macOS window tabs. Cmd+T opens a tab, Cmd+N a window, and tabs can be
+  dragged out or merged like in any Mac app.
+- Sidebar: Favorites (Recents, Applications, Desktop, Documents, Downloads,
+  Home, and folders you add with Ctrl+Cmd+T), Locations, Disk Images with the
+  file each came from and an Eject button, and Tags.
+- Path bar: click a part to go there, or click the empty space (or press Cmd+L
+  or Shift+Cmd+G) and type a path: absolute, relative, `~`, or pasted.
+- Views: Details (Cmd+2, columns you can sort, resize, reorder and show or hide
+  from the header's menu, folders that expand in place) and List (Cmd+5).
+- Command palette: Cmd+K finds any command or place, or goes to a typed path.
+- Finder shortcuts: Cmd+[ and Cmd+] for back and forward, Cmd+Up and Cmd+Down
+  for out and in, Shift+Cmd+. for hidden files, Ctrl+Option+Cmd+1 to 7 to sort,
+  Shift+Cmd+H/D/O/A/F and Option+Cmd+L for standard places, Cmd+E to eject.
+- Live updates: a folder on screen refreshes when its contents change.
+- Light and dark mode with Pandora's palette.
+
+In Pandora Dev, places outside the test disks show dimmed and can't be opened,
+and the status bar says "Pandora Dev · test disks only".
 
 ## Layout
 
@@ -17,6 +37,7 @@ window that shows the build type and lists the test disk.
 | `Config/` | Build settings and entitlements for each build |
 | `scripts/testdisk.sh` | Builds and manages the throwaway test disks |
 | `scripts/make-icons.swift` | Redraws the placeholder app icons |
+| `scripts/devhook.swift` | Drives a running Pandora Dev from the terminal (development only) |
 
 ## The three builds
 

@@ -67,30 +67,48 @@ public struct PathGuard: Sendable {
         try check(url, followFinalSymlink: true)
     }
 
+    /// Whether the item an URL points to may be read, without logging a
+    /// refusal. Use it to decide what the UI offers (a sidebar entry, a search
+    /// result); actual operations still go through the checks above.
+    public func permits(_ url: URL) -> Bool {
+        if case .success = evaluate(url, followFinalSymlink: true) { return true }
+        return false
+    }
+
     private func check(_ url: URL, followFinalSymlink: Bool) throws(PathGuardViolation) -> URL {
+        switch evaluate(url, followFinalSymlink: followFinalSymlink) {
+        case .success(let resolved): return resolved
+        case .failure(let violation): throw log(violation)
+        }
+    }
+
+    private func evaluate(_ url: URL, followFinalSymlink: Bool) -> Result<URL, PathGuardViolation> {
         let resolved: String
         do {
             resolved = try Self.resolve(url, followFinalSymlink: followFinalSymlink)
         } catch {
-            throw fail(url, resolved: nil, reason: error.reason)
+            return .failure(PathGuardViolation(path: url.path, resolvedPath: nil, reason: error.reason))
         }
 
         guard case .restricted(let roots) = policy else {
-            return URL(fileURLWithPath: resolved)
+            return .success(URL(fileURLWithPath: resolved))
         }
         let allowed = roots.contains { root in
             resolved == root || resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/")
         }
         guard allowed else {
-            throw fail(url, resolved: resolved, reason: .outsideAllowedRoots)
+            return .failure(PathGuardViolation(path: url.path, resolvedPath: resolved, reason: .outsideAllowedRoots))
         }
-        return URL(fileURLWithPath: resolved)
+        return .success(URL(fileURLWithPath: resolved))
+    }
+
+    private func log(_ violation: PathGuardViolation) -> PathGuardViolation {
+        Self.logger.fault("Path guard refused \(violation.path, privacy: .public): \(violation.description, privacy: .public)")
+        return violation
     }
 
     private func fail(_ url: URL, resolved: String?, reason: PathGuardViolation.Reason) -> PathGuardViolation {
-        let violation = PathGuardViolation(path: url.path, resolvedPath: resolved, reason: reason)
-        Self.logger.fault("Path guard refused \(url.path, privacy: .public): \(violation.description, privacy: .public)")
-        return violation
+        log(PathGuardViolation(path: url.path, resolvedPath: resolved, reason: reason))
     }
 
     // MARK: - Resolution

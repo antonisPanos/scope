@@ -45,6 +45,31 @@ public struct FileEngine: Sendable {
         return items
     }
 
+    /// Describes specific items, such as search or Spotlight results. Items
+    /// the guard doesn't permit, or that no longer exist, are left out.
+    public func items(at urls: [URL]) async throws -> [FileItem] {
+        var items: [FileItem] = []
+        items.reserveCapacity(urls.count)
+        for (index, url) in urls.enumerated() {
+            if index % 256 == 0 { try Task.checkCancellation() }
+            guard pathGuard.permits(url), let item = try? FileItem(url: url) else { continue }
+            items.append(item)
+        }
+        return items
+    }
+
+    /// Finder tags of one item. Kept out of listings for speed; call it for
+    /// the rows on screen.
+    public func tags(for url: URL) async throws -> [String] {
+        let target = try pathGuard.checkLocation(url)
+        return try target.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []
+    }
+
+    /// Describes one item, after the guard has checked it.
+    public func item(at url: URL) async throws -> FileItem {
+        try FileItem(url: pathGuard.checkTarget(url))
+    }
+
     // MARK: - Simple operations
 
     public func createFolder(at url: URL) async throws {

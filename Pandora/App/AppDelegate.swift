@@ -1,10 +1,11 @@
 import AppKit
-import SwiftUI
+import os
 
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
+    private var browsers: [ObjectIdentifier: BrowserWindowController] = [:]
+    private static let logger = Logger(subsystem: "com.antonispanos.pandora", category: "App")
 
     static func main() {
         let app = NSApplication.shared
@@ -16,22 +17,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
-        window.title = BuildIdentity.current.appName
-        window.contentView = NSHostingView(rootView: StatusView(engine: BuildIdentity.current.makeEngine()))
-        window.center()
-        window.setFrameAutosaveName("MainWindow")
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
-        NSApp.activate()
+        NSWindow.allowsAutomaticWindowTabbing = true
+        SidebarStore.shared.start()
+        #if PANDORA_DEV
+        DevHooks.install()
+        #endif
+        let identity = BuildIdentity.current
+        Self.logger.notice("Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites)")
+        newWindow(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    /// Creates a browser tab; the caller decides where its window goes.
+    func makeBrowser(location: Location) -> BrowserWindowController {
+        let controller = BrowserWindowController(location: location)
+        controller.onClose = { [weak self] closed in
+            self?.browsers[ObjectIdentifier(closed)] = nil
+        }
+        browsers[ObjectIdentifier(controller)] = controller
+        return controller
+    }
+
+    @objc func newWindow(_ sender: Any?) {
+        let controller = makeBrowser(location: .folder(BuildIdentity.current.startFolder))
+        guard let window = controller.window else { return }
+        // A new window opens as its own window, not as a tab of the current one.
+        window.tabbingMode = .disallowed
+        if browsers.count == 1 {
+            window.setFrameAutosaveName("BrowserWindow")
+            if window.frame.origin == .zero { window.center() }
+        } else if let key = NSApp.keyWindow {
+            window.setFrameTopLeftPoint(NSPoint(x: key.frame.minX + 24, y: key.frame.maxY - 24))
+        }
+        controller.showWindow(nil)
+        window.tabbingMode = .preferred
+        controller.focusFileList()
     }
 }
