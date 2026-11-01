@@ -12,7 +12,7 @@ final class IOExecutor: TaskExecutor {
     static let shared = IOExecutor()
     static let label = "com.antonispanos.scope.engine.io"
 
-    private let queue = DispatchQueue(label: Self.label, qos: .userInitiated, attributes: .concurrent)
+    private let queue = DispatchQueue(label: IOExecutor.label, qos: .userInitiated, attributes: .concurrent)
 
     func enqueue(_ job: consuming ExecutorJob) {
         let job = UnownedJob(job)
