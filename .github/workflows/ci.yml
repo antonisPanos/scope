@@ -21,9 +21,13 @@ jobs:
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
       - name: Toolchain
         run: xcodebuild -version && swift --version
+      # One suite at a time. The test helpers make blocking calls (hdiutil,
+      # writing big files) on the shared concurrency pool, and suites running
+      # side by side on a 3-core runner starved each other's tasks for
+      # seconds, which made the timing checks fail.
       - name: Run engine tests
         working-directory: Packages/ScopeEngine
-        run: swift test
+        run: swift test --no-parallel
 
   engine-tests-tsan:
     name: Engine tests (Thread Sanitizer)
