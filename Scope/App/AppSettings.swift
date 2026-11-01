@@ -48,6 +48,12 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "showPreviewPane") }
     }
 
+    /// Post finished, failed and waiting jobs to Notification Center.
+    var systemNotifications: Bool {
+        get { defaults.object(forKey: "systemNotifications") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "systemNotifications") }
+    }
+
     // MARK: - Alternative shortcuts (Settings > Shortcuts)
 
     enum DeleteKey: String, CaseIterable, Identifiable {

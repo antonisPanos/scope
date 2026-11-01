@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = MainMenu.make()
         NSWindow.allowsAutomaticWindowTabbing = true
         SidebarStore.shared.start()
+        _ = SystemNotifier.shared // becomes the notification delegate before any click arrives
         #if SCOPE_DEV
         DevHooks.install()
         #endif
@@ -27,8 +28,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newWindow(nil)
     }
 
+    /// Closing the last window quits Scope, except while jobs run: then it
+    /// stays in the Dock and quits once they finish (a Dock click brings a
+    /// window back and cancels that).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        let operations = OperationsController.shared
+        guard operations.active.isEmpty else {
+            operations.quitWhenIdle = true
+            Self.logger.notice("Last window closed while jobs run; quitting when they finish")
+            return false
+        }
+        return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            OperationsController.shared.quitWhenIdle = false
+            newWindow(nil)
+        }
+        return true
+    }
+
+    /// Cmd+Q, logout or shutdown while jobs run: ask first, so a copy is
+    /// never cut short by accident.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let operations = OperationsController.shared
+        let running = operations.active.count
+        guard running > 0 else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = running == 1 ? "A job is still running." : "\(running) jobs are still running."
+        alert.informativeText = "Quit When Done keeps Scope in the Dock until they finish. Quit Now cancels them; finished items stay, unfinished copies are removed."
+        alert.addButton(withTitle: "Quit When Done")
+        alert.addButton(withTitle: "Quit Now")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            operations.quitWhenIdle = true
+            for window in NSApp.windows where window.isVisible || window.windowController is BrowserWindowController { window.close() }
+            return .terminateCancel
+        case .alertSecondButtonReturn:
+            operations.quitWhenIdle = false
+            operations.cancelAll()
+            Task { @MainActor in
+                // Cancelling never hangs, but don't wait forever either.
+                let deadline = Date().addingTimeInterval(5)
+                while !OperationsController.shared.active.isEmpty, Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        default:
+            return .terminateCancel
+        }
+    }
+
+    /// From a notification: bring a browser window forward with its activity drawer open.
+    func showActivityInFrontWindow() {
+        let existing = NSApp.orderedWindows.lazy.compactMap { $0.windowController as? BrowserWindowController }.first
+        if existing == nil { newWindow(nil) }
+        guard let controller = existing ?? NSApp.orderedWindows.lazy.compactMap({ $0.windowController as? BrowserWindowController }).first else { return }
+        OperationsController.shared.quitWhenIdle = false
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.showActivity(true)
     }
 
     /// Creates a browser tab; the caller decides where its window goes.

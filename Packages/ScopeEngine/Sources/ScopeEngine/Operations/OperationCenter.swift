@@ -295,7 +295,8 @@ extension OperationCenter {
 }
 
 extension OperationCenter.State {
-    var isActive: Bool {
+    /// Queued, running, paused or cancelling: not finished yet.
+    public var isActive: Bool {
         switch self {
         case .queued, .running, .paused, .cancelling: true
         default: false

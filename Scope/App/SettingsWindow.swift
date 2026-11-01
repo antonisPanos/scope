@@ -1,5 +1,7 @@
 import AppKit
+import ScopeEngine
 import SwiftUI
+import UserNotifications
 
 /// Settings (Cmd+,). For now: alternatives to Finder's shortcuts, for people
 /// used to Windows or Linux file managers. None of them clash with system
@@ -28,6 +30,9 @@ struct SettingsView: View {
     @State private var optionArrows = AppSettings.shared.optionArrowsNavigate
     @State private var deleteKey = AppSettings.shared.deleteKey
     @State private var showHidden = AppSettings.shared.showHiddenFiles
+    @State private var notifications = AppSettings.shared.systemNotifications
+    @State private var notificationStatus: UNAuthorizationStatus?
+    @State private var fullDiskAccess: Permissions.Status?
 
     var body: some View {
         Form {
@@ -52,9 +57,65 @@ struct SettingsView: View {
                 Toggle("Show hidden files", isOn: $showHidden)
                     .onChange(of: showHidden) { AppSettings.shared.showHiddenFiles = showHidden }
             }
+            Section("Notifications") {
+                Toggle("Tell me when jobs finish, fail or need an answer", isOn: $notifications)
+                    .onChange(of: notifications) {
+                        AppSettings.shared.systemNotifications = notifications
+                        if notifications { SystemNotifier.shared.requestPermissionIfNeeded() }
+                    }
+                Text("Only while Scope is in the background, or for jobs over \(Int(SystemNotifier.longJob)) seconds when the activity drawer is hidden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if notifications, notificationStatus == .denied {
+                    HStack {
+                        Text("macOS is blocking Scope's notifications.")
+                        Spacer()
+                        Button("Open Notification Settings") { NSWorkspace.shared.open(SystemNotifier.settingsURL) }
+                    }
+                }
+            }
+            Section("Permissions") {
+                if BuildIdentity.current.isDevelopment {
+                    Text("\(BuildIdentity.current.appName) only reaches the test disks, so it needs no extra permissions.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Full Disk Access")
+                            Text(fullDiskAccessText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if fullDiskAccess != .granted {
+                            Button("Open Privacy Settings") { NSWorkspace.shared.open(Permissions.fullDiskAccessSettingsURL) }
+                        }
+                    }
+                }
+            }
+        }
+        .task { await refreshPermissions() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await refreshPermissions() }
         }
         .formStyle(.grouped)
         .frame(width: 460)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var fullDiskAccessText: String {
+        switch fullDiskAccess {
+        case .granted: "Granted. Scope can see every folder, including Mail and Safari data."
+        case .denied: "Not granted. macOS hides some folders, such as Mail and Safari data, and asks before others."
+        default: "Checking…"
+        }
+    }
+
+    /// Re-read when Scope comes back to the front, e.g. from System Settings.
+    private func refreshPermissions() async {
+        notificationStatus = await SystemNotifier.shared.authorizationStatus()
+        guard !BuildIdentity.current.isDevelopment else { return }
+        // The main thread never touches disk, not even for a probe.
+        fullDiskAccess = await Task.detached { Permissions.fullDiskAccess() }.value
     }
 }

@@ -23,7 +23,11 @@ final class OperationsController {
     /// Called when a window opens its activity drawer.
     func markAllRead() {
         unreadIDs = []
+        SystemNotifier.shared.clearDelivered()
     }
+
+    /// Set when the user chose "Quit When Done": Scope quits once the queue empties.
+    @ObservationIgnored var quitWhenIdle = false
 
     /// What the footer shows: the operation running now, or the one that
     /// finished last if that was in the last few seconds.
@@ -38,6 +42,7 @@ final class OperationsController {
     @ObservationIgnored let center: OperationCenter
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private let dockProgress = DockProgress()
+    @ObservationIgnored private let keepAlive = KeepAlive()
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Operations")
 
     private init() {
@@ -70,6 +75,7 @@ final class OperationsController {
         do {
             let id = try await center.enqueue(operation)
             if !drawerVisible { unreadIDs.insert(id) }
+            SystemNotifier.shared.requestPermissionIfNeeded()
             Self.logger.notice("Queued: \(operation.title, privacy: .public)")
             refresh()
             return id
@@ -108,12 +114,20 @@ final class OperationsController {
     func move(_ id: UUID, by offset: Int) { Task { await center.move(id, by: offset); refresh() } }
     func clearFinished() { Task { await center.clearFinished(); refresh() } }
 
+    /// Cancels everything queued or running, for "Quit Now".
+    func cancelAll() {
+        let ids = active.map(\.id)
+        Task {
+            for id in ids { await center.cancel(id) }
+            refresh()
+        }
+    }
+
     // MARK: - Snapshots
 
     func refresh() {
         Task {
-            snapshots = await center.snapshots()
-            dockProgress.show(overallFraction)
+            apply(await center.snapshots())
             if active.isEmpty {
                 pollTask?.cancel()
                 pollTask = nil
@@ -122,12 +136,25 @@ final class OperationsController {
                 pollTask = Task {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(100))
-                        self.snapshots = await self.center.snapshots()
-                        self.dockProgress.show(self.overallFraction)
+                        self.apply(await self.center.snapshots())
                         if self.active.isEmpty { self.pollTask = nil; return }
                     }
                 }
             }
+        }
+    }
+
+    /// Everything that follows the queue: the Dock bar, staying awake,
+    /// system notifications, and a quit the user asked to wait for.
+    private func apply(_ new: [OperationCenter.Snapshot]) {
+        snapshots = new
+        dockProgress.show(overallFraction)
+        keepAlive.update(busy: !active.isEmpty)
+        SystemNotifier.shared.track(new, drawerVisible: drawerVisible)
+        if quitWhenIdle, active.isEmpty {
+            quitWhenIdle = false
+            Self.logger.notice("Queue empty; quitting as asked")
+            NSApp.terminate(nil)
         }
     }
 
@@ -144,6 +171,8 @@ final class OperationsController {
         alert.addButton(withTitle: "Stop")
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "Apply to all"
+        SystemNotifier.shared.conflictWaiting(name: conflict.existing.lastPathComponent)
+        defer { SystemNotifier.shared.conflictAnswered() }
         let window = NSApp.keyWindow ?? NSApp.mainWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
