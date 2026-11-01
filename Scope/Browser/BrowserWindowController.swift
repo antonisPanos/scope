@@ -1,8 +1,8 @@
 import AppKit
-import os
-import ScopeEngine
 import Quartz
+import ScopeEngine
 import SwiftUI
+import os
 
 /// One browser window. Each window is a tab in macOS's native window tabs, so
 /// Cmd+T, the tab bar, dragging tabs out and Merge All Windows behave as
@@ -43,12 +43,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var searchDebounce: Task<Void, Never>?
 
     init(location: Location) {
-        let first = BrowserViewController(model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+        let first = BrowserViewController(
+            model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
         workspace = WorkspaceController(pane: PaneController(tab: first))
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 620),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
         window.tabbingMode = .preferred
         window.tabbingIdentifier = "ScopeBrowser"
         window.titlebarSeparatorStyle = .automatic
@@ -58,7 +60,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         super.init(window: window)
         window.delegate = self
 
-        let sidebar = NSHostingController(rootView: SidebarView(store: SidebarStore.shared, selection: sidebarSelection))
+        let sidebar = NSHostingController(
+            rootView: SidebarView(store: SidebarStore.shared, selection: sidebarSelection))
         // Without this the hosting controller pins the sidebar to its ideal
         // width, and the divider can't be dragged.
         sidebar.sizingOptions = []
@@ -167,7 +170,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func windowUpdate(_ change: BrowserModel.Change) {
         if change.contains(.location) {
             if !model.location.isSearch, searchToolbarItem?.searchField.stringValue.isEmpty == false,
-               searchToolbarItem?.searchField.currentEditor() == nil {
+                searchToolbarItem?.searchField.currentEditor() == nil
+            {
                 searchToolbarItem?.searchField.stringValue = ""
                 content.search.reset()
             }
@@ -190,10 +194,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 if let item = splitController.splitViewItems.first(where: { $0.viewController === removed }) {
                     splitController.removeSplitViewItem(item)
                 }
-                if let index = contentItem.topAlignedAccessoryViewControllers.firstIndex(where: { $0 === workspace.panes[0].header }) {
+                if let index = contentItem.topAlignedAccessoryViewControllers.firstIndex(where: {
+                    $0 === workspace.panes[0].header
+                }) {
                     contentItem.removeTopAlignedAccessoryViewController(at: index)
                 }
-                for tab in removed.tabs { tab.close(); tab.model.close() }
+                for tab in removed.tabs {
+                    tab.close()
+                    tab.model.close()
+                }
             }
             content.isPreviewVisible = previewBeforeSplit
             activeContentChanged()
@@ -252,7 +261,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     private func makeTab(at location: Location) -> BrowserViewController {
-        let tab = BrowserViewController(model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+        let tab = BrowserViewController(
+            model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
         wire(tab)
         // A real starting size, so its layout doesn't fight a zero-sized frame.
         tab.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
@@ -391,9 +401,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     @objc func runCommand(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let command = Commands.command(id: id),
-              command.isEnabled(self) else { return }
+            command.isEnabled(self)
+        else { return }
         // A held-down Cmd+Delete or Cmd+V must not fire again and again.
-        if command.ignoresKeyRepeat, NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.isARepeat == true { return }
+        if command.ignoresKeyRepeat, NSApp.currentEvent?.type == .keyDown, NSApp.currentEvent?.isARepeat == true {
+            return
+        }
         command.run(self)
     }
 
@@ -410,7 +423,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         default: break
         }
         guard menuItem.action == #selector(runCommand(_:)) else { return true }
-        guard let id = menuItem.representedObject as? String, let command = Commands.command(id: id) else { return false }
+        guard let id = menuItem.representedObject as? String, let command = Commands.command(id: id) else {
+            return false
+        }
         menuItem.state = command.isChecked?(self) == true ? .on : .off
         return command.isEnabled(self)
     }
@@ -438,20 +453,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func setSidebarWidthForHooks(_ width: CGFloat) {
         splitController.splitView.setPosition(width, ofDividerAt: 0)
         splitController.splitView.layoutSubtreeIfNeeded()
-        let frames = splitController.splitView.arrangedSubviews.map { NSStringFromRect($0.frame) }.joined(separator: " | ")
-        Self.logger.notice("Sidebar width asked \(width), now \(self.sidebarItem.viewController.view.frame.width), split \(frames, privacy: .public)")
+        let frames = splitController.splitView.arrangedSubviews.map { NSStringFromRect($0.frame) }.joined(
+            separator: " | ")
+        Self.logger.notice(
+            "Sidebar width asked \(width), now \(self.sidebarItem.viewController.view.frame.width), split \(frames, privacy: .public)"
+        )
     }
 
     func logPanesForHooks() {
         if let window {
-            Self.logger.notice("Window content layout \(NSStringFromRect(window.contentLayoutRect), privacy: .public), frame \(NSStringFromRect(window.frame), privacy: .public), accessories \(window.titlebarAccessoryViewControllers.count), tab bar \(window.tabGroup?.isTabBarVisible ?? false)")
+            Self.logger.notice(
+                "Window content layout \(NSStringFromRect(window.contentLayoutRect), privacy: .public), frame \(NSStringFromRect(window.frame), privacy: .public), accessories \(window.titlebarAccessoryViewControllers.count), tab bar \(window.tabGroup?.isTabBarVisible ?? false)"
+            )
             for tab in workspace.allContents {
                 let bar = tab.pathBar
-                Self.logger.notice("Path bar \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) hidden \(bar.isHidden) safe top \(tab.view.safeAreaInsets.top)")
+                Self.logger.notice(
+                    "Path bar \(NSStringFromRect(bar.convert(bar.bounds, to: nil)), privacy: .public) hidden \(bar.isHidden) safe top \(tab.view.safeAreaInsets.top)"
+                )
             }
         }
         for (index, pane) in workspace.panes.enumerated() {
-            Self.logger.notice("Pane \(index)\(index == self.workspace.activePaneIndex ? " (focused)" : ""): tabs \(pane.strip.titles.joined(separator: " | "), privacy: .public), active \(pane.activeIndex), strip \(pane.showsTabStrip), frame \(NSStringFromRect(pane.view.frame), privacy: .public)")
+            Self.logger.notice(
+                "Pane \(index)\(index == self.workspace.activePaneIndex ? " (focused)" : ""): tabs \(pane.strip.titles.joined(separator: " | "), privacy: .public), active \(pane.activeIndex), strip \(pane.showsTabStrip), frame \(NSStringFromRect(pane.view.frame), privacy: .public)"
+            )
         }
     }
     #endif
@@ -516,7 +540,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let candidates = selectedItems.map(\.url) + [model.location.folderURL].compactMap { $0 }
         for url in candidates {
             if let item = (SidebarStore.shared.locations + SidebarStore.shared.diskImages)
-                .first(where: { $0.volumeURL?.standardizedFileURL == url.standardizedFileURL && $0.canEject && $0.isEnabled }) {
+                .first(where: {
+                    $0.volumeURL?.standardizedFileURL == url.standardizedFileURL && $0.canEject && $0.isEnabled
+                })
+            {
                 return item
             }
         }
@@ -566,8 +593,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let pathGuard = model.engine.pathGuard
         Task {
             let resolved = await Task.detached { () -> (URL, Bool)? in
-                guard let target = try? URL(resolvingAliasFileAt: url, options: [.withoutUI, .withoutMounting]) else { return nil }
-                let isFolder = (try? target.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]))
+                guard let target = try? URL(resolvingAliasFileAt: url, options: [.withoutUI, .withoutMounting]) else {
+                    return nil
+                }
+                let isFolder =
+                    (try? target.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]))
                     .map { ($0.isDirectory ?? false) && !($0.isPackage ?? false) } ?? false
                 return (target, isFolder)
             }.value
@@ -576,7 +606,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 return
             }
             guard pathGuard.permits(target) else {
-                showProblem("“\(url.lastPathComponent)” points to \(target.path), outside the test disks. Scope Dev won't follow it.")
+                showProblem(
+                    "“\(url.lastPathComponent)” points to \(target.path), outside the test disks. Scope Dev won't follow it."
+                )
                 return
             }
             if isFolder {
@@ -597,7 +629,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Handles a path typed into the path bar or the command palette.
     func goToTypedPath(_ text: String) {
-        guard let url = PathInput.resolve(text, relativeTo: model.location.folderURL, home: BuildIdentity.realHome) else {
+        guard let url = PathInput.resolve(text, relativeTo: model.location.folderURL, home: BuildIdentity.realHome)
+        else {
             showProblem("“\(text)” isn't a path.")
             return
         }
@@ -608,7 +641,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         Task {
             let kind = await Task.detached { () -> Bool? in
-                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]) else { return nil }
+                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]) else {
+                    return nil
+                }
                 return (values.isDirectory ?? false) && !(values.isPackage ?? false)
             }.value
             switch kind {
@@ -639,23 +674,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
 extension BrowserWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem,
-         Self.splitItem, Self.previewItem, Self.paletteItem, Self.searchItem]
+        [
+            .toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem,
+            Self.viewModeItem,
+            Self.splitItem, Self.previewItem, Self.paletteItem, Self.searchItem,
+        ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         toolbarDefaultItemIdentifiers(toolbar)
     }
 
-    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
-                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+    func toolbar(
+        _ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
         switch identifier {
         case Self.navigationItem:
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
-                images: [NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")!,
-                         NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!],
-                selectionMode: .momentary, labels: ["Back", "Forward"], target: self, action: #selector(navigationClicked(_:)))
+                images: [
+                    NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")!,
+                    NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!,
+                ],
+                selectionMode: .momentary, labels: ["Back", "Forward"], target: self,
+                action: #selector(navigationClicked(_:)))
             group.label = "Back/Forward"
             group.subitems[0].toolTip = "Back (⌘[)"
             group.subitems[1].toolTip = "Forward (⌘])"
@@ -666,8 +709,11 @@ extension BrowserWindowController: NSToolbarDelegate {
         case Self.viewModeItem:
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
-                images: ViewMode.allCases.map { NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.title)! },
-                selectionMode: .selectOne, labels: ViewMode.allCases.map(\.title), target: self, action: #selector(viewModeClicked(_:)))
+                images: ViewMode.allCases.map {
+                    NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.title)!
+                },
+                selectionMode: .selectOne, labels: ViewMode.allCases.map(\.title), target: self,
+                action: #selector(viewModeClicked(_:)))
             group.label = "View"
             for (index, mode) in ViewMode.allCases.enumerated() {
                 group.subitems[index].toolTip = "\(mode.title) (⌘\(mode.shortcut))"
@@ -680,10 +726,11 @@ extension BrowserWindowController: NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: identifier)
             item.label = "Activity"
             item.toolTip = "Activity (⌥⌘A)"
-            item.view = NSHostingView(rootView: ActivityRing(controller: OperationsController.shared) { [weak self] in
-                guard let self else { return }
-                self.showActivity(!self.isActivityVisible)
-            })
+            item.view = NSHostingView(
+                rootView: ActivityRing(controller: OperationsController.shared) { [weak self] in
+                    guard let self else { return }
+                    self.showActivity(!self.isActivityVisible)
+                })
             return item
         case Self.splitItem:
             // One-button groups, so the button shows when its pane is on,
@@ -772,7 +819,9 @@ extension BrowserWindowController: NSSearchFieldDelegate {
     }
 
     func controlTextDidChange(_ notification: Notification) {
-        guard let field = notification.object as? NSSearchField, field === searchToolbarItem?.searchField else { return }
+        guard let field = notification.object as? NSSearchField, field === searchToolbarItem?.searchField else {
+            return
+        }
         // Wait for a pause in typing before crawling.
         searchDebounce?.cancel()
         searchDebounce = Task { [weak self] in

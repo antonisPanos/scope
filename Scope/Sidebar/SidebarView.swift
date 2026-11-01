@@ -20,13 +20,16 @@ struct SidebarView: View {
     @Bindable var selection: SidebarSelection
 
     var body: some View {
-        List(selection: Binding(
-            get: { selection.selectedID },
-            set: { id in
-                guard let id, let item = store.allItems.first(where: { $0.id == id }), item.isEnabled else { return }
-                selection.selectedID = id
-                selection.onSelect?(item)
-            })
+        List(
+            selection: Binding(
+                get: { selection.selectedID },
+                set: { id in
+                    guard let id, let item = store.allItems.first(where: { $0.id == id }), item.isEnabled else {
+                        return
+                    }
+                    selection.selectedID = id
+                    selection.onSelect?(item)
+                })
         ) {
             Section("Favorites") {
                 ForEach(store.favorites) { row($0) }
@@ -64,7 +67,9 @@ struct SidebarView: View {
                 if store.ejecting.contains(item.id) {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Button { selection.onEject?(item) } label: {
+                    Button {
+                        selection.onEject?(item)
+                    } label: {
                         Image(systemName: "eject.fill").font(.caption)
                     }
                     .buttonStyle(.borderless)
@@ -74,7 +79,10 @@ struct SidebarView: View {
             }
         }
         .opacity(item.isEnabled ? 1 : 0.4)
-        .help(item.isEnabled ? (item.location.folderURL?.path ?? item.title) : "Outside the test disks, so Scope Dev won't open it")
+        .help(
+            item.isEnabled
+                ? (item.location.folderURL?.path ?? item.title) : "Outside the test disks, so Scope Dev won't open it"
+        )
         .tag(item.id)
         .contextMenu {
             if item.isEnabled {

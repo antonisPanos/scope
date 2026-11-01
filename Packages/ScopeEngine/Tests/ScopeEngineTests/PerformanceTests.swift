@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 /// Speed checks against the test disk's folder of 100,000 files. Targets from

@@ -87,7 +87,9 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         let selected = selectedItems.map(\.url)
         let fresh = model.items.map { ColumnNode(item: $0) }
         // Keep the deeper columns' nodes for folders that are still there.
-        let old = Dictionary((root.children ?? []).compactMap { node in node.item.map { ($0.url, node) } }, uniquingKeysWith: { a, _ in a })
+        let old = Dictionary(
+            (root.children ?? []).compactMap { node in node.item.map { ($0.url, node) } },
+            uniquingKeysWith: { a, _ in a })
         root.children = fresh.map { node in
             guard let url = node.item?.url, let kept = old[url], kept.item == node.item else { return node }
             return kept
@@ -135,7 +137,9 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
-        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !selectedItems.isEmpty), let first = model.items.first {
+        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !selectedItems.isEmpty),
+            let first = model.items.first
+        {
             select([first.url], scroll: true)
             return true
         }
@@ -203,10 +207,13 @@ extension ColumnViewController: NSBrowserDelegate {
         attachment.image = icon
         attachment.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
         let text = NSMutableAttributedString(attachment: attachment)
-        text.append(NSAttributedString(string: "  " + file.name, attributes: [
-            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
-            .foregroundColor: file.isHidden ? Palette.secondaryText : Palette.primaryText,
-        ]))
+        text.append(
+            NSAttributedString(
+                string: "  " + file.name,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                    .foregroundColor: file.isHidden ? Palette.secondaryText : Palette.primaryText,
+                ]))
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
         text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))

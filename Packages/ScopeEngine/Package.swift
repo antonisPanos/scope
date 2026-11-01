@@ -7,7 +7,7 @@ let package = Package(
     name: "ScopeEngine",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "ScopeEngine", targets: ["ScopeEngine"]),
+        .library(name: "ScopeEngine", targets: ["ScopeEngine"])
     ],
     targets: [
         // Declarations for the libarchive that ships with macOS.

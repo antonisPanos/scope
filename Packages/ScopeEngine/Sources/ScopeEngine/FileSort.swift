@@ -45,7 +45,7 @@ public struct FileSort: Sendable, Hashable, Codable {
         case (nil, nil): .orderedSame
         case (nil, _): .orderedAscending
         case (_, nil): .orderedDescending
-        case let (x?, y?): x < y ? .orderedAscending : x > y ? .orderedDescending : .orderedSame
+        case (let x?, let y?): x < y ? .orderedAscending : x > y ? .orderedDescending : .orderedSame
         }
     }
 }

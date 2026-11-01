@@ -16,7 +16,8 @@ public enum FileEngineError: Error, Equatable, LocalizedError {
         case .invalidName(let name): "\"\(name)\" is not a valid file name."
         case .cannotCopyIntoItself(let path): "Can't copy \(path) into itself."
         case .crossVolumeMoveNotSupported(let path): "Moving \(path) to another disk is not supported yet."
-        case .system(let operation, let path, let code): "\(operation) failed for \(path): \(String(cString: strerror(code)))"
+        case .system(let operation, let path, let code):
+            "\(operation) failed for \(path): \(String(cString: strerror(code)))"
         }
     }
 

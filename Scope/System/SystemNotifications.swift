@@ -1,7 +1,7 @@
 import AppKit
-import os
 import ScopeEngine
 import UserNotifications
+import os
 
 /// Sends the activity panel's news to Notification Center: a job finished,
 /// failed, or is waiting for an answer. Only when it's worth it: Scope isn't
@@ -27,9 +27,10 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         center.delegate = self
         center.setNotificationCategories([
-            UNNotificationCategory(identifier: Self.category,
-                                   actions: [UNNotificationAction(identifier: "show", title: "Show Activity", options: [.foreground])],
-                                   intentIdentifiers: []),
+            UNNotificationCategory(
+                identifier: Self.category,
+                actions: [UNNotificationAction(identifier: "show", title: "Show Activity", options: [.foreground])],
+                intentIdentifiers: [])
         ])
     }
 
@@ -62,9 +63,10 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
             switch snapshot.state {
             case .done: failed = false
             case .failed: failed = true
-            default: continue // cancelled by the user: they know
+            default: continue  // cancelled by the user: they know
             }
-            let worthIt = inFront
+            let worthIt =
+                inFront
                 ? duration >= Self.longJob && !drawerVisible
                 : failed || duration >= Self.shortJob
             guard worthIt else { continue }
@@ -105,7 +107,8 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Content
 
-    private func content(for snapshot: OperationCenter.Snapshot, duration: TimeInterval) -> UNMutableNotificationContent {
+    private func content(for snapshot: OperationCenter.Snapshot, duration: TimeInterval) -> UNMutableNotificationContent
+    {
         let content = UNMutableNotificationContent()
         content.title = snapshot.title
         content.threadIdentifier = "operations"
@@ -125,7 +128,8 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
             content.sound = .default
         }
         if !snapshot.skippedEntries.isEmpty {
-            lines.append("Skipped \(snapshot.skippedEntries.count) item\(snapshot.skippedEntries.count == 1 ? "" : "s")")
+            lines.append(
+                "Skipped \(snapshot.skippedEntries.count) item\(snapshot.skippedEntries.count == 1 ? "" : "s")")
         }
         content.body = lines.joined(separator: " · ")
         return content
@@ -149,11 +153,15 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+    ) async {
         guard response.actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         await MainActor.run {
             NSApp.activate()

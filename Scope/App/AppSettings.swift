@@ -13,7 +13,10 @@ final class AppSettings {
 
     var showHiddenFiles: Bool {
         get { defaults.bool(forKey: "showHiddenFiles") }
-        set { defaults.set(newValue, forKey: "showHiddenFiles"); announce() }
+        set {
+            defaults.set(newValue, forKey: "showHiddenFiles")
+            announce()
+        }
     }
 
     /// The view mode and sort a new tab starts with: whatever was used last.
@@ -25,7 +28,8 @@ final class AppSettings {
     var lastSort: FileSort {
         get {
             guard let data = defaults.data(forKey: "lastSort"),
-                  let sort = try? JSONDecoder().decode(FileSort.self, from: data) else { return FileSort() }
+                let sort = try? JSONDecoder().decode(FileSort.self, from: data)
+            else { return FileSort() }
             return sort
         }
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "lastSort") }
@@ -102,7 +106,10 @@ final class AppSettings {
     /// Folders the user added to the sidebar's Favorites, as paths.
     var favoritePaths: [String] {
         get { defaults.stringArray(forKey: "favoritePaths") ?? [] }
-        set { defaults.set(newValue, forKey: "favoritePaths"); announce() }
+        set {
+            defaults.set(newValue, forKey: "favoritePaths")
+            announce()
+        }
     }
 
     private func announce() {

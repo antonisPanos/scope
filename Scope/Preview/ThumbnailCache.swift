@@ -1,6 +1,6 @@
 import AppKit
-import ScopeEngine
 import QuickLookThumbnailing
+import ScopeEngine
 
 /// Thumbnails for the icon grid and gallery, made by Quick Look (which keeps
 /// its own shared cache on disk, so Scope writes none). Scope holds at
@@ -30,13 +30,16 @@ final class ThumbnailCache {
         if let image = cache.object(forKey: key) { return image }
         guard pending[key] == nil, !failed.contains(key), pathGuard.permits(item.url) else { return nil }
 
-        let request = QLThumbnailGenerator.Request(fileAt: item.url, size: CGSize(width: bucket, height: bucket),
-                                                   scale: scale, representationTypes: .thumbnail)
+        let request = QLThumbnailGenerator.Request(
+            fileAt: item.url, size: CGSize(width: bucket, height: bucket),
+            scale: scale, representationTypes: .thumbnail)
         pending[key] = request
         let url = item.url
         let keyString = key as String
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
-            let image = representation.map { Thumbnail(image: $0.nsImage, pixels: Int($0.cgImage.width * $0.cgImage.height * 4)) }
+            let image = representation.map {
+                Thumbnail(image: $0.nsImage, pixels: Int($0.cgImage.width * $0.cgImage.height * 4))
+            }
             Task { @MainActor in
                 ThumbnailCache.shared.finish(key: keyString as NSString, url: url, thumbnail: image)
             }

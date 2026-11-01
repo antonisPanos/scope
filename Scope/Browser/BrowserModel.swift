@@ -1,6 +1,6 @@
 import Foundation
-import os
 import ScopeEngine
+import os
 
 /// The state of one browser tab: where it is, what it shows, and its history.
 ///
@@ -169,7 +169,9 @@ final class BrowserModel {
         case .recents:
             spotlight = SpotlightQuery.recents { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
         case .tag(let tag):
-            spotlight = SpotlightQuery.tagged(tag) { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
+            spotlight = SpotlightQuery.tagged(tag) { [weak self] urls in
+                self?.loadItems(at: urls, generation: generation)
+            }
         case .search(let query, let folder):
             if query.searchContents {
                 spotlight = SpotlightQuery.contents(query.text, in: folder) { [weak self] urls in
@@ -194,7 +196,8 @@ final class BrowserModel {
         } catch is CancellationError {
         } catch {
             guard generation == self.generation else { return }
-            Self.logger.error("Listing \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            Self.logger.error(
+                "Listing \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             let message = await Task.detached { Self.describe(error, at: url) }.value
             guard generation == self.generation else { return }
             state = .failed(message)
@@ -320,7 +323,9 @@ final class BrowserModel {
             return violation.description
         }
         if !FileManager.default.fileExists(atPath: url.path) {
-            if let disk = BuildIdentity.testDiskRoots.first(where: { url.path == $0.path || url.path.hasPrefix($0.path + "/") }) {
+            if let disk = BuildIdentity.testDiskRoots.first(where: {
+                url.path == $0.path || url.path.hasPrefix($0.path + "/")
+            }) {
                 return "\(disk.lastPathComponent) isn't mounted. Run scripts/testdisk.sh mount, then reload with Cmd+R."
             }
             return "\(url.path) doesn't exist anymore."

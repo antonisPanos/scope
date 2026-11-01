@@ -19,9 +19,13 @@ struct ActivityPanel: View {
                     Button("Clear Finished") { controller.clearFinished() }
                         .buttonStyle(.borderless)
                 }
-                Button { onClose() } label: { Image(systemName: "chevron.down") }
-                    .buttonStyle(.borderless)
-                    .help("Hide Activity")
+                Button {
+                    onClose()
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .buttonStyle(.borderless)
+                .help("Hide Activity")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -69,8 +73,10 @@ private struct OperationRow: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 if !snapshot.skippedEntries.isEmpty {
-                    Text("Skipped \(snapshot.skippedEntries.count) unsafe archive \(snapshot.skippedEntries.count == 1 ? "entry" : "entries"): \(snapshot.skippedEntries.prefix(3).joined(separator: ", "))")
-                        .font(.caption).foregroundStyle(Color(nsColor: Palette.warning)).lineLimit(2)
+                    Text(
+                        "Skipped \(snapshot.skippedEntries.count) unsafe archive \(snapshot.skippedEntries.count == 1 ? "entry" : "entries"): \(snapshot.skippedEntries.prefix(3).joined(separator: ", "))"
+                    )
+                    .font(.caption).foregroundStyle(Color(nsColor: Palette.warning)).lineLimit(2)
                 }
             }
             Spacer(minLength: 8)
@@ -84,8 +90,16 @@ private struct OperationRow: View {
         HStack(spacing: 6) {
             switch snapshot.state {
             case .queued:
-                Button { controller.move(snapshot.id, by: -1) } label: { Image(systemName: "arrow.up") }.help("Move up")
-                Button { controller.move(snapshot.id, by: 1) } label: { Image(systemName: "arrow.down") }.help("Move down")
+                Button {
+                    controller.move(snapshot.id, by: -1)
+                } label: {
+                    Image(systemName: "arrow.up")
+                }.help("Move up")
+                Button {
+                    controller.move(snapshot.id, by: 1)
+                } label: {
+                    Image(systemName: "arrow.down")
+                }.help("Move down")
                 Button("Start Now") { controller.startNow(snapshot.id) }
                 Button("Remove") { controller.cancel(snapshot.id) }
             case .running:
@@ -146,8 +160,12 @@ private struct OperationRow: View {
                 parts.append("\(Self.bytes(progress.bytesDone)) of \(Self.bytes(progress.bytesTotal))")
             }
             if let speed = snapshot.speed, speed > 0 { parts.append("\(Self.bytes(Int64(speed)))/s") }
-            if let started = snapshot.started { parts.append("running \(Self.duration(Date().timeIntervalSince(started)))") }
-            if let left = snapshot.timeRemaining, snapshot.state == .running { parts.append("about \(Self.duration(left)) left") }
+            if let started = snapshot.started {
+                parts.append("running \(Self.duration(Date().timeIntervalSince(started)))")
+            }
+            if let left = snapshot.timeRemaining, snapshot.state == .running {
+                parts.append("about \(Self.duration(left)) left")
+            }
             if snapshot.state == .paused { parts.append("paused") }
         case .done:
             parts.append(snapshot.isUndo ? "Undone" : "Done")

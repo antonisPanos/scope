@@ -9,7 +9,9 @@ import Foundation
 /// about ten times a second and never waits on the work itself.
 public actor OperationCenter {
     public enum State: Sendable, Equatable {
-        case queued, running, paused, cancelling, done, failed(String), cancelled
+        case queued, running, paused, cancelling, done
+        case failed(String)
+        case cancelled
     }
 
     public struct Snapshot: Sendable, Identifiable, Equatable {
@@ -84,7 +86,9 @@ public actor OperationCenter {
     /// still waiting or running is returned instead of queued twice.
     @discardableResult
     public func enqueue(_ operation: FileOperation) throws -> UUID {
-        if let same = entries.first(where: { $0.operation == operation && ($0.state == .queued || $0.state == .running) }) {
+        if let same = entries.first(where: {
+            $0.operation == operation && ($0.state == .queued || $0.state == .running)
+        }) {
             return same.id
         }
         let touched = Set(operation.touchedItems.map(\.standardizedFileURL.path))
@@ -168,7 +172,9 @@ public actor OperationCenter {
         guard newPosition != position else { return }
         let entry = entries.remove(at: index)
         let targetIndex = entries.indices.filter { entries[$0].state == .queued }
-        let insertAt = newPosition < targetIndex.count ? targetIndex[newPosition] : (targetIndex.last.map { $0 + 1 } ?? entries.count)
+        let insertAt =
+            newPosition < targetIndex.count
+            ? targetIndex[newPosition] : (targetIndex.last.map { $0 + 1 } ?? entries.count)
         entries.insert(entry, at: min(insertAt, entries.count))
         notify()
     }
@@ -220,7 +226,8 @@ public actor OperationCenter {
     // MARK: - Scheduling
 
     private func schedule() {
-        var busyDisks = Set(entries.filter { $0.state == .running || $0.state == .paused || $0.state == .cancelling }.map(\.disk))
+        var busyDisks = Set(
+            entries.filter { $0.state == .running || $0.state == .paused || $0.state == .cancelling }.map(\.disk))
         for entry in entries where entry.state == .queued && !busyDisks.contains(entry.disk) {
             busyDisks.insert(entry.disk)
             start(entry)

@@ -1,6 +1,7 @@
 import Foundation
 import Synchronization
 import Testing
+
 @testable import ScopeEngine
 
 @Suite struct FileEngineTests {
@@ -61,7 +62,9 @@ import Testing
     @Test(arguments: ["", ".", "..", "a/b", "../escape"])
     func refusesInvalidNames(_ name: String) async throws {
         try sandbox.write("a.txt", "a")
-        await #expect(throws: FileEngineError.invalidName(name)) { try await engine.rename(sandbox.url("a.txt"), to: name) }
+        await #expect(throws: FileEngineError.invalidName(name)) {
+            try await engine.rename(sandbox.url("a.txt"), to: name)
+        }
     }
 
     @Test func renamesOnlyTheCase() async throws {
@@ -167,7 +170,8 @@ import Testing
         let before = try TreeSnapshot(source)
         let after = try TreeSnapshot(sandbox.url("b.txt"))
         #expect(before == after)
-        let modified = try FileManager.default.attributesOfItem(atPath: sandbox.url("b.txt").path)[.modificationDate] as? Date
+        let modified =
+            try FileManager.default.attributesOfItem(atPath: sandbox.url("b.txt").path)[.modificationDate] as? Date
         #expect(modified == old)
     }
 
@@ -189,7 +193,9 @@ import Testing
 
         #expect(try TreeSnapshot(sandbox.url("tree")) == TreeSnapshot(sandbox.url("copy")))
         // The link pointing outside was copied as a link, not followed.
-        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: sandbox.url("copy/link-out").path) == "/etc/hosts")
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(atPath: sandbox.url("copy/link-out").path) == "/etc/hosts"
+        )
     }
 
     @Test func copiesLockedFilesAndKeepsThemLocked() async throws {

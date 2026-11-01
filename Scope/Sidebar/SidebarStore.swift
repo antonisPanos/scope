@@ -1,7 +1,7 @@
 import AppKit
 import Observation
-import os
 import ScopeEngine
+import os
 
 struct SidebarItem: Identifiable, Hashable, Sendable {
     enum Kind: Hashable { case recents, folder, favorite, volume, diskImage, tag }
@@ -46,14 +46,20 @@ final class SidebarStore {
         guard !started else { return }
         started = true
         let workspace = NSWorkspace.shared.notificationCenter
-        for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
-            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        for name in [
+            NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification,
+            NSWorkspace.didRenameVolumeNotification,
+        ] {
+            observers.append(
+                workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.refresh() }
+                })
+        }
+        observers.append(
+            NotificationCenter.default.addObserver(forName: AppSettings.didChange, object: nil, queue: .main) {
+                [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }
             })
-        }
-        observers.append(NotificationCenter.default.addObserver(forName: AppSettings.didChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
-        })
         tagCatalog.onChange = { [weak self] in self?.rebuildTags() }
         tagCatalog.start()
         rebuildTags()
@@ -105,13 +111,15 @@ final class SidebarStore {
             do {
                 try await Volumes.eject(url, pathGuard: pathGuard)
             } catch {
-                Self.logger.error("Eject of \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                Self.logger.error(
+                    "Eject of \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 let alert = NSAlert()
                 alert.messageText = "\(item.title) couldn't be ejected."
                 let blocker = Volumes.blockingApp(from: error)
                 if let blocker {
                     // Name the app holding files open, and offer to eject anyway.
-                    alert.informativeText = "\(blocker) is using files on it. Quit \(blocker) or close those files, or force eject (unsaved changes in \(blocker) may be lost)."
+                    alert.informativeText =
+                        "\(blocker) is using files on it. Quit \(blocker) or close those files, or force eject (unsaved changes in \(blocker) may be lost)."
                     alert.addButton(withTitle: "Cancel")
                     alert.addButton(withTitle: "Force Eject")
                 } else {
@@ -126,7 +134,11 @@ final class SidebarStore {
                         let failed = NSAlert()
                         failed.messageText = "\(item.title) couldn't be ejected."
                         failed.informativeText = error.localizedDescription
-                        if let window { failed.beginSheetModal(for: window, completionHandler: nil) } else { failed.runModal() }
+                        if let window {
+                            failed.beginSheetModal(for: window, completionHandler: nil)
+                        } else {
+                            failed.runModal()
+                        }
                     }
                 }
             }
@@ -150,8 +162,9 @@ final class SidebarStore {
 
     private func rebuildTags() {
         tags = tagCatalog.tags.map { tag in
-            SidebarItem(id: "tag:" + tag, kind: .tag, title: tag, symbolName: "circle.fill",
-                        location: .tag(tag), isEnabled: true, tagName: tag)
+            SidebarItem(
+                id: "tag:" + tag, kind: .tag, title: tag, symbolName: "circle.fill",
+                location: .tag(tag), isEnabled: true, tagName: tag)
         }
     }
 
@@ -163,8 +176,10 @@ final class SidebarStore {
 
     nonisolated private static func build(favoritePaths: [String], pathGuard: PathGuard, home: URL) -> Built {
         var built = Built()
-        built.favorites.append(SidebarItem(id: "recents", kind: .recents, title: "Recents", symbolName: "clock",
-                                           location: .recents, isEnabled: true))
+        built.favorites.append(
+            SidebarItem(
+                id: "recents", kind: .recents, title: "Recents", symbolName: "clock",
+                location: .recents, isEnabled: true))
         let standard: [(String, String, URL)] = [
             ("Applications", "app.dashed", URL(fileURLWithPath: "/Applications")),
             ("Desktop", "menubar.dock.rectangle", home.appendingPathComponent("Desktop")),
@@ -173,14 +188,18 @@ final class SidebarStore {
             (home.lastPathComponent, "house", home),
         ]
         for (title, symbol, url) in standard {
-            built.favorites.append(SidebarItem(id: "std:" + url.path, kind: .folder, title: title, symbolName: symbol,
-                                               location: .folder(url), isEnabled: pathGuard.permits(url)))
+            built.favorites.append(
+                SidebarItem(
+                    id: "std:" + url.path, kind: .folder, title: title, symbolName: symbol,
+                    location: .folder(url), isEnabled: pathGuard.permits(url)))
         }
         for path in favoritePaths {
             let url = URL(fileURLWithPath: path)
-            built.favorites.append(SidebarItem(id: "fav:" + path, kind: .favorite, title: url.lastPathComponent,
-                                               symbolName: "folder", location: .folder(url),
-                                               isEnabled: pathGuard.permits(url)))
+            built.favorites.append(
+                SidebarItem(
+                    id: "fav:" + path, kind: .favorite, title: url.lastPathComponent,
+                    symbolName: "folder", location: .folder(url),
+                    isEnabled: pathGuard.permits(url)))
         }
 
         for volume in Volumes.mounted() {
@@ -188,7 +207,8 @@ final class SidebarStore {
                 id: "vol:" + volume.url.path,
                 kind: volume.isDiskImage ? .diskImage : .volume,
                 title: volume.name,
-                symbolName: volume.isDiskImage ? "opticaldiscdrive" : volume.isInternal ? "internaldrive" : "externaldrive",
+                symbolName: volume.isDiskImage
+                    ? "opticaldiscdrive" : volume.isInternal ? "internaldrive" : "externaldrive",
                 location: .folder(volume.url),
                 isEnabled: pathGuard.permits(volume.url))
             item.volumeURL = volume.url

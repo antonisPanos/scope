@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 /// A small APFS disk image mounted for a test, so operations that use the
@@ -19,7 +20,12 @@ final class TestVolume {
         image = folder.appendingPathComponent("\(name).sparsebundle")
         let mount = folder.appendingPathComponent("mnt")
         try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
-        try Self.run("/usr/bin/hdiutil", ["create", "-size", "\(sizeMB)m", "-type", "SPARSEBUNDLE", "-fs", "APFS", "-volname", name, image.path, "-quiet"])
+        try Self.run(
+            "/usr/bin/hdiutil",
+            [
+                "create", "-size", "\(sizeMB)m", "-type", "SPARSEBUNDLE", "-fs", "APFS", "-volname", name, image.path,
+                "-quiet",
+            ])
         try Self.run("/usr/bin/hdiutil", ["attach", image.path, "-nobrowse", "-mountpoint", mount.path, "-quiet"])
         let resolved = try #require(realpath(mount.path, nil))
         defer { free(resolved) }
@@ -43,7 +49,8 @@ final class TestVolume {
     @discardableResult
     func write(_ relative: String, _ data: Data) throws -> URL {
         let target = url(relative)
-        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target)
         return target
     }
@@ -69,7 +76,8 @@ final class TestVolume {
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "\(tool) \(arguments.first ?? "") failed"])
+            throw CocoaError(
+                .fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "\(tool) \(arguments.first ?? "") failed"])
         }
     }
 }

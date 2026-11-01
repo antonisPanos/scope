@@ -103,7 +103,8 @@ public struct PathGuard: Sendable {
     }
 
     private func log(_ violation: PathGuardViolation) -> PathGuardViolation {
-        Self.logger.fault("Path guard refused \(violation.path, privacy: .public): \(violation.description, privacy: .public)")
+        Self.logger.fault(
+            "Path guard refused \(violation.path, privacy: .public): \(violation.description, privacy: .public)")
         return violation
     }
 

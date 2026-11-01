@@ -177,7 +177,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
                 continue
             }
             if details {
-                tableColumn?.isHidden = UserDefaults.standard.bool(forKey: hiddenKey(column))
+                tableColumn?.isHidden =
+                    UserDefaults.standard.bool(forKey: hiddenKey(column))
                     || (column.hiddenByDefault && UserDefaults.standard.object(forKey: hiddenKey(column)) == nil)
             } else {
                 tableColumn?.isHidden = true
@@ -224,8 +225,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     private func reloadVisibleNames() {
         let rows = outlineView.rows(in: outlineView.visibleRect)
-        guard rows.length > 0, let column = outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.name.identifier }) else { return }
-        outlineView.reloadData(forRowIndexes: IndexSet(integersIn: rows.location..<rows.location + rows.length), columnIndexes: [column])
+        guard rows.length > 0,
+            let column = outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.name.identifier })
+        else { return }
+        outlineView.reloadData(
+            forRowIndexes: IndexSet(integersIn: rows.location..<rows.location + rows.length), columnIndexes: [column])
     }
 
     // MARK: - Selection
@@ -243,7 +247,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         let wanted = Set(urls.map(\.standardizedFileURL))
         var rows = IndexSet()
         for row in 0..<outlineView.numberOfRows {
-            if let node = outlineView.item(atRow: row) as? FileNode, wanted.contains(node.item.url.standardizedFileURL) {
+            if let node = outlineView.item(atRow: row) as? FileNode, wanted.contains(node.item.url.standardizedFileURL)
+            {
                 rows.insert(row)
             }
         }
@@ -298,7 +303,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     @objc private func toggleColumn(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let column = Column(rawValue: raw),
-              let tableColumn = outlineView.tableColumn(withIdentifier: column.identifier) else { return }
+            let tableColumn = outlineView.tableColumn(withIdentifier: column.identifier)
+        else { return }
         tableColumn.isHidden.toggle()
         UserDefaults.standard.set(tableColumn.isHidden, forKey: hiddenKey(column))
         outlineView.reloadData()
@@ -319,7 +325,10 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             self.tagCache[url] = tags
             guard let node = self.nodesByURL[url] ?? self.findNode(url) else { return }
             let row = self.outlineView.row(forItem: node)
-            if row >= 0, let column = self.outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.tags.identifier }) {
+            if row >= 0,
+                let column = self.outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.tags.identifier }
+                )
+            {
                 self.outlineView.reloadData(forRowIndexes: [row], columnIndexes: [column])
             }
         }
@@ -389,17 +398,24 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         return model.location.folderURL
     }
 
-    func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
-                     proposedChildIndex index: Int) -> NSDragOperation {
+    func outlineView(
+        _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
+        proposedChildIndex index: Int
+    ) -> NSDragOperation {
         guard model.engine.pathGuard.allowsWrites else { return [] }
         let target = (item as? FileNode).flatMap { $0.item.isBrowsableFolder ? $0 : nil }
-        if target == nil { outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex) }
-        else { outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex) }
+        if target == nil {
+            outlineView.setDropItem(nil, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        } else {
+            outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        }
         guard let folder = dropFolder(for: target) else { return [] }
         return FileViewKeys.dropOperation(info, into: folder)
     }
 
-    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+    func outlineView(
+        _ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int
+    ) -> Bool {
         guard let folder = dropFolder(for: item) else { return false }
         let urls = FileViewKeys.droppedURLs(info)
         let operation = FileViewKeys.dropOperation(info, into: folder)
@@ -410,7 +426,8 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
 
     func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard let descriptor = outlineView.sortDescriptors.first, let key = descriptor.key,
-              let sortKey = FileSort.Key(rawValue: key) else { return }
+            let sortKey = FileSort.Key(rawValue: key)
+        else { return }
         for node in nodesByURL.values { node.children = nil }
         model.sort = FileSort(key: sortKey, ascending: descriptor.ascending)
     }
@@ -421,11 +438,14 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode, let tableColumn,
-              let column = Column(rawValue: tableColumn.identifier.rawValue) else { return nil }
+            let column = Column(rawValue: tableColumn.identifier.rawValue)
+        else { return nil }
         let file = node.item
         switch column {
         case .name:
-            let cell = outlineView.makeView(withIdentifier: tableColumn.identifier, owner: nil) as? FileNameCell ?? FileNameCell()
+            let cell =
+                outlineView.makeView(withIdentifier: tableColumn.identifier, owner: nil) as? FileNameCell
+                ?? FileNameCell()
             cell.identifier = tableColumn.identifier
             cell.configure(with: file)
             return cell
@@ -441,7 +461,9 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         }
     }
 
-    func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
+    func outlineView(
+        _ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any
+    ) -> String? {
         guard tableColumn?.identifier == Column.name.identifier else { return nil }
         return (item as? FileNode)?.item.name
     }
@@ -450,7 +472,8 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         onSelectionChange?()
     }
 
-    private func textCell(_ outlineView: NSOutlineView, _ identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
+    private func textCell(_ outlineView: NSOutlineView, _ identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView
+    {
         if let cell = outlineView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView { return cell }
         let cell = NSTableCellView()
         cell.identifier = identifier
@@ -486,7 +509,9 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         let text = NSMutableAttributedString()
         for (index, tag) in tags.enumerated() {
             if index > 0 { text.append(NSAttributedString(string: "  ")) }
-            text.append(NSAttributedString(string: "● ", attributes: [.foregroundColor: Palette.tagColor(tag) ?? Palette.secondaryText]))
+            text.append(
+                NSAttributedString(
+                    string: "● ", attributes: [.foregroundColor: Palette.tagColor(tag) ?? Palette.secondaryText]))
             text.append(NSAttributedString(string: tag, attributes: [.foregroundColor: Palette.secondaryText]))
         }
         return text
@@ -603,7 +628,9 @@ final class IconCache {
             type = UTType(filenameExtension: item.url.pathExtension) ?? .data
         } else {
             key = (item.isPackage ? "package:" : "") + item.url.pathExtension.lowercased()
-            type = UTType(filenameExtension: item.url.pathExtension, conformingTo: item.isPackage ? .package : .data) ?? .data
+            type =
+                UTType(filenameExtension: item.url.pathExtension, conformingTo: item.isPackage ? .package : .data)
+                ?? .data
         }
         if let icon = byType[key] { return icon }
         let icon = NSWorkspace.shared.icon(for: type)
@@ -615,7 +642,9 @@ final class IconCache {
         guard !loading.contains(path) else { return }
         loading.insert(path)
         Task {
-            let icon = await Task.detached(priority: .utility) { LoadedIcon(image: NSWorkspace.shared.icon(forFile: path)) }.value
+            let icon = await Task.detached(priority: .utility) {
+                LoadedIcon(image: NSWorkspace.shared.icon(forFile: path))
+            }.value
             byPath[path] = icon.image
             loading.remove(path)
             NotificationCenter.default.post(name: Self.didLoad, object: path)

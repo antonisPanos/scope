@@ -6,7 +6,9 @@ import Foundation
 /// place only at the end, so cancelling leaves nothing behind.
 extension FileEngine {
     /// Extensions Scope offers to extract.
-    public static let archiveExtensions: Set<String> = ["zip", "tar", "tgz", "tbz", "tbz2", "txz", "gz", "bz2", "xz", "7z", "rar"]
+    public static let archiveExtensions: Set<String> = [
+        "zip", "tar", "tgz", "tbz", "tbz2", "txz", "gz", "bz2", "xz", "7z", "rar",
+    ]
 
     public static func isArchive(_ url: URL) -> Bool {
         let name = url.lastPathComponent.lowercased()
@@ -25,7 +27,10 @@ extension FileEngine {
 
         do {
             let size = Self.lstatInfo(archivePath.path).map { Int64($0.st_size) } ?? 0
-            control.update { $0.bytesTotal = size; $0.currentItem = archivePath.lastPathComponent }
+            control.update {
+                $0.bytesTotal = size
+                $0.currentItem = archivePath.lastPathComponent
+            }
             try readArchive(archivePath, into: staging, control: control)
 
             // One top-level item comes out as itself; several go into a folder
@@ -64,12 +69,15 @@ extension FileEngine {
     }
 
     private func readArchive(_ archivePath: URL, into staging: URL, control: OperationControl) throws {
-        guard let reader = archive_read_new() else { throw OperationError.archive("Couldn't start reading the archive.") }
+        guard let reader = archive_read_new() else {
+            throw OperationError.archive("Couldn't start reading the archive.")
+        }
         defer { archive_read_free(reader) }
         archive_read_support_filter_all(reader)
         archive_read_support_format_all(reader)
         // A bare .gz or .xz holds one compressed file without an archive around it.
-        let isBareCompressed = ["gz", "bz2", "xz"].contains(archivePath.pathExtension.lowercased())
+        let isBareCompressed =
+            ["gz", "bz2", "xz"].contains(archivePath.pathExtension.lowercased())
             && !archivePath.deletingPathExtension().pathExtension.lowercased().hasPrefix("tar")
         if isBareCompressed { archive_read_support_format_raw(reader) }
 
@@ -108,7 +116,8 @@ extension FileEngine {
                 archive_read_data_skip(reader)
                 continue
             }
-            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             control.update { $0.currentItem = relative }
 
             let type = UInt32(archive_entry_filetype(entry))
@@ -116,7 +125,9 @@ extension FileEngine {
             switch type {
             case AE_IFDIR:
                 if Self.lstatInfo(target.path) == nil {
-                    guard mkdir(target.path, 0o755) == 0 else { throw FileEngineError.posix("Create folder", target.path) }
+                    guard mkdir(target.path, 0o755) == 0 else {
+                        throw FileEngineError.posix("Create folder", target.path)
+                    }
                 }
             case AE_IFLNK:
                 guard let link = archive_entry_symlink(entry).map({ String(cString: $0) }) else { break }
@@ -135,7 +146,9 @@ extension FileEngine {
                     try control.waitWhilePaused()
                     let count = archive_read_data(reader, buffer, FileEngine.chunkSize)
                     if count == 0 { break }
-                    guard count > 0 else { throw OperationError.archive(Self.errorText(reader, fallback: "The archive is damaged.")) }
+                    guard count > 0 else {
+                        throw OperationError.archive(Self.errorText(reader, fallback: "The archive is damaged."))
+                    }
                     var written = 0
                     while written < count {
                         let result = write(output, buffer + written, count - written)
@@ -147,8 +160,10 @@ extension FileEngine {
                     control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
                 }
                 fchmod(output, permissions == 0 ? 0o644 : permissions)
-                var times = [timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
-                             timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0)]
+                var times = [
+                    timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
+                    timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
+                ]
                 futimens(output, &times)
             default:
                 // Devices, pipes and sockets are not extracted.
@@ -196,7 +211,10 @@ extension FileEngine {
         let partial = try pathGuard.checkWriteLocation(
             folder.appendingPathComponent(Self.partialPrefix + UUID().uuidString + "." + format.fileExtension))
         let totals = try measure(sources)
-        control.update { $0.bytesTotal = totals.bytes; $0.itemsTotal = totals.items }
+        control.update {
+            $0.bytesTotal = totals.bytes
+            $0.itemsTotal = totals.items
+        }
 
         do {
             try writeArchive(sources, to: partial, format: format, control: control)
@@ -210,8 +228,12 @@ extension FileEngine {
         }
     }
 
-    private func writeArchive(_ sources: [URL], to destination: URL, format: ArchiveFormat, control: OperationControl) throws {
-        guard let writer = archive_write_new() else { throw OperationError.archive("Couldn't start writing the archive.") }
+    private func writeArchive(
+        _ sources: [URL], to destination: URL, format: ArchiveFormat, control: OperationControl
+    ) throws {
+        guard let writer = archive_write_new() else {
+            throw OperationError.archive("Couldn't start writing the archive.")
+        }
         defer { archive_write_free(writer) }
         switch format {
         case .zip: archive_write_set_format_zip(writer)
@@ -242,7 +264,7 @@ extension FileEngine {
                     throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't add \(name)."))
                 }
                 for child in try FileManager.default.contentsOfDirectory(atPath: url.path).sorted()
-                    where child != ".DS_Store" {
+                where child != ".DS_Store" {
                     try add(url.appendingPathComponent(child), as: name + "/" + child)
                 }
             case S_IFLNK:

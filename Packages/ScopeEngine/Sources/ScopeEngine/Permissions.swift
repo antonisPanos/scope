@@ -21,5 +21,6 @@ public enum Permissions {
     }
 
     /// The Privacy & Security pane where the user grants Full Disk Access.
-    public static let fullDiskAccessSettingsURL = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!
+    public static let fullDiskAccessSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")!
 }

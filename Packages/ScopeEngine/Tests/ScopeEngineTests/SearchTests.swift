@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 @Suite struct SearchTests {
@@ -41,19 +42,30 @@ import Testing
     }
 
     @Test func hiddenSubfoldersAndPackages() async throws {
-        #expect(try await names(SearchQuery(text: "report", includeHidden: true)) == ["Report 2026.pdf", "secret-report.txt"])
-        #expect(try await names(SearchQuery(text: "report", includePackages: true)) == ["Report 2026.pdf", "report-inside.txt"])
+        #expect(
+            try await names(SearchQuery(text: "report", includeHidden: true)) == [
+                "Report 2026.pdf", "secret-report.txt",
+            ])
+        #expect(
+            try await names(SearchQuery(text: "report", includePackages: true)) == [
+                "Report 2026.pdf", "report-inside.txt",
+            ])
         #expect(try await names(SearchQuery(text: "IMG", includeSubfolders: false)) == [])
     }
 
     @Test func kindSizeAndDateFilters() async throws {
-        #expect(try await names(SearchQuery(kinds: [.image])) == ["IMG_2025_12.jpg", "IMG_2026_01.jpg", "IMG_2026_02.png"])
+        #expect(
+            try await names(SearchQuery(kinds: [.image])) == ["IMG_2025_12.jpg", "IMG_2026_01.jpg", "IMG_2026_02.png"])
         #expect(try await names(SearchQuery(kinds: [.image], minimumSize: 1_000)) == ["IMG_2026_01.jpg"])
         #expect(try await names(SearchQuery(text: "IMG", maximumSize: 100)) == ["IMG_2026_02.png"])
         let old = sandbox.url("notes.txt")
-        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 0)], ofItemAtPath: old.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)], ofItemAtPath: old.path)
         #expect(try await names(SearchQuery(text: "notes", modifiedAfter: Date(timeIntervalSinceNow: -3600))) == [])
-        #expect(try await names(SearchQuery(text: "notes", modifiedBefore: Date(timeIntervalSince1970: 10))) == ["notes.txt"])
+        #expect(
+            try await names(SearchQuery(text: "notes", modifiedBefore: Date(timeIntervalSince1970: 10))) == [
+                "notes.txt"
+            ])
     }
 
     @Test func tagFilter() async throws {
@@ -74,7 +86,9 @@ import Testing
 
         // Stopping after the first batch ends the crawl promptly.
         let started = ContinuousClock.now
-        for try await _ in try sandbox.engine.search(SearchQuery(text: "item-"), in: sandbox.root, batchSize: 10) { break }
+        for try await _ in try sandbox.engine.search(SearchQuery(text: "item-"), in: sandbox.root, batchSize: 10) {
+            break
+        }
         #expect(ContinuousClock.now - started < .seconds(1))
     }
 

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 /// A fresh temporary folder per test, removed afterwards. Its resolved path is
@@ -52,7 +53,8 @@ final class Sandbox {
     @discardableResult
     func write(_ relative: String, _ data: Data) throws -> URL {
         let target = url(relative)
-        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: target)
         return target
     }
@@ -95,8 +97,9 @@ struct TreeSnapshot: Equatable, CustomStringConvertible {
 
     private mutating func visit(_ path: String, relative: String) throws {
         guard let info = FileEngine.lstatInfo(path) else { throw CocoaError(.fileNoSuchFile) }
-        var entry = Entry(kind: "other", mode: info.st_mode & 0o7777, flags: info.st_flags,
-                          contentHash: nil, linkTarget: nil, xattrs: Self.xattrs(path))
+        var entry = Entry(
+            kind: "other", mode: info.st_mode & 0o7777, flags: info.st_flags,
+            contentHash: nil, linkTarget: nil, xattrs: Self.xattrs(path))
         switch info.st_mode & S_IFMT {
         case S_IFDIR:
             entry.kind = "dir"

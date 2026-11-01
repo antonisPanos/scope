@@ -1,6 +1,6 @@
 import AppKit
-import ScopeEngine
 import Quartz
+import ScopeEngine
 
 /// The gallery view: a large Quick Look preview of the selected item above a
 /// strip of thumbnails. Left and Right move through the strip.

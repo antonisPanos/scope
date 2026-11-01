@@ -76,16 +76,19 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         view = scrollView
 
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applySize() }
-        })
-        observers.append(center.addObserver(forName: ThumbnailCache.didLoad, object: nil, queue: .main) { [weak self] note in
-            let url = note.object as? URL
-            MainActor.assumeIsolated { self?.thumbnailLoaded(url) }
-        })
-        observers.append(center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshVisible() }
-        })
+        observers.append(
+            center.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applySize() }
+            })
+        observers.append(
+            center.addObserver(forName: ThumbnailCache.didLoad, object: nil, queue: .main) { [weak self] note in
+                let url = note.object as? URL
+                MainActor.assumeIsolated { self?.thumbnailLoaded(url) }
+            })
+        observers.append(
+            center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshVisible() }
+            })
         applySize()
         reloadItems()
     }
@@ -97,16 +100,22 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     }
 
     var selectedItems: [FileItem] {
-        collectionView.selectionIndexPaths.sorted().compactMap { items.indices.contains($0.item) ? items[$0.item] : nil }
+        collectionView.selectionIndexPaths.sorted().compactMap {
+            items.indices.contains($0.item) ? items[$0.item] : nil
+        }
     }
 
     @discardableResult
     func select(_ urls: [URL], scroll: Bool) -> Bool {
         let wanted = Set(urls.map(\.standardizedFileURL))
-        let paths = Set(items.indices.filter { wanted.contains(items[$0].url.standardizedFileURL) }.map { IndexPath(item: $0, section: 0) })
+        let paths = Set(
+            items.indices.filter { wanted.contains(items[$0].url.standardizedFileURL) }.map {
+                IndexPath(item: $0, section: 0)
+            })
         collectionView.selectionIndexPaths = paths
         if scroll, let first = paths.min() {
-            collectionView.scrollToItems(at: [first], scrollPosition: style == .strip ? .centeredHorizontally : .nearestHorizontalEdge)
+            collectionView.scrollToItems(
+                at: [first], scrollPosition: style == .strip ? .centeredHorizontally : .nearestHorizontalEdge)
         }
         onSelectionChange?()
         return !paths.isEmpty
@@ -157,7 +166,8 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private func applySize() {
         let size = iconSize
         // Room for two lines of name under the icon in the grid; none in the strip.
-        layout.itemSize = style == .strip
+        layout.itemSize =
+            style == .strip
             ? NSSize(width: size + 12, height: size + 12)
             : NSSize(width: max(size + 24, 84), height: size + 46)
         layout.invalidateLayout()
@@ -167,21 +177,24 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private func refreshVisible() {
         for item in collectionView.visibleItems() {
             guard let item = item as? IconItem, let path = collectionView.indexPath(for: item),
-                  items.indices.contains(path.item) else { continue }
+                items.indices.contains(path.item)
+            else { continue }
             configure(item, with: items[path.item])
         }
     }
 
     private func thumbnailLoaded(_ url: URL?) {
         guard let url, let index = items.firstIndex(where: { $0.url == url }),
-              let item = collectionView.item(at: IndexPath(item: index, section: 0)) as? IconItem else { return }
+            let item = collectionView.item(at: IndexPath(item: index, section: 0)) as? IconItem
+        else { return }
         configure(item, with: items[index])
     }
 
     private func configure(_ item: IconItem, with file: FileItem) {
         let size = iconSize
         let scale = view.window?.backingScaleFactor ?? 2
-        let thumbnail = ThumbnailCache.shared.thumbnail(for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard)
+        let thumbnail = ThumbnailCache.shared.thumbnail(
+            for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard)
         item.show(file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size, showsName: style == .grid)
     }
 
@@ -194,7 +207,9 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     /// Returns true when the key was handled.
     private func handleKey(_ event: NSEvent) -> Bool {
-        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !collectionView.selectionIndexPaths.isEmpty), let first = items.first {
+        if FileViewKeys.isArrowWithoutSelection(event, hasSelection: !collectionView.selectionIndexPaths.isEmpty),
+            let first = items.first
+        {
             select([first.url], scroll: true)
             return true
         }
@@ -217,7 +232,9 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         // Type to select, as in Finder: letters typed within a second add up.
         let flags = event.modifierFlags.intersection([.command, .control, .option])
         guard flags.isEmpty, let characters = event.characters, !characters.isEmpty,
-              characters.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.union(.punctuationCharacters).contains($0) })
+            characters.unicodeScalars.allSatisfy({
+                CharacterSet.alphanumerics.union(.punctuationCharacters).contains($0)
+            })
         else { return false }
         if Date().timeIntervalSince(typeSelectTime) > 1 { typeSelect = "" }
         typeSelect += characters
@@ -234,33 +251,44 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
         items.count
     }
 
-    func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
+    func collectionView(
+        _ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath
+    ) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: Self.itemIdentifier, for: indexPath) as! IconItem
         configure(item, with: items[indexPath.item])
         return item
     }
 
     /// Without this a collection view never starts a drag.
-    func collectionView(_ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent) -> Bool {
+    func collectionView(
+        _ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent
+    ) -> Bool {
         true
     }
 
-    func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
-        guard items.indices.contains(indexPath.item), model.engine.pathGuard.permits(items[indexPath.item].url) else { return nil }
+    func collectionView(
+        _ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath
+    ) -> NSPasteboardWriting? {
+        guard items.indices.contains(indexPath.item), model.engine.pathGuard.permits(items[indexPath.item].url) else {
+            return nil
+        }
         return items[indexPath.item].url as NSURL
     }
 
     private func dropFolder(at indexPath: IndexPath?, operation: NSCollectionView.DropOperation) -> URL? {
         if operation == .on, let indexPath, items.indices.contains(indexPath.item),
-           items[indexPath.item].isBrowsableFolder, !items[indexPath.item].isSymbolicLink {
+            items[indexPath.item].isBrowsableFolder, !items[indexPath.item].isSymbolicLink
+        {
             return items[indexPath.item].url
         }
         return model.location.folderURL
     }
 
-    func collectionView(_ collectionView: NSCollectionView, validateDrop info: NSDraggingInfo,
-                        proposedIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
-                        dropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>) -> NSDragOperation {
+    func collectionView(
+        _ collectionView: NSCollectionView, validateDrop info: NSDraggingInfo,
+        proposedIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
+        dropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>
+    ) -> NSDragOperation {
         guard model.engine.pathGuard.allowsWrites else { return [] }
         let path = proposedIndexPath.pointee as IndexPath
         if dropOperation.pointee == .on, !(items.indices.contains(path.item) && items[path.item].isBrowsableFolder) {
@@ -270,8 +298,10 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
         return FileViewKeys.dropOperation(info, into: folder)
     }
 
-    func collectionView(_ collectionView: NSCollectionView, acceptDrop info: NSDraggingInfo, indexPath: IndexPath,
-                        dropOperation: NSCollectionView.DropOperation) -> Bool {
+    func collectionView(
+        _ collectionView: NSCollectionView, acceptDrop info: NSDraggingInfo, indexPath: IndexPath,
+        dropOperation: NSCollectionView.DropOperation
+    ) -> Bool {
         guard let folder = dropFolder(at: indexPath, operation: dropOperation) else { return false }
         let urls = FileViewKeys.droppedURLs(info)
         let operation = FileViewKeys.dropOperation(info, into: folder)

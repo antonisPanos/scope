@@ -10,7 +10,9 @@ enum MainMenu {
         let main = NSMenu()
 
         let app = NSMenu(title: name)
-        app.addItem(withTitle: "About \(name)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(
+            withTitle: "About \(name)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         app.addItem(.separator())
@@ -19,9 +21,12 @@ enum MainMenu {
         NSApp.servicesMenu = services
         app.addItem(.separator())
         app.addItem(withTitle: "Hide \(name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
-            .keyEquivalentModifierMask = [.command, .option]
-        app.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        app.addItem(
+            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h"
+        )
+        .keyEquivalentModifierMask = [.command, .option]
+        app.addItem(
+            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Quit \(name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         add(app, to: main)
@@ -30,7 +35,8 @@ enum MainMenu {
         file.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
         addCommands(.file, to: file)
         file.addItem(.separator())
-        file.addItem(withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTabOrWindow(_:)), keyEquivalent: "w")
+        file.addItem(
+            withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTabOrWindow(_:)), keyEquivalent: "w")
         file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W")
         add(file, to: main)
 
@@ -56,8 +62,10 @@ enum MainMenu {
         view.addItem(withTitle: "Show Tab Bar", action: #selector(NSWindow.toggleTabBar(_:)), keyEquivalent: "T")
         view.addItem(withTitle: "Show All Tabs", action: #selector(NSWindow.toggleTabOverview(_:)), keyEquivalent: "\\")
             .keyEquivalentModifierMask = [.shift, .command]
-        view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
-            .keyEquivalentModifierMask = [.control, .command]
+        view.addItem(
+            withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f"
+        )
+        .keyEquivalentModifierMask = [.control, .command]
         add(view, to: main)
 
         let go = NSMenu(title: "Go")
@@ -68,13 +76,17 @@ enum MainMenu {
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         window.addItem(.separator())
-        window.addItem(withTitle: "Show Previous Tab", action: #selector(NSWindow.selectPreviousTab(_:)), keyEquivalent: "\t")
-            .keyEquivalentModifierMask = [.control, .shift]
+        window.addItem(
+            withTitle: "Show Previous Tab", action: #selector(NSWindow.selectPreviousTab(_:)), keyEquivalent: "\t"
+        )
+        .keyEquivalentModifierMask = [.control, .shift]
         window.addItem(withTitle: "Show Next Tab", action: #selector(NSWindow.selectNextTab(_:)), keyEquivalent: "\t")
             .keyEquivalentModifierMask = .control
-        window.addItem(withTitle: "Merge All Windows", action: #selector(NSWindow.mergeAllWindows(_:)), keyEquivalent: "")
+        window.addItem(
+            withTitle: "Merge All Windows", action: #selector(NSWindow.mergeAllWindows(_:)), keyEquivalent: "")
         window.addItem(.separator())
-        window.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        window.addItem(
+            withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         add(window, to: main)
         NSApp.windowsMenu = window
 
@@ -88,9 +100,10 @@ enum MainMenu {
     private static func addCommands(_ section: Command.Menu, to menu: NSMenu) {
         for command in Commands.all where command.menu == section {
             if command.startsGroup, !menu.items.isEmpty { menu.addItem(.separator()) }
-            let item = NSMenuItem(title: command.title,
-                                  action: #selector(BrowserWindowController.runCommand(_:)),
-                                  keyEquivalent: command.key)
+            let item = NSMenuItem(
+                title: command.title,
+                action: #selector(BrowserWindowController.runCommand(_:)),
+                keyEquivalent: command.key)
             item.keyEquivalentModifierMask = command.modifiers
             item.representedObject = command.id
             menu.addItem(item)

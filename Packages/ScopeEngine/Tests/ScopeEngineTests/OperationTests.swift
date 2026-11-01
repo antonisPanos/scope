@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 /// Operations on real mounted volumes: copy, move (on one disk and between
@@ -114,7 +115,9 @@ import Testing
         let destination = other.work
         let task = Task {
             let undo = UndoRecorder()
-            try await engine.run(FileOperation(.move([source], into: destination)), control: control, undo: undo) { _ in (.stop, false) }
+            try await engine.run(FileOperation(.move([source], into: destination)), control: control, undo: undo) { _ in
+                (.stop, false)
+            }
         }
         // Pausing as soon as data flows holds the move mid-copy, however fast the disk.
         while control.progress.bytesDone == 0 { try await Task.sleep(for: .milliseconds(1)) }
@@ -173,17 +176,20 @@ import Testing
         var records: [UndoRecord] = []
 
         for step in 0..<12 {
-            let items = try FileManager.default.contentsOfDirectory(at: disk.url("start"), includingPropertiesForKeys: nil)
-                .filter { $0.lastPathComponent != "inner" }
+            let items = try FileManager.default.contentsOfDirectory(
+                at: disk.url("start"), includingPropertiesForKeys: nil
+            )
+            .filter { $0.lastPathComponent != "inner" }
             guard let item = items.randomElement(using: &random) else { break }
-            let kind: FileOperation.Kind = switch random.next() % 6 {
-            case 0: .copy([item], into: disk.url("start/inner"))
-            case 1: .move([item], into: disk.url("start/inner"))
-            case 2: .rename(item, to: "renamed-\(seed)-\(step).txt")
-            case 3: .duplicate([item])
-            case 4: .newFolder(in: disk.url("start"), name: "folder \(step)")
-            default: .trash([item])
-            }
+            let kind: FileOperation.Kind =
+                switch random.next() % 6 {
+                case 0: .copy([item], into: disk.url("start/inner"))
+                case 1: .move([item], into: disk.url("start/inner"))
+                case 2: .rename(item, to: "renamed-\(seed)-\(step).txt")
+                case 3: .duplicate([item])
+                case 4: .newFolder(in: disk.url("start"), name: "folder \(step)")
+                default: .trash([item])
+                }
             var harness = ops
             harness.conflictAnswer = .keepBoth
             records.append(try await harness.run(kind))
@@ -199,7 +205,8 @@ import Testing
         try disk.write("project/readme.txt", "hello")
         try disk.write("project/src/main.swift", "print(1)")
         try disk.write("project/empty.txt", "")
-        try FileManager.default.createSymbolicLink(atPath: disk.url("project/link").path, withDestinationPath: "readme.txt")
+        try FileManager.default.createSymbolicLink(
+            atPath: disk.url("project/link").path, withDestinationPath: "readme.txt")
         try FileManager.default.createDirectory(at: disk.url("out"), withIntermediateDirectories: true)
 
         try await ops.run(.compress([disk.url("project")], format: format))
@@ -211,7 +218,9 @@ import Testing
         #expect(try disk.read("out/project/readme.txt") == "hello")
         #expect(try disk.read("out/project/src/main.swift") == "print(1)")
         #expect(try disk.read("out/project/empty.txt") == "")
-        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: disk.url("out/project/link").path) == "readme.txt")
+        #expect(
+            try FileManager.default.destinationOfSymbolicLink(atPath: disk.url("out/project/link").path) == "readme.txt"
+        )
         // No partial files left behind.
         #expect(try disk.names("out").allSatisfy { !$0.hasPrefix(FileEngine.partialPrefix) })
     }
@@ -233,7 +242,8 @@ import Testing
         #expect(control.skippedEntries.count == 3)
         #expect(!FileManager.default.fileExists(atPath: "/etc/scope-test.txt"))
         #expect(!disk.exists("../escaped.txt"))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: disk.mountPoint.path).contains("escaped.txt") == false)
+        #expect(
+            try FileManager.default.contentsOfDirectory(atPath: disk.mountPoint.path).contains("escaped.txt") == false)
         #expect(try disk.read("evil/innocent.txt") == "fine")
     }
 
@@ -254,7 +264,9 @@ import Testing
         let engine = engine
         let archive = disk.url("x/big.zip")
         let task = Task {
-            try await engine.run(FileOperation(.extract(archive)), control: control, undo: UndoRecorder()) { _ in (.stop, false) }
+            try await engine.run(FileOperation(.extract(archive)), control: control, undo: UndoRecorder()) { _ in
+                (.stop, false)
+            }
         }
         while control.progress.bytesDone == 0 { try await Task.sleep(for: .milliseconds(1)) }
         task.cancel()

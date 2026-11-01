@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import ScopeEngine
 
 @Suite(.serialized) struct OperationCenterTests {
@@ -8,7 +9,9 @@ import Testing
 
     init() throws {
         disk = try TestVolume(name: "ScopeQueue")
-        center = OperationCenter(engine: FileEngine(pathGuard: .restricted(to: [disk.mountPoint]))) { _ in (.keepBoth, false) }
+        center = OperationCenter(engine: FileEngine(pathGuard: .restricted(to: [disk.mountPoint]))) { _ in
+            (.keepBoth, false)
+        }
     }
 
     private func state(_ id: UUID) async -> OperationCenter.State? {
@@ -48,7 +51,9 @@ import Testing
         try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
         let id = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
-        while await center.snapshots().first?.progress.bytesDone ?? 0 == 0 { try await Task.sleep(for: .milliseconds(1)) }
+        while await center.snapshots().first?.progress.bytesDone ?? 0 == 0 {
+            try await Task.sleep(for: .milliseconds(1))
+        }
 
         await center.pause(id)
         #expect(await state(id) == .paused)

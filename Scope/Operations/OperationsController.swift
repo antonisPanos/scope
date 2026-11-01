@@ -1,7 +1,7 @@
 import AppKit
 import Observation
-import os
 import ScopeEngine
+import os
 
 /// The app's side of the operation queue: starts operations, asks about
 /// conflicts, and keeps a snapshot of every operation for the activity panels,
@@ -32,7 +32,9 @@ final class OperationsController {
     /// What the footer shows: the operation running now, or the one that
     /// finished last if that was in the last few seconds.
     var footerSnapshot: OperationCenter.Snapshot? {
-        if let running = snapshots.first(where: { $0.state == .running || $0.state == .paused || $0.state == .cancelling }) {
+        if let running = snapshots.first(where: {
+            $0.state == .running || $0.state == .paused || $0.state == .cancelling
+        }) {
             return running
         }
         let recent = snapshots.filter { $0.finished.map { Date().timeIntervalSince($0) < 4 } ?? false }
@@ -80,7 +82,8 @@ final class OperationsController {
             refresh()
             return id
         } catch {
-            Self.logger.notice("Refused: \(operation.title, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Self.logger.notice(
+                "Refused: \(operation.title, privacy: .public): \(error.localizedDescription, privacy: .public)")
             Self.showAlert("Can't do that right now.", error.localizedDescription, on: window)
             return nil
         }
@@ -107,12 +110,42 @@ final class OperationsController {
         snapshots.contains(where: \.canUndo)
     }
 
-    func cancel(_ id: UUID) { Task { await center.cancel(id); refresh() } }
-    func pause(_ id: UUID) { Task { await center.pause(id); refresh() } }
-    func resume(_ id: UUID) { Task { await center.resume(id); refresh() } }
-    func startNow(_ id: UUID) { Task { await center.startNow(id); refresh() } }
-    func move(_ id: UUID, by offset: Int) { Task { await center.move(id, by: offset); refresh() } }
-    func clearFinished() { Task { await center.clearFinished(); refresh() } }
+    func cancel(_ id: UUID) {
+        Task {
+            await center.cancel(id)
+            refresh()
+        }
+    }
+    func pause(_ id: UUID) {
+        Task {
+            await center.pause(id)
+            refresh()
+        }
+    }
+    func resume(_ id: UUID) {
+        Task {
+            await center.resume(id)
+            refresh()
+        }
+    }
+    func startNow(_ id: UUID) {
+        Task {
+            await center.startNow(id)
+            refresh()
+        }
+    }
+    func move(_ id: UUID, by offset: Int) {
+        Task {
+            await center.move(id, by: offset)
+            refresh()
+        }
+    }
+    func clearFinished() {
+        Task {
+            await center.clearFinished()
+            refresh()
+        }
+    }
 
     /// Cancels everything queued or running, for "Quit Now".
     func cancelAll() {
@@ -137,7 +170,10 @@ final class OperationsController {
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(100))
                         self.apply(await self.center.snapshots())
-                        if self.active.isEmpty { self.pollTask = nil; return }
+                        if self.active.isEmpty {
+                            self.pollTask = nil
+                            return
+                        }
                     }
                 }
             }
@@ -163,7 +199,8 @@ final class OperationsController {
     /// Asks on the frontmost browser window what to do about an existing item.
     private static func ask(_ conflict: Conflict) async -> (choice: ConflictChoice, applyToAll: Bool) {
         let alert = NSAlert()
-        alert.messageText = "An item named “\(conflict.existing.lastPathComponent)” already exists in “\(conflict.existing.deletingLastPathComponent().lastPathComponent)”."
+        alert.messageText =
+            "An item named “\(conflict.existing.lastPathComponent)” already exists in “\(conflict.existing.deletingLastPathComponent().lastPathComponent)”."
         alert.informativeText = "Replacing moves the existing item to the Trash, so you can get it back."
         alert.addButton(withTitle: "Keep Both")
         alert.addButton(withTitle: "Replace")

@@ -11,8 +11,9 @@ final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
-                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.contentViewController = NSHostingController(rootView: SettingsView())
         window.center()
@@ -49,9 +50,11 @@ struct SettingsView: View {
                     ForEach(AppSettings.DeleteKey.allCases) { Text($0.title).tag($0) }
                 }
                 .onChange(of: deleteKey) { AppSettings.shared.deleteKey = deleteKey }
-                Text("Finder's own shortcuts (Cmd+Down to open, Cmd+Delete to trash, Cmd+[ and Cmd+] to go back and forward) always work too.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Finder's own shortcuts (Cmd+Down to open, Cmd+Delete to trash, Cmd+[ and Cmd+] to go back and forward) always work too."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Section("Files") {
                 Toggle("Show hidden files", isOn: $showHidden)
@@ -63,9 +66,11 @@ struct SettingsView: View {
                         AppSettings.shared.systemNotifications = notifications
                         if notifications { SystemNotifier.shared.requestPermissionIfNeeded() }
                     }
-                Text("Only while Scope is in the background, or for jobs over \(Int(SystemNotifier.longJob)) seconds when the activity drawer is hidden.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Only while Scope is in the background, or for jobs over \(Int(SystemNotifier.longJob)) seconds when the activity drawer is hidden."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 if notifications, notificationStatus == .denied {
                     HStack {
                         Text("macOS is blocking Scope's notifications.")
@@ -76,8 +81,10 @@ struct SettingsView: View {
             }
             Section("Permissions") {
                 if BuildIdentity.current.isDevelopment {
-                    Text("\(BuildIdentity.current.appName) only reaches the test disks, so it needs no extra permissions.")
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "\(BuildIdentity.current.appName) only reaches the test disks, so it needs no extra permissions."
+                    )
+                    .foregroundStyle(.secondary)
                 } else {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -88,7 +95,9 @@ struct SettingsView: View {
                         }
                         Spacer()
                         if fullDiskAccess != .granted {
-                            Button("Open Privacy Settings") { NSWorkspace.shared.open(Permissions.fullDiskAccessSettingsURL) }
+                            Button("Open Privacy Settings") {
+                                NSWorkspace.shared.open(Permissions.fullDiskAccessSettingsURL)
+                            }
                         }
                     }
                 }
