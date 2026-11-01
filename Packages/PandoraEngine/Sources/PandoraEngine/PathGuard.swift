@@ -16,18 +16,27 @@ public struct PathGuard: Sendable {
 
     public let policy: Policy
 
+    /// Whether operations that change the disk are allowed at all. When false,
+    /// every write is refused, wherever it points.
+    public let allowsWrites: Bool
+
     private static let logger = Logger(subsystem: "com.antonispanos.pandora", category: "PathGuard")
 
-    /// The guard used by release builds: every absolute path is allowed.
-    public static let unrestricted = PathGuard(policy: .unrestricted)
+    /// Every absolute path is allowed, for reading and writing.
+    public static let unrestricted = PathGuard(policy: .unrestricted, allowsWrites: true)
+
+    /// Every absolute path may be read, but nothing may be changed. The real
+    /// Pandora build uses this until the MVP gate in the test plan is met.
+    public static let readOnly = PathGuard(policy: .unrestricted, allowsWrites: false)
 
     /// A guard that only allows paths inside `roots` (the roots themselves included).
     public static func restricted(to roots: [URL]) -> PathGuard {
-        PathGuard(policy: .restricted(roots: roots.map { resolveRoot($0.path) }))
+        PathGuard(policy: .restricted(roots: roots.map { resolveRoot($0.path) }), allowsWrites: true)
     }
 
-    private init(policy: Policy) {
+    private init(policy: Policy, allowsWrites: Bool) {
         self.policy = policy
+        self.allowsWrites = allowsWrites
     }
 
     public var isRestricted: Bool {
@@ -41,6 +50,14 @@ public struct PathGuard: Sendable {
     @discardableResult
     public func checkLocation(_ url: URL) throws(PathGuardViolation) -> URL {
         try check(url, followFinalSymlink: false)
+    }
+
+    /// Like `checkLocation`, for an item about to be created, changed, moved or
+    /// trashed. Refused outright when the guard doesn't allow writes.
+    @discardableResult
+    public func checkWriteLocation(_ url: URL) throws(PathGuardViolation) -> URL {
+        guard allowsWrites else { throw fail(url, resolved: nil, reason: .writesDisabled) }
+        return try checkLocation(url)
     }
 
     /// Checks the item an URL finally points to, following every symlink.
@@ -145,6 +162,7 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
         case notAbsolute
         case parentReference
         case unresolvable
+        case writesDisabled
     }
 
     public let path: String
@@ -163,6 +181,8 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
             "\(path) contains '..'"
         case .unresolvable:
             "\(path) could not be resolved (a dangling or looping symlink)"
+        case .writesDisabled:
+            "\(path) can't be changed: this build is read-only"
         }
     }
 

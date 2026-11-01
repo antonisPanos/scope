@@ -103,18 +103,54 @@ import Testing
         #expect(sandbox.exists("a.txt"))
     }
 
-    @Test func trashesASymlinkWithoutTouchingItsTarget() async throws {
-        // The link points outside the allowed root; trashing the link is fine,
-        // and the target must survive.
-        let target = FileManager.default.temporaryDirectory.appendingPathComponent("pandora-target-\(UUID().uuidString)")
-        try Data("keep".utf8).write(to: target)
-        defer { try? FileManager.default.removeItem(at: target) }
-        try sandbox.symlink("link", to: target.path)
+    @Test(.enabled(if: Sandbox.testDiskMounted, "needs the test disk, so the user's real Trash is never used"))
+    func trashesASymlinkWithoutTouchingItsTarget() async throws {
+        // Both folders live on the test disk, so the item goes to that disk's
+        // own Trash. The link points outside the guard's root; trashing the
+        // link is allowed, and its target must survive.
+        let disk = try Sandbox(in: Sandbox.testDisk)
+        let outside = try Sandbox(in: Sandbox.testDisk)
+        let target = try outside.write("target.txt", "keep")
+        try disk.symlink("link", to: target.path)
 
-        let trashed = try await engine.trashItem(at: sandbox.url("link"))
+        let trashed = try await disk.engine.trashItem(at: disk.url("link"))
         defer { if let trashed { try? FileManager.default.removeItem(at: trashed) } }
-        #expect(!sandbox.exists("link"))
+        #expect(trashed?.path.hasPrefix(Sandbox.testDisk.path + "/") == true)
+        #expect(!disk.exists("link"))
         #expect(try String(contentsOf: target, encoding: .utf8) == "keep")
+    }
+
+    @Test func refusesToTrashOutsideTheRoot() async throws {
+        let outside = try Sandbox()
+        try outside.write("a.txt", "a")
+        await #expect(throws: PathGuardViolation.self) { try await engine.trashItem(at: outside.url("a.txt")) }
+        #expect(outside.exists("a.txt"))
+    }
+
+    // MARK: - Read-only guard
+
+    @Test func readOnlyGuardListsButRefusesEveryChange() async throws {
+        try sandbox.write("a.txt", "a")
+        try sandbox.mkdir("folder")
+        let readOnly = FileEngine(pathGuard: .readOnly)
+        let before = try TreeSnapshot(sandbox.root)
+
+        #expect(try await readOnly.contentsOfDirectory(at: sandbox.root).count == 2)
+        await #expect(throws: PathGuardViolation.self) { try await readOnly.createFolder(at: sandbox.url("new")) }
+        await #expect(throws: PathGuardViolation.self) { try await readOnly.rename(sandbox.url("a.txt"), to: "b.txt") }
+        await #expect(throws: PathGuardViolation.self) {
+            try await readOnly.moveItem(at: sandbox.url("a.txt"), to: sandbox.url("folder/a.txt"))
+        }
+        await #expect(throws: PathGuardViolation.self) {
+            try await readOnly.copyItem(at: sandbox.url("a.txt"), to: sandbox.url("copy.txt"))
+        }
+        await #expect(throws: PathGuardViolation.self) { try await readOnly.trashItem(at: sandbox.url("a.txt")) }
+        let error = await #expect(throws: PathGuardViolation.self) {
+            try await readOnly.removeLeftoverPartials(in: sandbox.root)
+        }
+        #expect(error?.reason == .writesDisabled)
+
+        #expect(try TreeSnapshot(sandbox.root) == before)
     }
 
     // MARK: - Copy

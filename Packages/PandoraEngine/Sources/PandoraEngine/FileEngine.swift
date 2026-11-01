@@ -48,7 +48,7 @@ public struct FileEngine: Sendable {
     // MARK: - Simple operations
 
     public func createFolder(at url: URL) async throws {
-        let target = try pathGuard.checkLocation(url)
+        let target = try pathGuard.checkWriteLocation(url)
         guard mkdir(target.path, 0o755) == 0 else { throw FileEngineError.posix("Create folder", target.path) }
     }
 
@@ -56,8 +56,8 @@ public struct FileEngine: Sendable {
     @discardableResult
     public func rename(_ url: URL, to newName: String) async throws -> URL {
         guard Self.isValidName(newName) else { throw FileEngineError.invalidName(newName) }
-        let source = try pathGuard.checkLocation(url)
-        let destination = try pathGuard.checkLocation(source.deletingLastPathComponent().appendingPathComponent(newName))
+        let source = try pathGuard.checkWriteLocation(url)
+        let destination = try pathGuard.checkWriteLocation(source.deletingLastPathComponent().appendingPathComponent(newName))
         // A case-only rename on a case-insensitive disk finds the item itself at
         // the destination, so it must not use the exclusive rename.
         let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
@@ -71,8 +71,8 @@ public struct FileEngine: Sendable {
     /// Only moves within one disk are supported for now; they are a single
     /// atomic rename.
     public func moveItem(at url: URL, to destination: URL) async throws {
-        let source = try pathGuard.checkLocation(url)
-        let target = try pathGuard.checkLocation(destination)
+        let source = try pathGuard.checkWriteLocation(url)
+        let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
         let targetFolder = target.deletingLastPathComponent().path
         guard let sourceDevice = Self.lstatInfo(source.path)?.st_dev,
@@ -90,7 +90,7 @@ public struct FileEngine: Sendable {
     /// deletes outright.
     @discardableResult
     public func trashItem(at url: URL) async throws -> URL? {
-        let target = try pathGuard.checkLocation(url)
+        let target = try pathGuard.checkWriteLocation(url)
         var resulting: NSURL?
         try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
         return resulting as URL?
@@ -100,11 +100,12 @@ public struct FileEngine: Sendable {
     /// Returns how many were removed.
     @discardableResult
     public func removeLeftoverPartials(in directory: URL) async throws -> Int {
+        try pathGuard.checkWriteLocation(directory)
         let folder = try pathGuard.checkTarget(directory)
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
         var removed = 0
         for name in names where name.hasPrefix(Self.partialPrefix) {
-            let partial = try pathGuard.checkLocation(folder.appendingPathComponent(name))
+            let partial = try pathGuard.checkWriteLocation(folder.appendingPathComponent(name))
             try FileManager.default.removeItem(at: partial)
             removed += 1
         }
@@ -126,7 +127,7 @@ public struct FileEngine: Sendable {
         progress: (@Sendable (CopyProgress) -> Void)? = nil
     ) async throws {
         let source = try pathGuard.checkLocation(url)
-        let target = try pathGuard.checkLocation(destination)
+        let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
         guard Self.lstatInfo(target.path) == nil else { throw FileEngineError.destinationExists(target.path) }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
@@ -137,7 +138,7 @@ public struct FileEngine: Sendable {
         let partial = target.deletingLastPathComponent()
             .appendingPathComponent(Self.partialPrefix + UUID().uuidString + "-" + target.lastPathComponent)
         // The partial name must pass the guard like any other path we write.
-        try pathGuard.checkLocation(partial)
+        try pathGuard.checkWriteLocation(partial)
 
         do {
             try job.copy(from: source.path, to: partial.path, relative: "")

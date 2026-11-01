@@ -8,6 +8,11 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - All file system access goes through `FileEngine` in `Packages/PandoraEngine`, and every
   path passes `PathGuard` first. Development builds (`PANDORA_DEV`) restrict it to the
   test disks in `BuildIdentity.testDiskRoots`.
+- The release build uses `PathGuard.readOnly` until `PANDORA_ALLOW_WRITES` is set in
+  `Config/Pandora.xcconfig`. Only the owner decides to set it, after the MVP gate.
+- Engine write operations must call `checkWriteLocation`, never only `checkLocation`.
+- Tests that need real disk side effects (Trash) run on `/Volumes/PandoraTest` only and
+  skip when it isn't mounted. Never let a test touch the user's real Trash or home.
 - Never run Pandora Dev, tests or scripts against real user files. Engine tests use temp
   folders with a restricted guard; manual testing uses `/Volumes/PandoraTest*` only.
 - The main thread never touches disk. Copies write under `.pandora-partial-` names and

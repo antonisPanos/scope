@@ -21,7 +21,7 @@ struct StatusView: View {
                 row("App Sandbox", identity.isSandboxed ? "On" : "Off")
                 row("Path guard", identity.isDevelopment
                     ? "Test disks only: " + identity.allowedRoots.map(\.path).joined(separator: ", ")
-                    : "Off")
+                    : identity.pathGuard.allowsWrites ? "Off" : "Read-only: every change is refused")
                 if let guardProbe { row("Guard check", guardProbe) }
             }
             Divider()

@@ -24,12 +24,16 @@ window that shows the build type and lists the test disk.
 | --- | --- | --- | --- | --- |
 | Pandora Dev | Pandora Dev (amber icon) | On, test disks only | Test disks only | All testing |
 | Pandora Dev (No Sandbox) | Pandora Dev | Off | Test disks only | Mounting disk images (hdiutil can't run sandboxed) |
-| Pandora | Pandora (teal icon) | Off | Off | The real app, after the MVP gate |
+| Pandora | Pandora (teal icon) | Off | Read-only: every change is refused | The real app, after the MVP gate |
 
 Development builds can only touch `/Volumes/PandoraTest`, `/Volumes/PandoraTest2`
 and `/Volumes/PandoraTestCS`. The App Sandbox enforces that in the kernel, and
 the engine's path guard enforces it again in Pandora's own code, after
 resolving symlinks, and logs a fault for every refusal.
+
+The real Pandora build can read anything but changes nothing: its engine
+refuses every write until `PANDORA_ALLOW_WRITES` is added to
+`Config/Pandora.xcconfig`, which is a deliberate step for after the MVP gate.
 
 ## Getting started
 
@@ -56,8 +60,10 @@ cd Packages/PandoraEngine && swift test
 ```
 
 In Xcode, choose the PandoraEngine scheme and press Cmd+U. Engine tests run in
-fresh temporary folders with a path guard limited to that folder, never on the
-test disk and never on real files. CI runs them on every push.
+fresh temporary folders with a path guard limited to that folder, never on real
+files. The Trash test needs a disk of its own, so it runs in a scratch folder on
+the test disk when that is mounted and is skipped otherwise; it never uses your
+real Trash. CI runs them on every push.
 
 ## Test disks
 
