@@ -80,6 +80,16 @@ import Testing
         #expect(try disk.read("dest/a.txt") == "old")
     }
 
+    @Test func aVolumeRootCanNotBeTrashedRenamedOrMoved() async throws {
+        // Only a test disk's own root, so a failure here can't reach real files.
+        await #expect(throws: PathGuardViolation.self) { try await engine.trashItem(at: disk.mountPoint) }
+        await #expect(throws: PathGuardViolation.self) { try await engine.rename(disk.mountPoint, to: "Renamed") }
+        await #expect(throws: PathGuardViolation.self) {
+            try await engine.moveItem(at: disk.mountPoint, to: other.url("moved"))
+        }
+        #expect(FileManager.default.fileExists(atPath: disk.work.path))
+    }
+
     // MARK: - Move
 
     @Test func movesOnOneDiskAndUndoes() async throws {
