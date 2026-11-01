@@ -168,7 +168,7 @@ extension FileEngine {
     ) throws {
         let base = control.progress
         try copyItem(
-            at: source, to: target, control: control, replacingExisting: replacingExisting,
+            at: source, to: target, control: control,
             progress: { progress in
                 control.update {
                     $0.bytesDone = base.bytesDone + progress.bytesDone
@@ -178,7 +178,7 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
