@@ -162,7 +162,7 @@ extension FileEngine {
         let engine = self
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: [FileItem].self)
 
-        let task = Task.detached(priority: .userInitiated) {
+        let task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) {
             do {
                 try await engine.crawl(root, matcher: matcher, batchSize: batchSize) { batch in
                     continuation.yield(batch)

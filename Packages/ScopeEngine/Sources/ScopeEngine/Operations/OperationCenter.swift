@@ -246,7 +246,7 @@ public actor OperationCenter {
         let control = entry.control
         let undo = entry.undo
         let id = entry.id
-        entry.task = Task.detached(priority: .userInitiated) { [weak self] in
+        entry.task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) { [weak self] in
             let result: State
             do {
                 try await engine.run(operation, control: control, undo: undo, resolveConflict: resolver)
