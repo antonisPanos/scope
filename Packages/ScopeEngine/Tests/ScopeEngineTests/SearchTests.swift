@@ -97,4 +97,24 @@ import Testing
             _ = try sandbox.engine.search(SearchQuery(text: "x"), in: URL(fileURLWithPath: "/etc"))
         }
     }
+
+    @Test func stopsAtTheResultLimit() async throws {
+        try sandbox.mkdir("many")
+        for index in 0..<(FileEngine.searchResultLimit + 25) {
+            FileManager.default.createFile(atPath: sandbox.url("many/item-\(index).dat").path, contents: nil)
+        }
+        let found = try await names(SearchQuery(text: "item-"))
+        #expect(found.count == FileEngine.searchResultLimit)
+    }
+
+    @Test func theStartupDiskIsOneDiskAndOthersStayOut() throws {
+        let startup = FileEngine.searchDevices(for: URL(fileURLWithPath: "/"))
+        // "/" and the folders macOS shows through it from the data volume.
+        #expect(startup == FileEngine.searchDevices(for: URL(fileURLWithPath: "/Users")))
+        #expect(!startup.isEmpty)
+        // A disk image is a disk of its own.
+        let volume = try TestVolume(name: "ScopeSearchOther")
+        let other = FileEngine.searchDevices(for: volume.mountPoint)
+        #expect(other.count == 1 && other.isDisjoint(with: startup))
+    }
 }

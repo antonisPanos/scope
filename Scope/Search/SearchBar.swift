@@ -61,6 +61,11 @@ struct SearchBar: View {
                 ProgressView().controlSize(.small)
                 Text("\(resultCount.formatted()) found").foregroundStyle(.secondary).monospacedDigit().fixedSize()
                 Button("Stop", action: onStop)
+            } else if resultCount >= FileEngine.searchResultLimit {
+                Text("First \(resultCount.formatted()) shown").foregroundStyle(.secondary).monospacedDigit().fixedSize()
+                    .help(
+                        "The search stops after \(FileEngine.searchResultLimit.formatted()) results. "
+                            + "Narrow it down to see the rest.")
             } else {
                 Text("\(resultCount.formatted()) found").foregroundStyle(.secondary).monospacedDigit().fixedSize()
             }
