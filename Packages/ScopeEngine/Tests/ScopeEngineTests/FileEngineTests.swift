@@ -311,22 +311,34 @@ import Testing
         try sandbox.write("big/one.bin", Data(count: 64 * 1024 * 1024))
         try sandbox.write("big/two.bin", Data(count: 64 * 1024 * 1024))
         try sandbox.mkdir("dest")
-        let started = AsyncStream.makeStream(of: Void.self)
 
         let engine = self.engine
         let source = sandbox.url("big")
         let target = sandbox.url("dest/big")
+        // Cancelled from the copy's own first progress report, so the copy
+        // can't finish before the cancel lands, however fast the disk is or
+        // however long this test's task waits for a thread.
+        let handle = Mutex<Task<Void, Error>?>(nil)
+        let cancelledAt = Mutex<ContinuousClock.Instant?>(nil)
+        let stoppedAt = Mutex<ContinuousClock.Instant?>(nil)
+        let ready = AsyncStream.makeStream(of: Void.self)
         let task = Task {
+            for await _ in ready.stream { break }
+            // Timed where the copy returns, not where this test resumes.
+            defer { stoppedAt.withLock { $0 = .now } }
             try await engine.copyItem(at: source, to: target) { progress in
-                if progress.bytesDone > 0 { started.continuation.yield() }
+                guard progress.bytesDone > 0, cancelledAt.withLock({ $0 == nil }) else { return }
+                cancelledAt.withLock { $0 = .now }
+                handle.withLock { $0?.cancel() }
             }
         }
-        for await _ in started.stream { break }
-        let cancelledAt = ContinuousClock.now
-        task.cancel()
+        handle.withLock { $0 = task }
+        ready.continuation.yield()
         await #expect(throws: CancellationError.self) { try await task.value }
 
-        #expect(ContinuousClock.now - cancelledAt < .milliseconds(500))
+        let cancelled = try #require(cancelledAt.withLock { $0 })
+        let stopped = try #require(stoppedAt.withLock { $0 })
+        #expect(stopped - cancelled < .milliseconds(500))
         #expect(try sandbox.names(in: "dest") == [])
     }
 
