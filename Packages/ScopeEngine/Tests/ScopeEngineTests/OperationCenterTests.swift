@@ -51,10 +51,10 @@ import Testing
     }
 
     @Test func refusesToTrashTheFolderACopyIsWritingInto() async throws {
-        try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 96 * 1024 * 1024))
         try disk.write("small.txt", "s")
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let copy = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        let copy = try await center.enqueue(FileOperation(.copy([source.url("big.bin")], into: disk.url("dest"))))
         await center.pause(copy)
 
         await #expect(throws: OperationError.self) {
@@ -70,18 +70,18 @@ import Testing
     }
 
     @Test func locksMatchOtherSpellingsOfTheSamePath() async throws {
-        try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 96 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let copy = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        let copy = try await center.enqueue(FileOperation(.copy([source.url("big.bin")], into: disk.url("dest"))))
         await center.pause(copy)
 
         // The file being copied, reached through a symlinked folder, and in other case.
-        try FileManager.default.createSymbolicLink(at: disk.url("alias"), withDestinationURL: disk.work)
+        try FileManager.default.createSymbolicLink(at: source.url("alias"), withDestinationURL: source.work)
         await #expect(throws: OperationError.self) {
-            try await center.enqueue(FileOperation(.trash([disk.url("alias/big.bin")])))
+            try await center.enqueue(FileOperation(.trash([source.url("alias/big.bin")])))
         }
         await #expect(throws: OperationError.self) {
-            try await center.enqueue(FileOperation(.trash([disk.url("BIG.bin")])))
+            try await center.enqueue(FileOperation(.trash([source.url("BIG.bin")])))
         }
         await center.cancel(copy)
         await center.waitUntilIdle()
