@@ -42,6 +42,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     isolated deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        ThumbnailCache.shared.cancelRequests(of: ObjectIdentifier(self))
     }
 
     override func loadView() {
@@ -194,7 +195,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let size = iconSize
         let scale = view.window?.backingScaleFactor ?? 2
         let thumbnail = ThumbnailCache.shared.thumbnail(
-            for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard)
+            for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard, owner: ObjectIdentifier(self))
         item.show(file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size, showsName: style == .grid)
     }
 
