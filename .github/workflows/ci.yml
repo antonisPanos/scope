@@ -36,7 +36,7 @@ jobs:
       # The same tests with data races reported as failures.
       - name: Run engine tests under Thread Sanitizer
         working-directory: Packages/ScopeEngine
-        run: swift test --sanitize=thread
+        run: swift test --no-parallel --sanitize=thread
 
   app-build:
     name: Build app
