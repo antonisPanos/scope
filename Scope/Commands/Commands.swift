@@ -80,6 +80,9 @@ enum Commands {
             id: "getInfo", title: "Get Info", menu: .file, key: "i", modifiers: .command,
             run: { $0.showInfo() }, isEnabled: { !$0.selectedItems.isEmpty || $0.currentFolder != nil }),
         Command(
+            id: "print", title: "Print…", menu: .file, key: "p", modifiers: .command,
+            run: { $0.printSelection() }, isEnabled: { $0.canPrintSelection }),
+        Command(
             id: "rename", title: "Rename…", menu: .file, key: "", modifiers: [],
             run: { $0.renameSelection() }, isEnabled: { $0.selectedItems.count == 1 && $0.allowsWrites },
             startsGroup: true),
@@ -122,6 +125,9 @@ enum Commands {
     ]
 
     private static let edit: [Command] = [
+        Command(
+            id: "cut", title: "Cut", menu: .contextOnly, key: "", modifiers: [],
+            run: { $0.cutSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites }),
         Command(
             id: "copy", title: "Copy", menu: .contextOnly, key: "", modifiers: [],
             run: { $0.copySelection() }, isEnabled: { !$0.selectedItems.isEmpty }),

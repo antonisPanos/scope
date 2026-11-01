@@ -42,6 +42,7 @@ final class OperationsController {
     }
 
     @ObservationIgnored let center: OperationCenter
+    @ObservationIgnored private let engine: FileEngine
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private let dockProgress = DockProgress()
     @ObservationIgnored private let keepAlive = KeepAlive()
@@ -49,6 +50,7 @@ final class OperationsController {
 
     private init() {
         let engine = BuildIdentity.current.makeEngine()
+        self.engine = engine
         center = OperationCenter(engine: engine) { conflict in
             await OperationsController.ask(conflict)
         }
@@ -74,6 +76,15 @@ final class OperationsController {
     @discardableResult
     func start(_ kind: FileOperation.Kind, from window: NSWindow?) async -> UUID? {
         let operation = FileOperation(kind)
+        // An archive whose unpacked size is known and too big is refused before
+        // anything is written; for the others, the extraction stops by itself.
+        if case .extract(let archive) = kind {
+            let engine = engine
+            if let problem = await Task.detached(operation: { await engine.extractionSpaceProblem(archive) }).value {
+                Self.showAlert("Not enough space to extract.", problem, on: window)
+                return nil
+            }
+        }
         do {
             let id = try await center.enqueue(operation)
             if !drawerVisible { unreadIDs.insert(id) }

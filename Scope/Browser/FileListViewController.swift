@@ -551,6 +551,10 @@ final class FileNameCell: NSTableCellView {
     init() {
         super.init(frame: .zero)
         icon.imageScaling = .scaleProportionallyUpOrDown
+        // Image views accept dropped files by default, which would take the
+        // drop away from the row under them.
+        icon.unregisterDraggedTypes()
+        badge.unregisterDraggedTypes()
         badge.image = NSImage(systemSymbolName: "arrow.up.forward.square.fill", accessibilityDescription: "Link")
         badge.symbolConfiguration = .init(pointSize: 8, weight: .bold)
         badge.contentTintColor = Palette.primaryText

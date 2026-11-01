@@ -26,6 +26,16 @@ extension BrowserWindowController {
         pasteboard.writeObjects(urls as [NSURL])
     }
 
+    /// Cut (Cmd+X): copies the selection, and the next paste moves it instead.
+    func cutSelection() {
+        copySelection()
+        guard !selectedItems.isEmpty else { return }
+        CutPasteboard.changeCount = NSPasteboard.general.changeCount
+    }
+
+    /// Whether the files on the pasteboard came from Cut and nothing was copied since.
+    var pasteboardIsCut: Bool { CutPasteboard.changeCount == NSPasteboard.general.changeCount }
+
     func copyPathOfSelection() {
         let paths = (selectedItems.isEmpty ? [currentFolder].compactMap { $0 } : selectedItems.map(\.url)).map(\.path)
         guard !paths.isEmpty else { return }
@@ -42,6 +52,9 @@ extension BrowserWindowController {
     func paste(move: Bool) {
         let files = pasteboardFiles
         guard let folder = currentFolder, !files.isEmpty else { return }
+        let move = move || pasteboardIsCut
+        // Cut items move once; pasting again would find nothing left to move.
+        if pasteboardIsCut { CutPasteboard.changeCount = nil }
         startOperation(move ? .move(files, into: folder) : .copy(files, into: folder))
     }
 
@@ -192,7 +205,19 @@ extension BrowserWindowController {
 
     // MARK: - Standard Edit menu actions
 
+    /// Edit > Cut (Cmd+X), when Settings allow it; the right-click Cut always works.
+    @objc func cut(_ sender: Any?) {
+        if AppSettings.shared.commandXCuts { cutSelection() }
+    }
     @objc func copy(_ sender: Any?) { copySelection() }
     @objc func paste(_ sender: Any?) { paste(move: false) }
     @objc func undo(_ sender: Any?) { undoLastOperation() }
+}
+
+/// Remembers which pasteboard contents came from Cut, by the pasteboard's
+/// change count, so copying anything else afterwards turns the next paste
+/// back into a copy.
+@MainActor
+private enum CutPasteboard {
+    static var changeCount: Int?
 }

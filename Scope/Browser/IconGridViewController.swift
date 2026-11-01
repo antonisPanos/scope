@@ -42,6 +42,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     isolated deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        ThumbnailCache.shared.cancelRequests(of: ObjectIdentifier(self))
     }
 
     override func loadView() {
@@ -194,7 +195,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let size = iconSize
         let scale = view.window?.backingScaleFactor ?? 2
         let thumbnail = ThumbnailCache.shared.thumbnail(
-            for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard)
+            for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard, owner: ObjectIdentifier(self))
         item.show(file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size, showsName: style == .grid)
     }
 
@@ -334,6 +335,9 @@ final class IconItem: NSCollectionViewItem {
         background.wantsLayer = true
         background.layer?.cornerRadius = 8
         icon.imageScaling = .scaleProportionallyUpOrDown
+        // Image views accept dropped files by default, which would take the
+        // drop away from the collection view and its folder items.
+        icon.unregisterDraggedTypes()
         name.alignment = .center
         name.maximumNumberOfLines = 2
         name.lineBreakMode = .byTruncatingMiddle
@@ -380,11 +384,25 @@ final class IconItem: NSCollectionViewItem {
         didSet { updateHighlight() }
     }
 
+    /// Set while a selection rectangle is drawn or a drag hovers, before the
+    /// selection itself changes.
+    override var highlightState: NSCollectionViewItem.HighlightState {
+        didSet { updateHighlight() }
+    }
+
+    private var showsSelection: Bool {
+        switch highlightState {
+        case .forSelection, .asDropTarget: true
+        case .forDeselection: false
+        default: isSelected
+        }
+    }
+
     private func updateHighlight() {
         // A layer's CGColor is fixed when it's made, so resolve it in the view's own appearance.
         var selection: CGColor?
         view.effectiveAppearance.performAsCurrentDrawingAppearance { selection = Palette.selection.cgColor }
-        background.layer?.backgroundColor = isSelected ? selection : nil
+        background.layer?.backgroundColor = showsSelection ? selection : nil
     }
 
     override func viewWillLayout() {

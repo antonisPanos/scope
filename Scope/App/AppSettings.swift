@@ -92,6 +92,12 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "f5Reloads") }
     }
 
+    /// Cmd+X cuts files, and the next paste moves them (Finder: Cmd+C, then Option+Cmd+V).
+    var commandXCuts: Bool {
+        get { defaults.object(forKey: "commandXCuts") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "commandXCuts") }
+    }
+
     /// Option+Left and Option+Right go back and forward, like a browser.
     var optionArrowsNavigate: Bool {
         get { defaults.bool(forKey: "optionArrowsNavigate") }

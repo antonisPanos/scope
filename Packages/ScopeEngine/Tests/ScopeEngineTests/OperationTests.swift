@@ -148,10 +148,11 @@ import Testing
         let protected = try disk.write("src/a.txt", "a")
         try disk.write("src/z.bin", Data(count: 64 * 1024 * 1024))
         try TestVolume.run("/bin/chmod", ["+a", "everyone deny delete", protected.path])
-        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        // Onto the other disk: a copy within one disk is a clone, done before it can be cancelled.
+        try FileManager.default.createDirectory(at: other.url("dest"), withIntermediateDirectories: true)
         let engine = engine
         let source = disk.url("src")
-        let target = disk.url("dest/src")
+        let target = other.url("dest/src")
 
         let task = Task {
             try engine.copyItem(
@@ -164,7 +165,7 @@ import Testing
                 })
         }
         await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(try disk.names("dest") == [])
+        #expect(try other.names("dest") == [])
     }
 
     @Test func aFinishedCopyKeepsTheACL() async throws {
@@ -426,6 +427,52 @@ import Testing
         task.cancel()
         _ = try? await task.value
         #expect(try disk.names("x") == ["big.zip"])
+    }
+
+    /// An archive of `megabytes` of zeros (from a sparse file, so it costs no
+    /// space) made on the other disk and copied to this one, which is then
+    /// filled until the archive no longer fits.
+    private func archiveTooBigForTheDisk(_ format: ArchiveFormat, megabytes: Int) async throws -> URL {
+        let source = other.url("zeros/zeros.bin")
+        try other.write("zeros/zeros.bin", Data())
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: UInt64(megabytes) * 1024 * 1024)
+        try handle.close()
+        try await ops.run(.compress([other.url("zeros")], format: format))
+        try FileManager.default.createDirectory(at: disk.url("x"), withIntermediateDirectories: true)
+        try await ops.run(.copy([other.url("zeros.\(format.fileExtension)")], into: disk.url("x")))
+        try disk.write("filler.bin", Data(count: 220 * 1024 * 1024))
+        return disk.url("x/zeros.\(format.fileExtension)")
+    }
+
+    @Test func refusesBeforeExtractingAZipThatWontFit() async throws {
+        let archive = try await archiveTooBigForTheDisk(.zip, megabytes: 400)
+        let problem = await engine.extractionSpaceProblem(archive)
+        #expect(problem?.contains("unpacks to") == true)
+        await #expect(throws: OperationError.self) { try await ops.run(.extract(archive)) }
+        #expect(try disk.names("x") == ["zeros.zip"])
+    }
+
+    @Test func stopsAndCleansUpWhenAnExtractionFillsTheDisk() async throws {
+        let archive = try await archiveTooBigForTheDisk(.tarGz, megabytes: 400)
+        // A compressed tar doesn't say its size up front, so this is only found while extracting.
+        #expect(await engine.extractionSpaceProblem(archive) == nil)
+        await #expect(throws: OperationError.self) { try await ops.run(.extract(archive)) }
+        #expect(try disk.names("x") == ["zeros.tar.gz"])
+    }
+
+    @Test func extractsHardLinksAsHardLinks() async throws {
+        try disk.write("linked/a.txt", "same data")
+        try FileManager.default.linkItem(at: disk.url("linked/a.txt"), to: disk.url("linked/b.txt"))
+        try TestVolume.run("/usr/bin/tar", ["-cf", disk.url("linked.tar").path, "-C", disk.work.path, "linked"])
+        try FileManager.default.createDirectory(at: disk.url("out"), withIntermediateDirectories: true)
+        try await ops.run(.move([disk.url("linked.tar")], into: disk.url("out")))
+
+        let control = OperationControl()
+        try await ops.run(.extract(disk.url("out/linked.tar")), control: control)
+        #expect(control.skippedEntries.isEmpty)
+        #expect(try disk.read("out/linked/b.txt") == "same data")
+        #expect(FileEngine.isSameItem(disk.url("out/linked/a.txt").path, disk.url("out/linked/b.txt").path))
     }
 
     // MARK: - Path guard

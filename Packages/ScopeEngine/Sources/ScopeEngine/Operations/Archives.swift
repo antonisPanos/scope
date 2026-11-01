@@ -18,7 +18,66 @@ extension FileEngine {
 
     // MARK: - Extract
 
+    /// Space an extraction always leaves free on the disk: 512 MB, or a
+    /// twentieth of a smaller disk. It stops, and removes what it wrote,
+    /// rather than go below this.
+    static func extractionReserve(at path: String) -> Int64 {
+        var info = statfs()
+        guard statfs(path, &info) == 0 else { return 512 * 1024 * 1024 }
+        return min(512 * 1024 * 1024, Int64(info.f_blocks) * Int64(info.f_bsize) / 20)
+    }
+
+    /// Why an archive can't be extracted next to itself, when its unpacked
+    /// size is known up front and wouldn't fit on the disk; nil when it fits
+    /// or the size isn't known until extracting (the extraction then stops by
+    /// itself if the disk gets full). For the UI to warn before starting.
+    public func extractionSpaceProblem(_ archiveURL: URL) async -> String? {
+        guard let archive = try? pathGuard.checkLocation(archiveURL),
+            let needed = Self.declaredUnpackedSize(archive),
+            let free = Self.freeSpace(at: archive.deletingLastPathComponent().path),
+            needed > free - Self.extractionReserve(at: archive.deletingLastPathComponent().path)
+        else {
+            return nil
+        }
+        let size = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+        return "“\(archive.lastPathComponent)” unpacks to \(size(needed)), "
+            + "but only \(size(max(0, free))) is free on this disk."
+    }
+
+    /// Free space on the disk holding `path`, for this user.
+    static func freeSpace(at path: String) -> Int64? {
+        var info = statfs()
+        guard statfs(path, &info) == 0 else { return nil }
+        return Int64(info.f_bavail) * Int64(info.f_bsize)
+    }
+
+    /// The total size of an archive's entries, for formats that record it in
+    /// their headers and can be read through quickly without unpacking (zip,
+    /// 7z, uncompressed tar). Nil for compressed streams or unknown sizes.
+    static func declaredUnpackedSize(_ archive: URL) -> Int64? {
+        guard ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()), let reader = archive_read_new() else {
+            return nil
+        }
+        defer { archive_read_free(reader) }
+        archive_read_support_filter_all(reader)
+        archive_read_support_format_all(reader)
+        guard archive_read_open_filename(reader, archive.path, 64 * 1024) == ARCHIVE_OK else { return nil }
+        var total: Int64 = 0
+        var entry: OpaquePointer?
+        while true {
+            let status = archive_read_next_header(reader, &entry)
+            if status == ARCHIVE_EOF { return total }
+            guard status == ARCHIVE_OK || status == ARCHIVE_WARN, let entry, archive_entry_size_is_set(entry) != 0
+            else {
+                return nil
+            }
+            total += max(0, archive_entry_size(entry))
+            archive_read_data_skip(reader)
+        }
+    }
+
     func extract(_ archiveURL: URL, control: OperationControl, undo: UndoRecorder) async throws {
+        if let problem = await extractionSpaceProblem(archiveURL) { throw OperationError.archive(problem) }
         let archivePath = try pathGuard.checkLocation(archiveURL)
         let folder = archivePath.deletingLastPathComponent()
         let staging = try pathGuard.checkWriteLocation(
@@ -88,6 +147,14 @@ extension FileEngine {
         defer { buffer.deallocate() }
         var entry: OpaquePointer?
         var compressedEstimate: Int64 = 0
+        var writtenSinceSpaceCheck: Int64 = 0
+        let reserve = Self.extractionReserve(at: staging.path)
+        // Checked more often than the reserve can fill, so the check, not a
+        // failed write, is what normally stops a filling disk.
+        let spaceCheckInterval = max(1024 * 1024, min(32 * 1024 * 1024, reserve / 4))
+        let diskFull = OperationError.archive(
+            "Extracting “\(archivePath.lastPathComponent)” stopped because the disk was almost full. "
+                + "Nothing it unpacked was kept.")
 
         while true {
             try Task.checkCancellation()
@@ -133,8 +200,20 @@ extension FileEngine {
                 guard let link = archive_entry_symlink(entry).map({ String(cString: $0) }) else { break }
                 guard symlink(link, target.path) == 0 else { throw FileEngineError.posix("Create link", target.path) }
             case AE_IFREG, 0:
-                if archive_entry_hardlink(entry) != nil {
-                    control.skipEntry(name)
+                if let linked = archive_entry_hardlink(entry).map({ String(cString: $0) }) {
+                    // A second name for a file extracted earlier: made as a hard
+                    // link to it, once that file is known to be a plain file
+                    // inside the staging folder.
+                    let original = Self.safeRelativePath(linked).map { staging.appendingPathComponent($0) }
+                    if let original, let relative = Self.safeRelativePath(linked), !relative.isEmpty,
+                        Self.parentIsSafe(relative, under: staging),
+                        Self.lstatInfo(original.path).map({ $0.st_mode & S_IFMT == S_IFREG }) == true,
+                        link(original.path, target.path) == 0
+                    {
+                        control.update { $0.itemsDone += 1 }
+                    } else {
+                        control.skipEntry(name)
+                    }
                     archive_read_data_skip(reader)
                     continue
                 }
@@ -152,10 +231,19 @@ extension FileEngine {
                     var written = 0
                     while written < count {
                         let result = write(output, buffer + written, count - written)
-                        guard result > 0 else { throw FileEngineError.posix("Write", target.path) }
+                        guard result > 0 else {
+                            // Something else may have filled the disk between checks.
+                            if errno == ENOSPC || errno == EDQUOT { throw diskFull }
+                            throw FileEngineError.posix("Write", target.path)
+                        }
                         written += result
                     }
                     compressedEstimate += Int64(count)
+                    writtenSinceSpaceCheck += Int64(count)
+                    if writtenSinceSpaceCheck >= spaceCheckInterval {
+                        writtenSinceSpaceCheck = 0
+                        if let free = Self.freeSpace(at: staging.path), free < reserve { throw diskFull }
+                    }
                     let done = compressedEstimate
                     control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
                 }

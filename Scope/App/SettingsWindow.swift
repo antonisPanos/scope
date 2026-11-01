@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var f2Renames = AppSettings.shared.f2Renames
     @State private var f5Reloads = AppSettings.shared.f5Reloads
     @State private var optionArrows = AppSettings.shared.optionArrowsNavigate
+    @State private var commandXCuts = AppSettings.shared.commandXCuts
     @State private var deleteKey = AppSettings.shared.deleteKey
     @State private var showHidden = AppSettings.shared.showHiddenFiles
     @State private var notifications = AppSettings.shared.systemNotifications
@@ -44,6 +45,8 @@ struct SettingsView: View {
                     .onChange(of: f2Renames) { AppSettings.shared.f2Renames = f2Renames }
                 Toggle("F5 reloads the folder", isOn: $f5Reloads)
                     .onChange(of: f5Reloads) { AppSettings.shared.f5Reloads = f5Reloads }
+                Toggle("Cmd+X cuts files, and Cmd+V moves them", isOn: $commandXCuts)
+                    .onChange(of: commandXCuts) { AppSettings.shared.commandXCuts = commandXCuts }
                 Toggle("Option+Left and Option+Right go back and forward", isOn: $optionArrows)
                     .onChange(of: optionArrows) { AppSettings.shared.optionArrowsNavigate = optionArrows }
                 Picker("Delete key", selection: $deleteKey) {
@@ -51,7 +54,7 @@ struct SettingsView: View {
                 }
                 .onChange(of: deleteKey) { AppSettings.shared.deleteKey = deleteKey }
                 Text(
-                    "Finder's own shortcuts (Cmd+Down to open, Cmd+Delete to trash, Cmd+[ and Cmd+] to go back and forward) always work too."
+                    "Finder's own shortcuts (Cmd+Down to open, Cmd+Delete to trash, Cmd+[ and Cmd+] to go back and forward, Cmd+C then Option+Cmd+V to move) always work too."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
