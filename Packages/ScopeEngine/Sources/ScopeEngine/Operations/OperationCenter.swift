@@ -112,8 +112,11 @@ public actor OperationCenter {
         guard let entry = entries.first(where: { $0.id == id }), !entry.isActive, !entry.undone else { return nil }
         let steps = entry.undo.recorded
         guard !steps.isEmpty else { return nil }
+        // Marked as undone only once the undo is queued: when its items are
+        // busy, enqueue throws and the user can try again later.
+        let id = try enqueue(FileOperation(.undo(UndoRecord(title: entry.operation.title, steps: steps))))
         entry.undone = true
-        return try enqueue(FileOperation(.undo(UndoRecord(title: entry.operation.title, steps: steps))))
+        return id
     }
 
     /// The most recent finished operation that can still be undone.
