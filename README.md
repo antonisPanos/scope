@@ -17,7 +17,8 @@ M1 (the browse window), M2 (views and preview), M3 (file operations) and M4
   packages, kind, size, date modified and tag. Results stream in as they're
   found; Stop or Escape ends the crawl at once. A Where column shows each
   result's folder. "Contents (Spotlight)" searches inside files instead.
-- Split view (Shift+Cmd+S): two panes side by side, each with its own tabs
+- Split view (Shift+Cmd+S, the toolbar button, or "Open in Split View" on a
+  folder's right-click menu): two panes side by side, each with its own tabs
   (Cmd+T adds one on the focused side, Cmd+W closes it). Focus follows clicks,
   or Option+Cmd+Left/Right. Copy to Other Side (Ctrl+Cmd+C) and Move to Other
   Side (Ctrl+Cmd+M), or drag between the panes. The preview pane hides while

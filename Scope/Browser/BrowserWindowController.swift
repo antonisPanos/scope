@@ -35,6 +35,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private static let activityItem = NSToolbarItem.Identifier("activity")
     private static let searchItem = NSToolbarItem.Identifier("search")
     private static let previewItem = NSToolbarItem.Identifier("preview")
+    private static let splitItem = NSToolbarItem.Identifier("split")
     private var searchToolbarItem: NSSearchToolbarItem?
     private var searchDebounce: Task<Void, Never>?
 
@@ -198,6 +199,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             workspace.activate(1)
             activeContentChanged()
             tab.fileView.focus()
+        }
+    }
+
+    /// The folder "Open in Split View" would open: a single selected folder.
+    var folderForSplit: URL? {
+        guard selectedItems.count == 1, let item = selectedItems.first, item.isBrowsableFolder else { return nil }
+        return item.url
+    }
+
+    /// Opens the selected folder on the other side: turns split view on if
+    /// needed, otherwise opens it in a new tab on the other side.
+    func openInSplit() {
+        guard let folder = folderForSplit else { return }
+        if !workspace.isSplit {
+            toggleSplit()
+            model.navigate(to: .folder(folder))
+        } else {
+            let other = workspace.activePaneIndex == 0 ? 1 : 0
+            let pane = workspace.panes[other]
+            let tab = makeTab(at: .folder(folder))
+            pane.addTab(tab)
+            focusPane(other)
         }
     }
 
@@ -525,7 +548,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 extension BrowserWindowController: NSToolbarDelegate {
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, Self.navigationItem, .flexibleSpace, Self.activityItem, Self.viewModeItem,
-         Self.previewItem, Self.paletteItem, Self.searchItem]
+         Self.splitItem, Self.previewItem, Self.paletteItem, Self.searchItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -564,6 +587,14 @@ extension BrowserWindowController: NSToolbarDelegate {
                 guard let self else { return }
                 self.showActivity(!self.isActivityVisible)
             })
+            return item
+        case Self.splitItem:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "Split View")
+            item.label = "Split View"
+            item.toolTip = "Split View (⇧⌘S)"
+            item.target = self
+            item.action = #selector(splitClicked)
             return item
         case Self.previewItem:
             let item = NSToolbarItem(itemIdentifier: identifier)
@@ -604,6 +635,10 @@ extension BrowserWindowController: NSToolbarDelegate {
     @objc private func viewModeClicked(_ sender: NSToolbarItemGroup) {
         guard ViewMode.allCases.indices.contains(sender.selectedIndex) else { return }
         model.viewMode = ViewMode.allCases[sender.selectedIndex]
+    }
+
+    @objc private func splitClicked() {
+        toggleSplit()
     }
 
     @objc private func previewClicked() {
