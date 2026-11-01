@@ -5,13 +5,16 @@ import Testing
 
 @Suite(.serialized) struct OperationCenterTests {
     let disk: TestVolume
+    /// Big files are copied from here. A copy within one disk is a clone and
+    /// finishes at once, which would leave nothing running to test.
+    let source: TestVolume
     let center: OperationCenter
 
     init() throws {
         disk = try TestVolume(name: "ScopeQueue")
-        center = OperationCenter(engine: FileEngine(pathGuard: .restricted(to: [disk.mountPoint]))) { _ in
-            (.keepBoth, false)
-        }
+        source = try TestVolume(name: "ScopeQueueSource")
+        let engine = FileEngine(pathGuard: .restricted(to: [disk.mountPoint, source.mountPoint]))
+        center = OperationCenter(engine: engine) { _ in (.keepBoth, false) }
     }
 
     private func state(_ id: UUID) async -> OperationCenter.State? {
@@ -19,10 +22,10 @@ import Testing
     }
 
     @Test func runsOperationsOnOneDiskOneAtATime() async throws {
-        try disk.write("big.bin", Data(count: 32 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 32 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("a"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: disk.url("b"), withIntermediateDirectories: true)
-        let first = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("a"))))
+        let first = try await center.enqueue(FileOperation(.copy([source.url("big.bin")], into: disk.url("a"))))
         let second = try await center.enqueue(FileOperation(.newFolder(in: disk.url("b"), name: "made")))
         #expect(await state(first) == .running)
         #expect(await state(second) == .queued)
@@ -33,24 +36,24 @@ import Testing
     }
 
     @Test func refusesOperationsOnLockedItemsAndMergesRepeats() async throws {
-        try disk.write("big.bin", Data(count: 64 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 64 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let copy = FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest")))
+        let copy = FileOperation(.copy([source.url("big.bin")], into: disk.url("dest")))
         let id = try await center.enqueue(copy)
         // Pressing Cmd+V again while it runs gives back the same operation.
         #expect(try await center.enqueue(copy) == id)
         // Trashing the file being copied is refused.
         await #expect(throws: OperationError.self) {
-            try await center.enqueue(FileOperation(.trash([disk.url("big.bin")])))
+            try await center.enqueue(FileOperation(.trash([source.url("big.bin")])))
         }
         await center.waitUntilIdle()
         #expect(await center.snapshots().count == 1)
     }
 
     @Test func pausesResumesAndCancels() async throws {
-        try disk.write("big.bin", Data(count: 96 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 96 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let id = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        let id = try await center.enqueue(FileOperation(.copy([source.url("big.bin")], into: disk.url("dest"))))
         while await center.snapshots().first?.progress.bytesDone ?? 0 == 0 {
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -74,9 +77,9 @@ import Testing
 
     @Test func cancelsAQueuedOperationAndUndoesAFinishedOne() async throws {
         try disk.write("a.txt", "a")
-        try disk.write("big.bin", Data(count: 32 * 1024 * 1024))
+        try source.write("big.bin", Data(count: 32 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let running = try await center.enqueue(FileOperation(.copy([disk.url("big.bin")], into: disk.url("dest"))))
+        let running = try await center.enqueue(FileOperation(.copy([source.url("big.bin")], into: disk.url("dest"))))
         let queued = try await center.enqueue(FileOperation(.rename(disk.url("a.txt"), to: "b.txt")))
         await center.cancel(queued)
         await center.waitUntilIdle()
@@ -91,13 +94,13 @@ import Testing
     }
 
     @Test func anUndoRefusedWhileItemsAreBusyCanBeRetried() async throws {
-        try disk.write("a.txt", Data(count: 96 * 1024 * 1024))
+        try source.write("a.txt", Data(count: 96 * 1024 * 1024))
         try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        let renamed = try await center.enqueue(FileOperation(.rename(disk.url("a.txt"), to: "b.txt")))
+        let renamed = try await center.enqueue(FileOperation(.rename(source.url("a.txt"), to: "b.txt")))
         await center.waitUntilIdle()
 
         // A paused copy of the renamed file holds it, so the undo is refused.
-        let copy = try await center.enqueue(FileOperation(.copy([disk.url("b.txt")], into: disk.url("dest"))))
+        let copy = try await center.enqueue(FileOperation(.copy([source.url("b.txt")], into: disk.url("dest"))))
         await center.pause(copy)
         await #expect(throws: OperationError.self) { try await center.undo(renamed) }
         #expect(await center.snapshots().first { $0.id == renamed }?.canUndo == true)
@@ -106,6 +109,6 @@ import Testing
         await center.waitUntilIdle()
         try await center.undo(renamed)
         await center.waitUntilIdle()
-        #expect(disk.exists("a.txt") && !disk.exists("b.txt"))
+        #expect(source.exists("a.txt") && !source.exists("b.txt"))
     }
 }
