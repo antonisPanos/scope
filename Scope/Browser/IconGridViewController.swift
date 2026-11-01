@@ -123,7 +123,14 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     /// Right-clicking an icon that isn't selected selects it first.
     private func selectItem(at point: NSPoint) {
-        guard let path = collectionView.indexPathForItem(at: point) else { return }
+        guard let path = collectionView.indexPathForItem(at: point) else {
+            // Right-clicking empty space is about the folder itself, as in Finder.
+            if !collectionView.selectionIndexPaths.isEmpty {
+                collectionView.selectionIndexPaths = []
+                onSelectionChange?()
+            }
+            return
+        }
         if !collectionView.selectionIndexPaths.contains(path) {
             collectionView.selectionIndexPaths = [path]
             onSelectionChange?()

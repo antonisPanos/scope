@@ -52,7 +52,7 @@ struct Command: Identifiable {
 
 @MainActor
 enum Commands {
-    static let all: [Command] = file + edit + viewModes + view + sortBy + go
+    static let all: [Command] = file + edit + viewModes + view + sortBy + sortDirection + go
 
     /// as Icons (Cmd+1), as Details (Cmd+2), as Columns (Cmd+3), as Gallery (Cmd+4), as List (Cmd+5).
     private static let viewModes: [Command] = ViewMode.allCases.map { mode in
@@ -151,6 +151,13 @@ enum Commands {
     private static let sortBy: [Command] = [
         sort("Name", .name, "1"), sort("Kind", .kind, "2"), sort("Date Added", .added, "4"),
         sort("Date Modified", .modified, "5"), sort("Date Created", .created, "6"), sort("Size", .size, "7"),
+    ]
+
+    private static let sortDirection: [Command] = [
+        Command(id: "sort.ascending", title: "Ascending", menu: .contextOnly, key: "", modifiers: [],
+                run: { $0.model.sort.ascending = true }, isChecked: { $0.model.sort.ascending }),
+        Command(id: "sort.descending", title: "Descending", menu: .contextOnly, key: "", modifiers: [],
+                run: { $0.model.sort.ascending = false }, isChecked: { !$0.model.sort.ascending }),
     ]
 
     private static func sort(_ title: String, _ key: FileSort.Key, _ shortcut: String) -> Command {

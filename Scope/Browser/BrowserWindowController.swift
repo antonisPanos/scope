@@ -634,6 +634,8 @@ extension BrowserWindowController: NSToolbarDelegate {
                          NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!],
                 selectionMode: .momentary, labels: ["Back", "Forward"], target: self, action: #selector(navigationClicked(_:)))
             group.label = "Back/Forward"
+            group.subitems[0].toolTip = "Back (⌘[)"
+            group.subitems[1].toolTip = "Forward (⌘])"
             group.isNavigational = true
             navigationGroup = group
             updateToolbar()
@@ -644,6 +646,9 @@ extension BrowserWindowController: NSToolbarDelegate {
                 images: ViewMode.allCases.map { NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.title)! },
                 selectionMode: .selectOne, labels: ViewMode.allCases.map(\.title), target: self, action: #selector(viewModeClicked(_:)))
             group.label = "View"
+            for (index, mode) in ViewMode.allCases.enumerated() {
+                group.subitems[index].toolTip = "\(mode.title) (⌘\(mode.shortcut))"
+            }
             group.controlRepresentation = .expanded
             viewModeGroup = group
             updateToolbar()

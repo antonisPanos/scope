@@ -268,6 +268,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         let row = outlineView.clickedRow
         if row >= 0, !outlineView.selectedRowIndexes.contains(row) {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
+        } else if row < 0 {
+            // Right-clicking empty space is about the folder itself, as in Finder.
+            outlineView.deselectAll(nil)
         }
     }
 
