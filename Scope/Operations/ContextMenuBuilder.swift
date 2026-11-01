@@ -70,6 +70,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("openInSplit")
             add("quickLook")
             add("getInfo")
+            add("print")
             separator()
             add("rename")
             add("duplicate")

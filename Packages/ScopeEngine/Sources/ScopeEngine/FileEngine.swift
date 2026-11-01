@@ -65,6 +65,16 @@ public struct FileEngine: Sendable {
         return try target.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []
     }
 
+    /// The whole contents of one file, for printing. Refuses folders and
+    /// anything larger than `limit`, so a stray click can't load gigabytes.
+    public func contents(of url: URL, limit: Int64 = 256 << 20) async throws -> Data {
+        let target = try pathGuard.checkTarget(url)
+        let values = try target.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true else { throw FileEngineError.sourceMissing(target.path) }
+        guard Int64(values.fileSize ?? 0) <= limit else { throw FileEngineError.tooLarge(target.path) }
+        return try Data(contentsOf: target, options: .mappedIfSafe)
+    }
+
     /// Describes one item, after the guard has checked it.
     public func item(at url: URL) async throws -> FileItem {
         try FileItem(url: pathGuard.checkTarget(url))
