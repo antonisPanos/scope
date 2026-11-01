@@ -79,6 +79,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         wire(first)
         wire(workspace.panes[0])
         sidebarSelection.onSelect = { [weak self] item in self?.model.navigate(to: item.location) }
+        sidebarSelection.onOpenInSplit = { [weak self] item in self?.openInSplit(item.location) }
         sidebarSelection.onEject = { [weak self] item in SidebarStore.shared.eject(item, presentingIn: self?.window) }
         // Focus decides which pane commands act on.
         firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
@@ -212,13 +213,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// needed, otherwise opens it in a new tab on the other side.
     func openInSplit() {
         guard let folder = folderForSplit else { return }
+        openInSplit(.folder(folder))
+    }
+
+    /// Shows `location` on the other side (from a folder or a sidebar item).
+    func openInSplit(_ location: Location) {
         if !workspace.isSplit {
             toggleSplit()
-            model.navigate(to: .folder(folder))
+            model.navigate(to: location)
         } else {
             let other = workspace.activePaneIndex == 0 ? 1 : 0
             let pane = workspace.panes[other]
-            let tab = makeTab(at: .folder(folder))
+            let tab = makeTab(at: location)
             pane.addTab(tab)
             focusPane(other)
         }

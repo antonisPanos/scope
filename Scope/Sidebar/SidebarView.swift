@@ -8,6 +8,7 @@ final class SidebarSelection {
     var selectedID: String?
     @ObservationIgnored var onSelect: ((SidebarItem) -> Void)?
     @ObservationIgnored var onEject: ((SidebarItem) -> Void)?
+    @ObservationIgnored var onOpenInSplit: ((SidebarItem) -> Void)?
 }
 
 /// The sidebar: Favorites (Recents, standard folders, your own), Locations,
@@ -75,6 +76,9 @@ struct SidebarView: View {
         .help(item.isEnabled ? (item.location.folderURL?.path ?? item.title) : "Outside the test disks, so Scope Dev won't open it")
         .tag(item.id)
         .contextMenu {
+            if item.isEnabled {
+                Button("Open in Split View") { selection.onOpenInSplit?(item) }
+            }
             if item.kind == .favorite {
                 Button("Remove from Sidebar") { store.removeFavorite(item) }
             }
