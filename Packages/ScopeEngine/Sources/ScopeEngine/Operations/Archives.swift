@@ -149,6 +149,12 @@ extension FileEngine {
         var compressedEstimate: Int64 = 0
         var writtenSinceSpaceCheck: Int64 = 0
         let reserve = Self.extractionReserve(at: staging.path)
+        // Checked more often than the reserve can fill, so the check, not a
+        // failed write, is what normally stops a filling disk.
+        let spaceCheckInterval = max(1024 * 1024, min(32 * 1024 * 1024, reserve / 4))
+        let diskFull = OperationError.archive(
+            "Extracting “\(archivePath.lastPathComponent)” stopped because the disk was almost full. "
+                + "Nothing it unpacked was kept.")
 
         while true {
             try Task.checkCancellation()
@@ -225,18 +231,18 @@ extension FileEngine {
                     var written = 0
                     while written < count {
                         let result = write(output, buffer + written, count - written)
-                        guard result > 0 else { throw FileEngineError.posix("Write", target.path) }
+                        guard result > 0 else {
+                            // Something else may have filled the disk between checks.
+                            if errno == ENOSPC || errno == EDQUOT { throw diskFull }
+                            throw FileEngineError.posix("Write", target.path)
+                        }
                         written += result
                     }
                     compressedEstimate += Int64(count)
                     writtenSinceSpaceCheck += Int64(count)
-                    if writtenSinceSpaceCheck >= 32 * 1024 * 1024 {
+                    if writtenSinceSpaceCheck >= spaceCheckInterval {
                         writtenSinceSpaceCheck = 0
-                        if let free = Self.freeSpace(at: staging.path), free < reserve {
-                            throw OperationError.archive(
-                                "Extracting “\(archivePath.lastPathComponent)” stopped because the disk was almost "
-                                    + "full. Nothing it unpacked was kept.")
-                        }
+                        if let free = Self.freeSpace(at: staging.path), free < reserve { throw diskFull }
                     }
                     let done = compressedEstimate
                     control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
