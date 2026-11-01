@@ -198,7 +198,9 @@ public final class OperationControl: Sendable {
         state.withLock { $0.skippedEntries.append(name) }
     }
 
-    /// Blocks the worker while paused. Cancelling ends the wait at once.
+    /// Blocks the worker while paused. Cancelling ends the wait at once. The
+    /// worker is one of the engine's I/O threads, so a paused job never holds
+    /// a thread of the concurrency pool.
     func waitWhilePaused() throws {
         while isPaused {
             try Task.checkCancellation()
