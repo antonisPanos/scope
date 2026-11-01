@@ -34,7 +34,9 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 
 ## Build and test
 
-- Engine tests: `cd Packages/ScopeEngine && swift test` (Swift Testing).
+- Engine tests: `cd Packages/ScopeEngine && swift test --no-parallel` (Swift Testing), or `make test`.
+  Suites run one at a time: test helpers block pool threads, and parallel suites starve each
+  other's timing checks.
 - App: `xcodebuild -project Scope.xcodeproj -scheme "Scope Dev" -derivedDataPath build/DerivedData build`.
 - Schemes: `Scope Dev` (sandboxed), `Scope Dev (No Sandbox)` (for disk image mounting), `Scope` (release).
 - The Xcode project is hand-written (objectVersion 77, synchronized folder `Scope/`), so new
