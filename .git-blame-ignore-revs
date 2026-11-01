@@ -1,0 +1,5 @@
+# Commits git blame should skip (enable with: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+# GitHub uses this file automatically.
+
+# style: format all Swift files with swift-format (#4)
+85633d995114d50593bb45d5f30fee6eec2d6dba

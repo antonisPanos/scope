@@ -13,6 +13,7 @@ setup: hooks ## First-time setup: git hooks and Local.xcconfig
 
 hooks: ## Install the git hooks from scripts/hooks
 	git config core.hooksPath scripts/hooks
+	git config blame.ignoreRevsFile .git-blame-ignore-revs
 	@echo "Git hooks installed (scripts/hooks)."
 
 build: ## Build Scope Dev (sandboxed, test disks only)
