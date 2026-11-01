@@ -175,7 +175,9 @@ public struct FileEngine: Sendable {
 
     /// Copies `url` to `destination` (the full new path, not its folder).
     ///
-    /// Symlinks are copied as links, never followed. Permissions, extended
+    /// Within one APFS volume, files are cloned, which is instant and takes
+    /// no extra space. Sparse files stay sparse. Symlinks are copied as
+    /// links, never followed. Permissions, extended
     /// attributes (including Finder tags and resource forks), ACLs, dates and
     /// file flags are kept. The copy is written under a hidden partial name and
     /// renamed into place at the end; on cancel or failure the partial item is
@@ -357,7 +359,7 @@ private struct CopyJob {
             guard symlink(buffer, destination) == 0 else { throw FileEngineError.posix("Create link", destination) }
             _ = copyfile(source, destination, nil, copyfile_flags_t(COPYFILE_METADATA | COPYFILE_NOFOLLOW))
         case S_IFREG:
-            try copyData(from: source, to: destination)
+            try copyData(from: source, to: destination, info: info)
             try copyMetadata(from: source, to: destination, info: info)
             // An ACL can forbid deleting the file, so like flags it is applied
             // only once the copy is in place (otherwise a cancelled copy
@@ -372,7 +374,15 @@ private struct CopyJob {
         report()
     }
 
-    private mutating func copyData(from source: String, to destination: String) throws {
+    private mutating func copyData(from source: String, to destination: String, info: stat) throws {
+        let size = off_t(info.st_size)
+        // Locked files take the copy path, so the flag can be held back as usual.
+        if info.st_flags == 0, clone(from: source, to: destination) {
+            state.bytesDone += Int64(size)
+            report()
+            return
+        }
+
         let input = open(source, O_RDONLY)
         guard input >= 0 else { throw FileEngineError.posix("Open", source) }
         defer { close(input) }
@@ -382,10 +392,59 @@ private struct CopyJob {
 
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
         defer { buffer.deallocate() }
-        while true {
+        // A sparse file (VM disks, databases, disk image bands) has holes that
+        // read as zeros. Only its data is copied, so the copy stays as small.
+        if Int64(info.st_blocks) * 512 < Int64(size) {
+            var offset: off_t = 0
+            while offset < size {
+                let start = lseek(input, offset, SEEK_DATA)
+                if start < 0 {
+                    // ENXIO: nothing but a hole from here to the end.
+                    guard errno == ENXIO else { throw FileEngineError.posix("Read", source) }
+                    break
+                }
+                var end = lseek(input, start, SEEK_HOLE)
+                if end < 0 || end > size { end = size }
+                state.bytesDone += Int64(start - offset)
+                try copyRange(
+                    input, output, from: start, to: end, buffer: buffer, source: source, destination: destination)
+                offset = end
+            }
+            state.bytesDone += Int64(max(0, size - offset))
+            // The file ends at its full size even when it ends in a hole.
+            guard ftruncate(output, size) == 0 else { throw FileEngineError.posix("Write", destination) }
+        } else {
+            try copyRange(input, output, from: 0, to: nil, buffer: buffer, source: source, destination: destination)
+        }
+        guard fsync(output) == 0 else { throw FileEngineError.posix("Write", destination) }
+    }
+
+    /// Clones a file on the same APFS volume: instant, and the clone shares
+    /// the original's storage until either changes. False when the disk
+    /// can't (another volume, or not APFS); nothing is created then.
+    private func clone(from source: String, to destination: String) -> Bool {
+        guard clonefile(source, destination, UInt32(CLONE_NOFOLLOW | CLONE_NOOWNERCOPY)) == 0 else { return false }
+        // A clone carries the original's ACL. Like any copy's, it is set again
+        // by the metadata steps, at the point where a cancel can still clean up.
+        if let empty = acl_init(0) {
+            _ = acl_set_link_np(destination, ACL_TYPE_EXTENDED, empty)
+            acl_free(UnsafeMutableRawPointer(empty))
+        }
+        return true
+    }
+
+    /// Copies bytes `start..<end` (to the end of the file when `end` is nil),
+    /// checking for cancel and pause between chunks.
+    private mutating func copyRange(
+        _ input: Int32, _ output: Int32, from start: off_t, to end: off_t?,
+        buffer: UnsafeMutableRawPointer, source: String, destination: String
+    ) throws {
+        var offset = start
+        while end.map({ offset < $0 }) ?? true {
             try Task.checkCancellation()
             try control?.waitWhilePaused()
-            let read = Darwin.read(input, buffer, FileEngine.chunkSize)
+            let wanted = end.map { min(FileEngine.chunkSize, Int($0 - offset)) } ?? FileEngine.chunkSize
+            let read = pread(input, buffer, wanted, offset)
             if read < 0 {
                 if errno == EINTR { continue }
                 throw FileEngineError.posix("Read", source)
@@ -393,17 +452,17 @@ private struct CopyJob {
             if read == 0 { break }
             var written = 0
             while written < read {
-                let result = write(output, buffer + written, read - written)
+                let result = pwrite(output, buffer + written, read - written, offset + off_t(written))
                 if result < 0 {
                     if errno == EINTR { continue }
                     throw FileEngineError.posix("Write", destination)
                 }
                 written += result
             }
+            offset += off_t(read)
             state.bytesDone += Int64(read)
             report()
         }
-        guard fsync(output) == 0 else { throw FileEngineError.posix("Write", destination) }
     }
 
     /// Permissions, extended attributes and dates for a file. Its ACL comes

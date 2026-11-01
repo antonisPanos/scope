@@ -148,10 +148,11 @@ import Testing
         let protected = try disk.write("src/a.txt", "a")
         try disk.write("src/z.bin", Data(count: 64 * 1024 * 1024))
         try TestVolume.run("/bin/chmod", ["+a", "everyone deny delete", protected.path])
-        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        // Onto the other disk: a copy within one disk is a clone, done before it can be cancelled.
+        try FileManager.default.createDirectory(at: other.url("dest"), withIntermediateDirectories: true)
         let engine = engine
         let source = disk.url("src")
-        let target = disk.url("dest/src")
+        let target = other.url("dest/src")
 
         let task = Task {
             try engine.copyItem(
@@ -164,7 +165,7 @@ import Testing
                 })
         }
         await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(try disk.names("dest") == [])
+        #expect(try other.names("dest") == [])
     }
 
     @Test func aFinishedCopyKeepsTheACL() async throws {
