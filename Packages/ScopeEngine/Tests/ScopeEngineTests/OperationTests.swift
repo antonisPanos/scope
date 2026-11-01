@@ -144,6 +144,36 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: disk.work.path))
     }
 
+    @Test func aCancelledCopyOfFilesWithADenyDeleteACLLeavesNothingBehind() async throws {
+        let protected = try disk.write("src/a.txt", "a")
+        try disk.write("src/z.bin", Data(count: 64 * 1024 * 1024))
+        try TestVolume.run("/bin/chmod", ["+a", "everyone deny delete", protected.path])
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        let engine = engine
+        let source = disk.url("src")
+        let target = disk.url("dest/src")
+
+        let task = Task {
+            try engine.copyItem(
+                at: source, to: target, control: nil,
+                progress: { progress in
+                    // Cancel once a.txt (with its ACL) is in the partial copy.
+                    if progress.currentItem == "z.bin" && progress.bytesDone > 0 {
+                        withUnsafeCurrentTask { $0?.cancel() }
+                    }
+                })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(try disk.names("dest") == [])
+    }
+
+    @Test func aFinishedCopyKeepsTheACL() async throws {
+        let protected = try disk.write("src/a.txt", "a")
+        try TestVolume.run("/bin/chmod", ["+a", "everyone deny delete", protected.path])
+        try await ops.run(.copy([disk.url("src")], into: other.work))
+        #expect(FileEngine.hasACL(other.url("src/a.txt").path))
+    }
+
     // MARK: - Move
 
     @Test func movesOnOneDiskAndUndoes() async throws {

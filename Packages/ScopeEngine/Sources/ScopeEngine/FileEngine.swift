@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Progress of a running copy. Reported after every chunk and every item.
 public struct CopyProgress: Sendable, Equatable {
@@ -252,10 +253,41 @@ public struct FileEngine: Sendable {
     }
 
     static func removeQuietly(_ path: String) {
-        // Partial items never carry locked flags or read-only folder modes (those
-        // are applied after the final rename), so a plain removal works.
-        try? FileManager.default.removeItem(atPath: path)
+        // Partial items never carry locked flags, ACLs or read-only folder modes
+        // (those are applied after the final rename), so a plain removal should
+        // work. If something still blocks it, clear those and try once more.
+        if (try? FileManager.default.removeItem(atPath: path)) != nil || lstatInfo(path) == nil { return }
+        clearProtections(path)
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            logger.fault("Couldn't remove the partial item \(path, privacy: .public): \(error.localizedDescription)")
+        }
     }
+
+    /// Clears file flags and ACLs, and makes folders writable, through a tree.
+    private static func clearProtections(_ path: String) {
+        guard let info = lstatInfo(path) else { return }
+        _ = lchflags(path, 0)
+        if let empty = acl_init(0) {
+            _ = acl_set_link_np(path, ACL_TYPE_EXTENDED, empty)
+            acl_free(UnsafeMutableRawPointer(empty))
+        }
+        guard info.st_mode & S_IFMT == S_IFDIR else { return }
+        _ = chmod(path, 0o700)
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? [] {
+            clearProtections(path + "/" + name)
+        }
+    }
+
+    /// Whether an item carries an access control list.
+    static func hasACL(_ path: String) -> Bool {
+        guard let acl = acl_get_link_np(path, ACL_TYPE_EXTENDED) else { return false }
+        acl_free(UnsafeMutableRawPointer(acl))
+        return true
+    }
+
+    private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "FileEngine")
 }
 
 /// State of one copy: totals, progress, and the metadata that may only be
@@ -267,7 +299,7 @@ private struct CopyJob {
     /// Folder metadata and file flags, applied after the final rename, deepest
     /// first. Applying them earlier would make a cancelled copy impossible to
     /// clean up (a locked file or a read-only folder can't be removed).
-    var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32)] = []
+    var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32, hasACL: Bool)] = []
 
     let control: OperationControl?
 
@@ -306,7 +338,7 @@ private struct CopyJob {
                 let childRelative = relative.isEmpty ? name : relative + "/" + name
                 try copy(from: source + "/" + name, to: destination + "/" + name, relative: childRelative)
             }
-            deferred.append((relative, source, true, info.st_flags))
+            deferred.append((relative, source, true, info.st_flags, false))
         case S_IFLNK:
             var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
             let length = readlink(source, &buffer, buffer.count - 1)
@@ -317,7 +349,11 @@ private struct CopyJob {
         case S_IFREG:
             try copyData(from: source, to: destination)
             try copyMetadata(from: source, to: destination, info: info)
-            if info.st_flags != 0 { deferred.append((relative, source, false, info.st_flags)) }
+            // An ACL can forbid deleting the file, so like flags it is applied
+            // only once the copy is in place (otherwise a cancelled copy
+            // couldn't be cleaned up).
+            let hasACL = FileEngine.hasACL(source)
+            if info.st_flags != 0 || hasACL { deferred.append((relative, source, false, info.st_flags, hasACL)) }
         default:
             // Sockets, pipes and device nodes are not copied.
             break
@@ -360,9 +396,10 @@ private struct CopyJob {
         guard fsync(output) == 0 else { throw FileEngineError.posix("Write", destination) }
     }
 
-    /// Permissions, ACLs, extended attributes and dates for a file.
+    /// Permissions, extended attributes and dates for a file. Its ACL comes
+    /// later, in `finish`.
     private func copyMetadata(from source: String, to destination: String, info: stat) throws {
-        guard copyfile(source, destination, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR)) == 0 else {
+        guard copyfile(source, destination, nil, copyfile_flags_t(COPYFILE_STAT | COPYFILE_XATTR)) == 0 else {
             throw FileEngineError.posix("Copy attributes", destination)
         }
         // copyfile(3) can carry file flags along with the security info. Flags
@@ -389,6 +426,8 @@ private struct CopyJob {
             if entry.isDirectory {
                 _ = copyfile(entry.source, path, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR))
                 if let info = FileEngine.lstatInfo(entry.source) { try? Self.copyTimes(info, to: path) }
+            } else if entry.hasACL {
+                _ = copyfile(entry.source, path, nil, copyfile_flags_t(COPYFILE_ACL))
             }
             if entry.flags != 0 { _ = lchflags(path, entry.flags) }
         }
