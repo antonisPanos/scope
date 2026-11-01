@@ -163,12 +163,17 @@ public struct FileEngine: Sendable {
         to destination: URL,
         control: OperationControl?,
         progress: (@Sendable (CopyProgress) -> Void)?,
+        replacingExisting: Bool = false,
         beforePlacing: ((_ source: URL, _ partial: URL) throws -> Void)? = nil
     ) throws {
         let source = try pathGuard.checkLocation(url)
         let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
-        guard Self.lstatInfo(target.path) == nil else { throw FileEngineError.destinationExists(target.path) }
+        // When replacing, `beforePlacing` must move the existing item away:
+        // the final rename below still never overwrites.
+        guard replacingExisting || Self.lstatInfo(target.path) == nil else {
+            throw FileEngineError.destinationExists(target.path)
+        }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
         var job = CopyJob(progress: progress, control: control)
