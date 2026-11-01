@@ -1,0 +1,14 @@
+## What
+
+<!-- What changes for someone using Scope, in a sentence or two. -->
+
+## How it was tested
+
+- [ ] `make test` passes
+- [ ] Built and tried in Scope Dev on the test disks (never real files)
+- [ ] Screenshots attached for visible changes
+
+## Safety
+
+- [ ] File access still goes through `FileEngine` and `PathGuard`
+- [ ] No change to the release build's read-only setting
