@@ -153,6 +153,32 @@ import Testing
             try await Volumes.eject(URL(fileURLWithPath: "/"), pathGuard: sandbox.engine.pathGuard)
         }
     }
+
+    @Test func forceEjectRefusesTheStartupDisk() {
+        // Only asks; nothing is unmounted.
+        #expect(Volumes.forceEjectRefusal(URL(fileURLWithPath: "/")) != nil)
+        #expect(Volumes.forceEjectRefusal(URL(fileURLWithPath: "/System/Volumes/Data")) != nil)
+    }
+
+    @Test func forceEjectIsAWrite() async throws {
+        let volume = try TestVolume(name: "ScopeForceRO")
+        await #expect(throws: PathGuardViolation.self) {
+            try await Volumes.forceEject(volume.mountPoint, pathGuard: .readOnly)
+        }
+        #expect(FileManager.default.fileExists(atPath: volume.work.path))
+    }
+
+    @Test func forceEjectsADiskImageWithAFileOpen() async throws {
+        let volume = try TestVolume(name: "ScopeForce")
+        #expect(Volumes.forceEjectRefusal(volume.mountPoint) == nil)
+        let file = try volume.write("open.txt", "held open")
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+
+        let pathGuard = PathGuard.restricted(to: [volume.mountPoint])
+        try await Volumes.forceEject(volume.mountPoint, pathGuard: pathGuard)
+        #expect(!FileManager.default.fileExists(atPath: volume.work.path))
+    }
 }
 
 @Suite struct PermitsTests {
