@@ -205,7 +205,10 @@ extension BrowserWindowController {
 
     // MARK: - Standard Edit menu actions
 
-    @objc func cut(_ sender: Any?) { cutSelection() }
+    /// Edit > Cut (Cmd+X), when Settings allow it; the right-click Cut always works.
+    @objc func cut(_ sender: Any?) {
+        if AppSettings.shared.commandXCuts { cutSelection() }
+    }
     @objc func copy(_ sender: Any?) { copySelection() }
     @objc func paste(_ sender: Any?) { paste(move: false) }
     @objc func undo(_ sender: Any?) { undoLastOperation() }

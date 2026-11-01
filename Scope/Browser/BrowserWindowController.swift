@@ -416,7 +416,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(copy(_:)): return !selectedItems.isEmpty
-        case #selector(cut(_:)): return !selectedItems.isEmpty && allowsWrites
+        case #selector(cut(_:)): return AppSettings.shared.commandXCuts && !selectedItems.isEmpty && allowsWrites
         case #selector(paste(_:)): return !pasteboardFiles.isEmpty && currentFolder != nil && allowsWrites
         case #selector(undo(_:)):
             menuItem.title = "Undo"
