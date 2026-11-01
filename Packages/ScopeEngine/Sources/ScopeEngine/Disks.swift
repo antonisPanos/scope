@@ -37,7 +37,9 @@ public struct MountTable: Sendable {
         let count = getfsstat(nil, 0, MNT_NOWAIT)
         guard count > 0 else { return [] }
         // Room for a few mounts that appear between the two calls.
-        var buffer = [statfs](repeating: statfs(), count: Int(count) + 8)
+        // `statfs` is also a function, so the element is spelled out.
+        let empty = statfs()
+        var buffer = Array(repeating: empty, count: Int(count) + 8)
         let filled = buffer.withUnsafeMutableBufferPointer { pointer in
             getfsstat(pointer.baseAddress, Int32(pointer.count * MemoryLayout<statfs>.stride), MNT_NOWAIT)
         }
