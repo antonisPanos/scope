@@ -1,6 +1,6 @@
 # One entry point for everyday tasks. Run `make` or `make help` to list them.
 .DEFAULT_GOAL := help
-.PHONY: help setup hooks build build-all test format lint testdisk install-dev devhook
+.PHONY: help setup hooks build build-all test format lint testdisk install-dev devhook dmg release
 
 DERIVED := build/DerivedData
 XCB := xcodebuild -project Scope.xcodeproj -derivedDataPath $(DERIVED)
@@ -38,6 +38,13 @@ testdisk: ## Create and mount the test disks (scripts/testdisk.sh create)
 
 install-dev: ## Build Scope Dev and install it in ~/Applications
 	scripts/install-dev.sh
+
+dmg: ## Build a Release DMG into build/release (signed and notarized when set up)
+	scripts/release.sh
+
+release: ## Build the DMG for the tag at HEAD and attach it to its GitHub Release
+	git fetch --tags
+	scripts/release.sh --upload
 
 devhook: ## Compile the devhook tool to build/devhook
 	mkdir -p build && swiftc -O -o build/devhook scripts/devhook.swift
