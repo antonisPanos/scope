@@ -39,92 +39,96 @@ extension FileEngine {
     /// their dimensions and camera data, audio and video for their length,
     /// folders for how many items they hold.
     public func details(for url: URL) async throws -> ItemDetails {
-        let location = try pathGuard.checkLocation(url)
-        let item = try FileItem(url: location)
-        var details = ItemDetails(item: item)
+        return try await onIOThreads {
+            let location = try pathGuard.checkLocation(url)
+            let item = try FileItem(url: location)
+            var details = ItemDetails(item: item)
 
-        let values = try? location.resourceValues(forKeys: [
-            .tagNamesKey, .contentAccessDateKey, .volumeLocalizedNameKey,
-        ])
-        details.tags = values?.tagNames ?? []
-        details.volumeName = values?.volumeLocalizedName
-        if let info = Self.lstatInfo(location.path) {
-            details.permissions = Self.modeString(info.st_mode)
-            details.isLocked = info.st_flags & UInt32(UF_IMMUTABLE) != 0
-            details.owner = getpwuid(info.st_uid).map { String(cString: $0.pointee.pw_name) } ?? "\(info.st_uid)"
-            details.group = getgrgid(info.st_gid).map { String(cString: $0.pointee.gr_name) } ?? "\(info.st_gid)"
-        }
-        details.lastOpened = Self.lastUsedDate(location) ?? values?.contentAccessDate
+            let values = try? location.resourceValues(forKeys: [
+                .tagNamesKey, .contentAccessDateKey, .volumeLocalizedNameKey,
+            ])
+            details.tags = values?.tagNames ?? []
+            details.volumeName = values?.volumeLocalizedName
+            if let info = Self.lstatInfo(location.path) {
+                details.permissions = Self.modeString(info.st_mode)
+                details.isLocked = info.st_flags & UInt32(UF_IMMUTABLE) != 0
+                details.owner = getpwuid(info.st_uid).map { String(cString: $0.pointee.pw_name) } ?? "\(info.st_uid)"
+                details.group = getgrgid(info.st_gid).map { String(cString: $0.pointee.gr_name) } ?? "\(info.st_gid)"
+            }
+            details.lastOpened = Self.lastUsedDate(location) ?? values?.contentAccessDate
 
-        if item.isSymbolicLink {
-            details.linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: location.path)
-        } else if item.isAlias {
-            details.linkTarget =
-                (try? URL(resolvingAliasFileAt: location, options: [.withoutUI, .withoutMounting]))?.path
-        }
+            if item.isSymbolicLink {
+                details.linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: location.path)
+            } else if item.isAlias {
+                details.linkTarget =
+                    (try? URL(resolvingAliasFileAt: location, options: [.withoutUI, .withoutMounting]))?.path
+            }
 
-        if item.isBrowsableFolder && !item.isSymbolicLink {
-            details.folderItemCount =
-                (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
-                .filter { !$0.hasPrefix(".") }.count
+            if item.isBrowsableFolder && !item.isSymbolicLink {
+                details.folderItemCount =
+                    (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
+                    .filter { !$0.hasPrefix(".") }.count
+                return details
+            }
+            guard !item.isSymbolicLink, !item.isAlias else { return details }
+
+            try Task.checkCancellation()
+            if let source = CGImageSourceCreateWithURL(location as CFURL, nil),
+                CGImageSourceGetCount(source) > 0,
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            {
+                details.pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int
+                details.pixelHeight = properties[kCGImagePropertyPixelHeight] as? Int
+                let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+                let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
+                let make = tiff?[kCGImagePropertyTIFFMake] as? String
+                let model = tiff?[kCGImagePropertyTIFFModel] as? String
+                details.cameraModel = [make, model].compactMap { $0 }.joined(separator: " ").nilIfEmpty
+                details.dateTaken = exif?[kCGImagePropertyExifDateTimeOriginal] as? String
+            }
+
+            try Task.checkCancellation()
+            let kind = item.kind.lowercased()
+            let mediaExtensions = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "mov", "mp4", "m4v"]
+            if ["audio", "movie", "video", "mpeg"].contains(where: kind.contains)
+                || mediaExtensions.contains(location.pathExtension.lowercased())
+            {
+                let asset = AVURLAsset(url: location)
+                if let duration = try? await asset.load(.duration), duration.isNumeric {
+                    details.duration = duration.seconds
+                }
+            }
             return details
         }
-        guard !item.isSymbolicLink, !item.isAlias else { return details }
-
-        try Task.checkCancellation()
-        if let source = CGImageSourceCreateWithURL(location as CFURL, nil),
-            CGImageSourceGetCount(source) > 0,
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        {
-            details.pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int
-            details.pixelHeight = properties[kCGImagePropertyPixelHeight] as? Int
-            let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
-            let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any]
-            let make = tiff?[kCGImagePropertyTIFFMake] as? String
-            let model = tiff?[kCGImagePropertyTIFFModel] as? String
-            details.cameraModel = [make, model].compactMap { $0 }.joined(separator: " ").nilIfEmpty
-            details.dateTaken = exif?[kCGImagePropertyExifDateTimeOriginal] as? String
-        }
-
-        try Task.checkCancellation()
-        let kind = item.kind.lowercased()
-        let mediaExtensions = ["mp3", "m4a", "wav", "aiff", "aac", "flac", "mov", "mp4", "m4v"]
-        if ["audio", "movie", "video", "mpeg"].contains(where: kind.contains)
-            || mediaExtensions.contains(location.pathExtension.lowercased())
-        {
-            let asset = AVURLAsset(url: location)
-            if let duration = try? await asset.load(.duration), duration.isNumeric {
-                details.duration = duration.seconds
-            }
-        }
-        return details
     }
 
     /// Adds up a folder's contents on demand, without following symlinks.
     /// Reports running totals as it goes; cancelling stops it at once.
     public func folderSize(of url: URL, progress: (@Sendable (FolderSize) -> Void)? = nil) async throws -> FolderSize {
-        let folder = try pathGuard.checkTarget(url)
-        let keys: [URLResourceKey] = [.fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey]
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: folder, includingPropertiesForKeys: keys, options: [],
-                errorHandler: { _, _ in true })
-        else { return FolderSize() }
-        var total = FolderSize()
-        while let next = enumerator.nextObject() as? URL {
-            total.items += 1
-            if total.items % 500 == 0 {
-                try Task.checkCancellation()
-                progress?(total)
+        return try await onIOThreads {
+            let folder = try pathGuard.checkTarget(url)
+            let keys: [URLResourceKey] = [.fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey]
+            guard
+                let enumerator = FileManager.default.enumerator(
+                    at: folder, includingPropertiesForKeys: keys, options: [],
+                    errorHandler: { _, _ in true })
+            else { return FolderSize() }
+            var total = FolderSize()
+            while let next = enumerator.nextObject() as? URL {
+                total.items += 1
+                if total.items % 500 == 0 {
+                    try Task.checkCancellation()
+                    progress?(total)
+                }
+                guard let values = try? next.resourceValues(forKeys: Set(keys)), values.isDirectory != true,
+                    values.isSymbolicLink != true
+                else { continue }
+                total.bytes += Int64(values.fileSize ?? 0)
+                total.allocatedBytes += Int64(values.totalFileAllocatedSize ?? 0)
             }
-            guard let values = try? next.resourceValues(forKeys: Set(keys)), values.isDirectory != true,
-                values.isSymbolicLink != true
-            else { continue }
-            total.bytes += Int64(values.fileSize ?? 0)
-            total.allocatedBytes += Int64(values.totalFileAllocatedSize ?? 0)
+            progress?(total)
+            return total
         }
-        progress?(total)
-        return total
     }
 
     static func modeString(_ mode: mode_t) -> String {
