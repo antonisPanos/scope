@@ -42,8 +42,8 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - Every file operation goes through `OperationCenter` (engine) via `OperationsController` (app).
   Operation tests mount throwaway sparse bundles with hdiutil (`TestVolume`); never run them
   against the startup disk, whose Trash is the user's.
-- If `hdiutil`/`diskutil image attach` hangs, the system's disk image service is stuck: don't
-  kill system processes; ask the user to restart.
+- If `hdiutil`/`diskutil image attach` hangs, it is usually waiting on a macOS authorization
+  prompt on the user's screen: ask them to look for one. Don't kill system processes.
 - Recents and Tags come from Spotlight. `scripts/testdisk.sh` turns on indexing for the test
   disks and imports the fixture folders; if they look empty, run `mdimport /Volumes/PandoraTest/attributes/tagged`.
 - GitHub's runners top out at macOS 26, so CI runs the engine tests (engine targets macOS 15)
