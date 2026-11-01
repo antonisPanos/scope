@@ -41,6 +41,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
                 item.submenu = openWith
                 menu.addItem(item)
             }
+            add("openInNewTab")
             add("openInSplit")
             add("quickLook")
             add("getInfo")

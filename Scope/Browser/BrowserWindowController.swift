@@ -80,6 +80,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         wire(workspace.panes[0])
         sidebarSelection.onSelect = { [weak self] item in self?.model.navigate(to: item.location) }
         sidebarSelection.onOpenInSplit = { [weak self] item in self?.openInSplit(item.location) }
+        sidebarSelection.onOpenInNewTab = { [weak self] item in self?.openInNewTab(item.location) }
         sidebarSelection.onEject = { [weak self] item in SidebarStore.shared.eject(item, presentingIn: self?.window) }
         // Focus decides which pane commands act on.
         firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
@@ -145,6 +146,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         pane.onNewTab = { [weak self] pane in self?.addTab(to: pane) }
         pane.onCloseTab = { [weak self] pane, index in self?.closeTab(in: pane, at: index) }
+        pane.onTabAction = { [weak self] pane, index, action in self?.tabAction(action, in: pane, at: index) }
     }
 
     /// Refreshes everything that follows the focused tab: title, sidebar, toolbar, search field.
@@ -242,6 +244,41 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let tab = makeTab(at: pane.activeTab.model.location)
         if workspace.isSplit { tab.isPreviewVisible = false }
         pane.addTab(tab)
+    }
+
+    private func tabAction(_ action: PaneTabStrip.Action, in pane: PaneController, at index: Int) {
+        guard pane.tabs.indices.contains(index) else { return }
+        let tab = pane.tabs[index]
+        switch action {
+        case .duplicate:
+            pane.addTab(makeTab(at: tab.model.location))
+        case .closeOthers:
+            for other in pane.tabs.indices.reversed() where other != index { closeTab(in: pane, at: other) }
+        case .moveToOtherSide:
+            guard let target = workspace.panes.first(where: { $0 !== pane }) else { return }
+            target.addTab(makeTab(at: tab.model.location))
+            if pane.tabs.count > 1 { closeTab(in: pane, at: index) }
+        }
+    }
+
+    /// Opens a folder or sidebar place in a new tab: on the focused side in
+    /// split view, otherwise as a new window tab.
+    func openInNewTab(_ location: Location) {
+        if workspace.isSplit {
+            workspace.activePane.addTab(makeTab(at: location))
+            return
+        }
+        guard let window, let app = NSApp.delegate as? AppDelegate else { return }
+        let tab = app.makeBrowser(location: location)
+        if let tabWindow = tab.window {
+            window.addTabbedWindow(tabWindow, ordered: .above)
+            tabWindow.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func openSelectionInNewTab() {
+        guard let folder = folderForSplit else { return }
+        openInNewTab(.folder(folder))
     }
 
     private func closeTab(in pane: PaneController, at index: Int) {

@@ -9,6 +9,7 @@ final class SidebarSelection {
     @ObservationIgnored var onSelect: ((SidebarItem) -> Void)?
     @ObservationIgnored var onEject: ((SidebarItem) -> Void)?
     @ObservationIgnored var onOpenInSplit: ((SidebarItem) -> Void)?
+    @ObservationIgnored var onOpenInNewTab: ((SidebarItem) -> Void)?
 }
 
 /// The sidebar: Favorites (Recents, standard folders, your own), Locations,
@@ -77,6 +78,7 @@ struct SidebarView: View {
         .tag(item.id)
         .contextMenu {
             if item.isEnabled {
+                Button("Open in New Tab") { selection.onOpenInNewTab?(item) }
                 Button("Open in Split View") { selection.onOpenInSplit?(item) }
             }
             if item.kind == .favorite {

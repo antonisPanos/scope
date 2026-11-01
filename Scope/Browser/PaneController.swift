@@ -15,6 +15,8 @@ final class PaneController: NSViewController {
     var onActivate: ((PaneController) -> Void)?
     var onNewTab: ((PaneController) -> Void)?
     var onCloseTab: ((PaneController, Int) -> Void)?
+    /// Right-click actions on a tab: close the others, duplicate, move to the other side.
+    var onTabAction: ((PaneController, Int, PaneTabStrip.Action) -> Void)?
 
     var activeTab: BrowserViewController { tabs[activeIndex] }
 
@@ -44,6 +46,10 @@ final class PaneController: NSViewController {
         strip.onNew = { [weak self] in
             guard let self else { return }
             self.onNewTab?(self)
+        }
+        strip.onAction = { [weak self] index, action in
+            guard let self else { return }
+            self.onTabAction?(self, index, action)
         }
         view = root
         install(activeTab)
@@ -137,6 +143,9 @@ final class PaneTabStrip {
     @ObservationIgnored var onSelect: ((Int) -> Void)?
     @ObservationIgnored var onClose: ((Int) -> Void)?
     @ObservationIgnored var onNew: (() -> Void)?
+    @ObservationIgnored var onAction: ((Int, Action) -> Void)?
+
+    enum Action { case closeOthers, duplicate, moveToOtherSide }
 }
 
 /// The tab strip above a pane in split view: a button per tab with a close
@@ -197,6 +206,7 @@ final class PaneTabStripBar: NSView {
         }
         box.layer?.backgroundColor = fill
         box.onClick = { [weak self] in self?.strip.onSelect?(index) }
+        box.menu = tabMenu(index)
 
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 11, weight: active ? .semibold : .regular)
@@ -223,6 +233,24 @@ final class PaneTabStripBar: NSView {
             box.heightAnchor.constraint(equalToConstant: 22),
         ])
         return box
+    }
+
+    private func tabMenu(_ index: Int) -> NSMenu {
+        let menu = NSMenu()
+        func add(_ title: String, _ handler: @escaping () -> Void, enabled: Bool = true) {
+            let item = MenuActionItem(title: title, handler: handler)
+            item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        let many = strip.titles.count > 1
+        add("New Tab") { [weak self] in self?.strip.onNew?() }
+        add("Duplicate Tab") { [weak self] in self?.strip.onAction?(index, .duplicate) }
+        add("Move Tab to Other Side") { [weak self] in self?.strip.onAction?(index, .moveToOtherSide) }
+        menu.addItem(.separator())
+        add("Close Tab", { [weak self] in self?.strip.onClose?(index) }, enabled: many)
+        add("Close Other Tabs", { [weak self] in self?.strip.onAction?(index, .closeOthers) }, enabled: many)
+        menu.autoenablesItems = false
+        return menu
     }
 
     @objc private func newTab() { strip.onNew?() }
@@ -307,4 +335,21 @@ final class WorkspaceController: NSViewController {
     }
 
     var allContents: [BrowserViewController] { panes.flatMap(\.tabs) }
+}
+
+/// A menu item that runs a closure, for small menus built in code.
+@MainActor
+final class MenuActionItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError() }
+
+    @objc private func run() { handler() }
 }

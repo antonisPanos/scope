@@ -134,6 +134,8 @@ enum Commands {
                 run: { $0.toggleSidebar() }, isChecked: { $0.isSidebarVisible }),
         Command(id: "toggleSplit", title: "Split View", menu: .view, key: "s", modifiers: [.shift, .command],
                 run: { $0.toggleSplit() }, isChecked: { $0.isSplit }, startsGroup: true),
+        Command(id: "openInNewTab", title: "Open in New Tab", menu: .view, key: "", modifiers: [],
+                run: { $0.openSelectionInNewTab() }, isEnabled: { $0.folderForSplit != nil }),
         Command(id: "openInSplit", title: "Open in Split View", menu: .view, key: "", modifiers: [],
                 run: { $0.openInSplit() }, isEnabled: { $0.folderForSplit != nil }),
         Command(id: "focusLeft", title: "Focus Left Side", menu: .view, key: Command.leftArrow, modifiers: [.option, .command],
