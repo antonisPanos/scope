@@ -81,7 +81,7 @@ public struct FileEngine: Sendable {
     @discardableResult
     public func rename(_ url: URL, to newName: String) async throws -> URL {
         guard Self.isValidName(newName) else { throw FileEngineError.invalidName(newName) }
-        let source = try pathGuard.checkWriteLocation(url)
+        let source = try pathGuard.checkModifiable(url)
         let destination = try pathGuard.checkWriteLocation(
             source.deletingLastPathComponent().appendingPathComponent(newName))
         // A case-only rename on a case-insensitive disk finds the item itself at
@@ -97,7 +97,7 @@ public struct FileEngine: Sendable {
     /// Only moves within one disk are supported for now; they are a single
     /// atomic rename.
     public func moveItem(at url: URL, to destination: URL) async throws {
-        let source = try pathGuard.checkWriteLocation(url)
+        let source = try pathGuard.checkModifiable(url)
         let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
         let targetFolder = target.deletingLastPathComponent().path
@@ -117,7 +117,7 @@ public struct FileEngine: Sendable {
     /// deletes outright.
     @discardableResult
     public func trashItem(at url: URL) async throws -> URL? {
-        let target = try pathGuard.checkWriteLocation(url)
+        let target = try pathGuard.checkModifiable(url)
         var resulting: NSURL?
         try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
         return resulting as URL?

@@ -212,7 +212,7 @@ extension FileEngine {
     /// Trashes without a cancellation check, for the last step of a move and
     /// for the item a finished replacement takes the place of.
     private func trashItemNow(_ url: URL) throws -> URL? {
-        let target = try pathGuard.checkWriteLocation(url)
+        let target = try pathGuard.checkModifiable(url)
         var resulting: NSURL?
         try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
         return resulting as URL?

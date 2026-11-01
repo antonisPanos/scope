@@ -237,12 +237,7 @@ final class PaneTabStripBar: NSView {
         let active = index == strip.activeIndex
         let box = TabBox()
         box.wantsLayer = true
-        box.layer?.cornerRadius = 5
-        var fill: CGColor?
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            fill = active ? (strip.isFocused ? Palette.selection : Palette.separator).cgColor : nil
-        }
-        box.layer?.backgroundColor = fill
+        box.fill = active ? (strip.isFocused ? Palette.selection : Palette.separator) : nil
         box.onClick = { [weak self] in self?.strip.onSelect?(index) }
         box.menu = tabMenu(index)
 
@@ -299,6 +294,18 @@ final class PaneTabStripBar: NSView {
 @MainActor
 private final class TabBox: NSView {
     var onClick: (() -> Void)?
+    /// Resolved when the layer updates, so the pill follows the window's
+    /// light or dark appearance instead of the one at creation time.
+    var fill: NSColor? {
+        didSet { needsDisplay = true }
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.cornerRadius = 5
+        layer?.backgroundColor = fill?.cgColor
+    }
 
     override func mouseDown(with event: NSEvent) {
         onClick?()

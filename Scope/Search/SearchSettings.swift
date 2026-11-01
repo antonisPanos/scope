@@ -13,7 +13,7 @@ final class SearchSettings {
         var title: String {
             switch self {
             case .contains: "Name contains"
-            case .glob: "Name matches (*.pdf)"
+            case .glob: "Name pattern (* and ?)"
             case .regex: "Regular expression"
             case .contents: "Contents (Spotlight)"
             }
