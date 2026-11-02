@@ -11,17 +11,21 @@ extension FileEngine {
         control: OperationControl,
         undo: UndoRecorder,
         resolveConflict: @escaping ConflictResolver,
-        confirmPermanentDeletion: @escaping PermanentDeletionConfirmer = { _ in false }
+        confirmPermanentDeletion: @escaping PermanentDeletionConfirmer = { _ in false },
+        resolveFailure: @escaping FailureResolver = { _ in (.stop, false) }
     ) async throws {
         try await onIOThreads {
             var conflicts = ConflictPolicy(resolver: resolveConflict)
+            var failures = FailurePolicy(resolver: resolveFailure)
             switch operation.kind {
             case .copy(let items, let folder):
                 try await transfer(
-                    items, into: folder, moving: false, control: control, undo: undo, conflicts: &conflicts)
+                    items, into: folder, moving: false, control: control, undo: undo, conflicts: &conflicts,
+                    failures: &failures)
             case .move(let items, let folder):
                 try await transfer(
-                    items, into: folder, moving: true, control: control, undo: undo, conflicts: &conflicts)
+                    items, into: folder, moving: true, control: control, undo: undo, conflicts: &conflicts,
+                    failures: &failures)
             case .duplicate(let items):
                 try await duplicate(items, control: control, undo: undo)
             case .rename(let item, let name):
@@ -51,7 +55,7 @@ extension FileEngine {
 
     private func transfer(
         _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
-        undo: UndoRecorder, conflicts: inout ConflictPolicy
+        undo: UndoRecorder, conflicts: inout ConflictPolicy, failures: inout FailurePolicy
     ) async throws {
         let destination = try pathGuard.checkWriteLocation(folder)
         let sources = try items.map { try pathGuard.checkLocation($0) }
@@ -97,12 +101,21 @@ extension FileEngine {
                 // A rename is instant, so the existing item is trashed just
                 // before it, and put back if the rename fails.
                 var trashed: URL?
-                if replacing { trashed = try trashItemNow(target) }
-                do {
-                    try await moveItem(at: source, to: target)
-                } catch {
-                    if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                    throw error
+                var moved = false
+                while !moved {
+                    if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
+                    do {
+                        try await moveItem(at: source, to: target)
+                        moved = true
+                    } catch {
+                        if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                        trashed = nil
+                        guard try await failures.retry(source, after: error) else { break }
+                    }
+                }
+                guard moved else {
+                    control.update { $0.itemsDone += 1 }
+                    continue
                 }
                 if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
                 undo.add(.moveBack(from: target, to: source))
@@ -129,12 +142,28 @@ extension FileEngine {
                     replaced.trashed = try self.trashItemNow(existing)
                 }
             }
-            do {
-                try copyTracked(
-                    source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
-            } catch {
-                if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                throw error
+            // A failed attempt leaves nothing behind and puts a replaced item
+            // back, so the item can be tried again from the start.
+            let before = control.progress
+            var copied = false
+            while !copied {
+                do {
+                    try copyTracked(
+                        source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
+                    copied = true
+                } catch {
+                    if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                    replaced.trashed = nil
+                    control.update {
+                        $0.bytesDone = before.bytesDone
+                        $0.itemsDone = before.itemsDone
+                    }
+                    guard try await failures.retry(source, after: error) else { break }
+                }
+            }
+            guard copied else {
+                control.update { $0.itemsDone += 1 }
+                continue
             }
             if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
@@ -339,6 +368,46 @@ struct ConflictPolicy {
         try Task.checkCancellation()
         if applyToAll { remembered = choice }
         return choice
+    }
+}
+
+/// Asks what to do when an item fails, and remembers "skip all".
+struct FailurePolicy {
+    let resolver: FailureResolver
+    var skipAll = false
+
+    init(resolver: @escaping FailureResolver) {
+        self.resolver = resolver
+    }
+
+    /// Whether to try `item` again after `error`: false to skip it. Throws
+    /// the error to stop. Errors another try can't fix are never asked about.
+    mutating func retry(_ item: URL, after error: any Error) async throws -> Bool {
+        guard Self.isRetryable(error) else { throw error }
+        if skipAll { return false }
+        try Task.checkCancellation()
+        let (choice, applyToAll) = await resolver(ItemFailure(item: item, message: error.localizedDescription))
+        // A cancel while the question was open wins over the answer.
+        try Task.checkCancellation()
+        switch choice {
+        case .retry: return true
+        case .skip:
+            if applyToAll { skipAll = true }
+            return false
+        case .stop: throw error
+        }
+    }
+
+    /// Read and write errors and failed verifications can pass on another
+    /// try; cancelling, the path guard, and refusals by design can't.
+    static func isRetryable(_ error: any Error) -> Bool {
+        switch error {
+        case is CancellationError, is PathGuardViolation: false
+        case OperationError.stoppedByUser: false
+        case FileEngineError.cannotCopyIntoItself, FileEngineError.destinationExists: false
+        case FileEngineError.crossVolumeMoveNotSupported: false
+        default: true
+        }
     }
 }
 

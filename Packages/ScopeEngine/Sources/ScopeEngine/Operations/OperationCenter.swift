@@ -97,6 +97,7 @@ public actor OperationCenter {
     private let engine: FileEngine
     private let resolveConflict: ConflictResolver
     private let confirmPermanentDeletion: PermanentDeletionConfirmer
+    private let resolveFailure: FailureResolver
     private var entries: [Entry] = []
     private var observers: [UUID: @Sendable () -> Void] = [:]
     /// Finished operations kept for the session, newest last.
@@ -106,11 +107,13 @@ public actor OperationCenter {
     /// Trash is deleted for good; by default the answer is no.
     public init(
         engine: FileEngine, resolveConflict: @escaping ConflictResolver,
-        confirmPermanentDeletion: @escaping PermanentDeletionConfirmer = { _ in false }
+        confirmPermanentDeletion: @escaping PermanentDeletionConfirmer = { _ in false },
+        resolveFailure: @escaping FailureResolver = { _ in (.stop, false) }
     ) {
         self.engine = engine
         self.resolveConflict = resolveConflict
         self.confirmPermanentDeletion = confirmPermanentDeletion
+        self.resolveFailure = resolveFailure
     }
 
     // MARK: - Adding
@@ -281,6 +284,7 @@ public actor OperationCenter {
         let engine = engine
         let resolver = resolveConflict
         let confirm = confirmPermanentDeletion
+        let failure = resolveFailure
         let operation = entry.operation
         let control = entry.control
         let undo = entry.undo
@@ -290,7 +294,7 @@ public actor OperationCenter {
             do {
                 try await engine.run(
                     operation, control: control, undo: undo, resolveConflict: resolver,
-                    confirmPermanentDeletion: confirm)
+                    confirmPermanentDeletion: confirm, resolveFailure: failure)
                 result = .done
             } catch is CancellationError {
                 result = .cancelled
