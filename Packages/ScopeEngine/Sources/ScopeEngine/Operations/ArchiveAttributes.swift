@@ -35,7 +35,9 @@ enum ArchiveAttributes {
         var attributes: [String: Data] = [:]
         var total = 0
         for bytes in names.split(separator: 0) {
-            let name = String(decoding: bytes.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            guard let name = String(bytes: bytes.map({ UInt8(bitPattern: $0) }), encoding: .utf8) else {
+                throw AppleDouble.invalid()
+            }
             if excluded.contains(name) { continue }
             let count = fgetxattr(descriptor, name, nil, 0, 0, 0)
             guard count >= 0 else { throw FileEngineError.posix("Read archive attribute", name) }

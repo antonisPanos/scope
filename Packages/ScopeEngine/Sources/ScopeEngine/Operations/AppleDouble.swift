@@ -22,17 +22,23 @@ enum AppleDouble {
         let count = try number(24, 2)
         guard count <= 1024, 26 + count * 12 <= data.count else { throw invalid() }
         var result: [String: Data] = [:]
+        var loaded = 0
+        func store(_ name: String, _ value: Data) throws {
+            guard result[name] == nil, value.count <= limit - loaded else { throw invalid() }
+            loaded += value.count
+            result[name] = value
+        }
         for index in 0..<count {
             let record = 26 + index * 12
             let kind = try number(record)
             let offset = try number(record + 4)
             let length = try number(record + 8)
             let value = try bytes(offset, length)
-            if kind == 2, length > 0 { result[resource] = value }
+            if kind == 2, length > 0 { try store(resource, value) }
             guard kind == 9 else { continue }
             guard length >= 32 else { throw invalid() }
             let info = value.prefix(32)
-            if info.contains(where: { $0 != 0 }) { result[finder] = Data(info) }
+            if info.contains(where: { $0 != 0 }) { try store(finder, Data(info)) }
             let header = offset + 34
             guard length >= 70, try number(header) == 0x4154_5452 else { continue }
             let total = try number(header + 8)
@@ -52,9 +58,9 @@ enum AppleDouble {
                 guard nameData.last == 0, !nameData.dropLast().contains(0),
                     let name = String(data: nameData.dropLast(), encoding: .utf8),
                     attrOffset >= start, attrOffset <= total, attrLength <= total - attrOffset,
-                    result[name] == nil
+                    result[name] == nil, attrLength <= limit - loaded
                 else { throw invalid() }
-                result[name] = try bytes(attrOffset, attrLength)
+                try store(name, bytes(attrOffset, attrLength))
                 position += (11 + nameLength + 3) & ~3
             }
         }
