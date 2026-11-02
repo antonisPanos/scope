@@ -246,6 +246,9 @@ public struct OperationProgress: Sendable, Equatable {
 public enum ConflictChoice: Sendable, Equatable {
     /// Move the existing item to the Trash, then put the new one in its place.
     case replace
+    /// Replace the existing file only when it was modified before the new
+    /// one; otherwise skip. Folders are always kept, as with skip.
+    case replaceIfOlder
     /// Keep both: the new item gets a numbered name ("photo 2.jpg").
     case keepBoth
     case skip
@@ -255,6 +258,17 @@ public enum ConflictChoice: Sendable, Equatable {
 public struct Conflict: Sendable, Equatable {
     public let incoming: URL
     public let existing: URL
+    /// When each was last modified, for the question; read by the engine so
+    /// the app doesn't touch the disk to ask.
+    public var incomingModified: Date?
+    public var existingModified: Date?
+
+    public init(incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil) {
+        self.incoming = incoming
+        self.existing = existing
+        self.incomingModified = incomingModified
+        self.existingModified = existingModified
+    }
 }
 
 /// Answers a conflict; `applyToAll` reuses the answer for the rest of the operation.

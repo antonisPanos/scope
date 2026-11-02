@@ -210,16 +210,7 @@ final class OperationsController {
 
     /// Asks on the frontmost browser window what to do about an existing item.
     private static func ask(_ conflict: Conflict) async -> (choice: ConflictChoice, applyToAll: Bool) {
-        let alert = NSAlert()
-        alert.messageText =
-            "An item named “\(conflict.existing.lastPathComponent)” already exists in “\(conflict.existing.deletingLastPathComponent().lastPathComponent)”."
-        alert.informativeText = "Replacing moves the existing item to the Trash, so you can get it back."
-        alert.addButton(withTitle: "Keep Both")
-        alert.addButton(withTitle: "Replace")
-        alert.addButton(withTitle: "Skip")
-        alert.addButton(withTitle: "Stop")
-        alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Apply to all"
+        let alert = conflictAlert(conflict)
         SystemNotifier.shared.conflictWaiting(name: conflict.existing.lastPathComponent)
         defer { SystemNotifier.shared.conflictAnswered() }
         let window = NSApp.keyWindow ?? NSApp.mainWindow
@@ -230,12 +221,35 @@ final class OperationsController {
             response = alert.runModal()
         }
         let all = alert.suppressionButton?.state == .on
-        switch response {
-        case .alertFirstButtonReturn: return (.keepBoth, all)
-        case .alertSecondButtonReturn: return (.replace, all)
-        case .alertThirdButtonReturn: return (.skip, all)
-        default: return (.stop, false)
+        let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        guard conflictChoices.indices.contains(index), conflictChoices[index] != .stop else {
+            return (.stop, false)
         }
+        return (conflictChoices[index], all)
+    }
+
+    /// The conflict question's answers, in the order of its buttons.
+    static let conflictChoices: [ConflictChoice] = [.keepBoth, .replace, .replaceIfOlder, .skip, .stop]
+
+    static func conflictAlert(_ conflict: Conflict) -> NSAlert {
+        let alert = NSAlert()
+        let name = conflict.existing.lastPathComponent
+        let folder = conflict.existing.deletingLastPathComponent().lastPathComponent
+        alert.messageText = "An item named “\(name)” already exists in “\(folder)”."
+        var text = "Replacing moves the existing item to the Trash, so you can get it back."
+        if let existing = conflict.existingModified, let incoming = conflict.incomingModified {
+            let style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+            text +=
+                "\n\nExisting: modified \(existing.formatted(style))\nNew: modified \(incoming.formatted(style))"
+        }
+        text += "\n\nReplace If Older replaces only files whose existing copy is older."
+        alert.informativeText = text
+        for title in ["Keep Both", "Replace", "Replace If Older", "Skip", "Stop"] {
+            alert.addButton(withTitle: title)
+        }
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Apply to all"
+        return alert
     }
 
     // MARK: - Disks without a Trash
