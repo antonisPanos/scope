@@ -15,6 +15,9 @@ final class PreviewPaneController: NSViewController {
     private let placeholder = NSTextField(labelWithString: "")
     private var loadTask: Task<Void, Never>?
     private var shownURL: URL?
+    /// The item on show, so the same item shown again (after any change in
+    /// its folder) doesn't restart the preview.
+    private var shownItem: FileItem?
     private var generation = 0
 
     init(engine: FileEngine) {
@@ -88,6 +91,8 @@ final class PreviewPaneController: NSViewController {
 
     /// Shows the single selected item, or a summary when none or several are selected.
     func show(_ item: FileItem?, count: Int) {
+        if let item, item == shownItem { return }
+        shownItem = item
         generation += 1
         let generation = generation
         guard let item else {
@@ -123,6 +128,7 @@ final class PreviewPaneController: NSViewController {
     }
 
     func close() {
+        shownItem = nil
         generation += 1
         loadTask?.cancel()
         preview.close()

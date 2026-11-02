@@ -157,9 +157,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let selected = selectedItems.map(\.url)
         items = model.items
         collectionView.reloadData()
-        if !model.pendingSelection.isEmpty {
-            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
-        } else if !selected.isEmpty {
+        if !selectPending(), !selected.isEmpty {
             select(selected, scroll: false)
         }
     }
@@ -186,7 +184,20 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let selected = collectionView.selectionIndexPaths
         collectionView.reloadItems(at: paths(changes.reloaded))
         if collectionView.selectionIndexPaths != selected { collectionView.selectionIndexPaths = selected }
-        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
+        selectPending()
+    }
+
+    /// Selects the items the model is waiting to select, once they're here;
+    /// until then the user's selection stays.
+    @discardableResult
+    private func selectPending() -> Bool {
+        let wanted = Set(model.pendingSelection.map(\.standardizedFileURL))
+        guard !wanted.isEmpty, items.contains(where: { wanted.contains($0.url.standardizedFileURL) }) else {
+            return false
+        }
+        select(model.pendingSelection, scroll: true)
+        model.pendingSelection = []
+        return true
     }
 
     var iconSize: CGFloat {

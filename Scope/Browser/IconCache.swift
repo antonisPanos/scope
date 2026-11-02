@@ -13,13 +13,15 @@ final class IconCache {
     private var loading: Set<String> = []
 
     func icon(for item: FileItem) -> NSImage {
-        if item.isPackage {
+        if item.isPackage || item.isFolderLink {
             if let icon = byPath[item.url.path] { return icon }
-            loadIcon(for: item.url.path)
+            // A link to a folder shows the folder's own icon (Google Drive's
+            // has one); the row adds the link arrow.
+            loadIcon(for: item.url.path, followingLink: item.isFolderLink)
         }
         let key: String
         let type: UTType
-        if item.isBrowsableFolder || (item.isSymbolicLink && item.kind == "Folder") {
+        if item.isBrowsableFolder || item.isFolderLink {
             key = "public.folder"
             type = .folder
         } else if item.isSymbolicLink {
@@ -37,12 +39,15 @@ final class IconCache {
         return icon
     }
 
-    private func loadIcon(for path: String) {
+    /// Loads the icon of the item at `path`, or of its link's target, in the
+    /// background: resolving a link reads the disk.
+    private func loadIcon(for path: String, followingLink: Bool = false) {
         guard !loading.contains(path) else { return }
         loading.insert(path)
         Task {
             let icon = await Task.detached(priority: .utility) {
-                LoadedIcon(image: NSWorkspace.shared.icon(forFile: path))
+                let source = followingLink ? URL(fileURLWithPath: path).resolvingSymlinksInPath().path : path
+                return LoadedIcon(image: NSWorkspace.shared.icon(forFile: source))
             }.value
             byPath[path] = icon.image
             loading.remove(path)

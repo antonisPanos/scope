@@ -11,6 +11,9 @@ public struct FileItem: Sendable, Hashable, Identifiable {
     public let isSymbolicLink: Bool
     public let isAlias: Bool
     public let isPackage: Bool
+    /// A symbolic link whose target is a folder, such as the "Google Drive"
+    /// link Google's app puts in the home folder.
+    public let isFolderLink: Bool
     public let isHidden: Bool
     /// Logical size in bytes; nil for folders.
     public let size: Int64?
@@ -40,6 +43,8 @@ public struct FileItem: Sendable, Hashable, Identifiable {
         self.isSymbolicLink = values.isSymbolicLink ?? false
         // Symlinks also report isAliasFile; only Finder aliases count here.
         self.isAlias = (values.isAliasFile ?? false) && !(values.isSymbolicLink ?? false)
+        // Only links are followed, and only for the target's type.
+        self.isFolderLink = values.isSymbolicLink == true && Self.targetIsFolder(url.path)
         self.isPackage = isPackage
         self.isHidden = values.isHidden ?? url.lastPathComponent.hasPrefix(".")
         self.size = isDirectory && !isPackage ? nil : values.fileSize.map(Int64.init)
@@ -53,6 +58,11 @@ public struct FileItem: Sendable, Hashable, Identifiable {
         } else {
             self.kind = KindCache.shared.kind(of: url, isPackage: isPackage)
         }
+    }
+
+    private static func targetIsFolder(_ path: String) -> Bool {
+        var info = stat()
+        return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFDIR
     }
 
     /// Whether the browser opens this item as a folder (packages open as files).

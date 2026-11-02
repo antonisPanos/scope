@@ -271,6 +271,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     var searchSettingsForHooks: SearchSettings { content.search }
     var pathBarForHooks: NSView { content.pathBar }
+    var sidebarSelectedIDForHooks: String? { sidebarSelection.selectedID }
 
     func setSidebarWidthForHooks(_ width: CGFloat) {
         splitController.splitView.setPosition(width, ofDividerAt: 0)

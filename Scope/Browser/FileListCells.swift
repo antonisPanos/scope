@@ -1,12 +1,14 @@
 import AppKit
 import ScopeEngine
 
-/// Icon plus name. Symlinks and aliases get Finder's small arrow badge.
+/// Icon plus name, with the item's colour tags as dots after the name.
+/// Symlinks and aliases get Finder's small arrow badge.
 @MainActor
 final class FileNameCell: NSTableCellView {
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
     private let badge = NSImageView()
+    private let dots = TagDotsView()
 
     init() {
         super.init(frame: .zero)
@@ -20,7 +22,12 @@ final class FileNameCell: NSTableCellView {
         badge.contentTintColor = Palette.primaryText
         name.lineBreakMode = .byTruncatingMiddle
         name.textColor = Palette.primaryText
-        for view in [icon, name, badge] as [NSView] {
+        // The name gives way (truncating in the middle) before the tag dots do.
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        dots.setContentCompressionResistancePriority(.required, for: .horizontal)
+        dots.setContentHuggingPriority(.required, for: .horizontal)
+        dots.isHidden = true
+        for view in [icon, name, badge, dots] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -34,15 +41,19 @@ final class FileNameCell: NSTableCellView {
             badge.leadingAnchor.constraint(equalTo: icon.leadingAnchor, constant: -1),
             badge.bottomAnchor.constraint(equalTo: icon.bottomAnchor, constant: 1),
             name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
-            name.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
             name.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dots.leadingAnchor.constraint(equalTo: name.trailingAnchor),
+            dots.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -2),
+            dots.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(with item: FileItem) {
+    /// `tags` are the item's Finder tags, once they've been read.
+    func configure(with item: FileItem, tags: [String] = []) {
+        dots.show(tags)
         name.stringValue = item.name
         name.alphaValue = item.isHidden ? 0.55 : 1
         icon.alphaValue = item.isHidden ? 0.55 : 1

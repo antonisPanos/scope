@@ -56,6 +56,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     var nodesByURL: [URL: FileNode] = [:]
     private var tagCache: [URL: [String]] = [:]
     private var tagLoads: Set<URL> = []
+    /// Cached tags that may be out of date: still shown, but read again.
+    private(set) var staleTags: Set<URL> = []
     private var tagGeneration = 0
     private let headerView = NSTableHeaderView()
     private var observers: [NSObjectProtocol] = []
@@ -152,12 +154,13 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     func modelDidChange(_ change: BrowserModel.Change) {
         if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
             tagGeneration += 1
-            tagCache = [:]
             tagLoads = []
+            staleTags = Set(tagCache.keys)
         }
         if change.contains(.location) {
             nodesByURL = [:]
             tagCache = [:]
+            staleTags = []
         }
         if change.contains(.viewMode) || change.contains(.location) { applyViewMode() }
         if change.contains(.sort) { applySortIndicator() }
@@ -166,14 +169,12 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         } else if change.contains(.itemsUpdated) {
             applyRowChanges()
         }
-        if change.contains(.metadata),
-            let column = outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.tags.identifier })
-        {
+        if change.contains(.metadata) {
+            // Read the tags on screen again; only rows whose tags changed are
+            // redrawn, so a rename being typed isn't interrupted.
             let visible = outlineView.rows(in: outlineView.visibleRect)
-            if visible.length > 0 {
-                outlineView.reloadData(
-                    forRowIndexes: IndexSet(integersIn: visible.location..<NSMaxRange(visible)),
-                    columnIndexes: [column])
+            for row in visible.location..<NSMaxRange(visible) {
+                if let node = outlineView.item(atRow: row) as? FileNode { _ = tags(for: node.item) }
             }
         }
         if !change.isDisjoint(with: [.anyItems, .sort]) {
@@ -245,12 +246,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         nodesByURL = reused
         outlineView.reloadData()
 
-        if !model.pendingSelection.isEmpty {
-            // Kept until the item shows up: the first update after navigating is empty.
-            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
-        } else {
-            select(selected, scroll: false)
-        }
+        // A pending selection is kept until the item shows up: the first
+        // update after navigating is empty.
+        if !selectPending() { select(selected, scroll: false) }
     }
 
     /// Updates only the top-level rows that changed on disk, so expanded
@@ -280,7 +278,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
         outlineView.endUpdates()
         for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
-        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
+        selectPending()
     }
 
     private func reloadVisibleNames() {
@@ -304,6 +302,13 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     @discardableResult
     func select(_ urls: [URL], scroll: Bool) -> Bool {
+        let rows = rows(for: urls)
+        outlineView.selectRowIndexes(rows, byExtendingSelection: false)
+        if scroll, let first = rows.first { outlineView.scrollRowToVisible(first) }
+        return !rows.isEmpty
+    }
+
+    private func rows(for urls: [URL]) -> IndexSet {
         let wanted = Set(urls.map(\.standardizedFileURL))
         var rows = IndexSet()
         for row in 0..<outlineView.numberOfRows {
@@ -312,9 +317,19 @@ final class FileListViewController: NSViewController, FileBrowsingView {
                 rows.insert(row)
             }
         }
-        outlineView.selectRowIndexes(rows, byExtendingSelection: false)
-        if scroll, let first = rows.first { outlineView.scrollRowToVisible(first) }
-        return !rows.isEmpty
+        return rows
+    }
+
+    /// Selects the items the model is waiting to select, once they're here.
+    /// Until then the user's selection stays: a pending item that never
+    /// shows up (Back to a folder that doesn't hold the one left) must not
+    /// clear it on every change on disk.
+    @discardableResult
+    private func selectPending() -> Bool {
+        guard !model.pendingSelection.isEmpty, !rows(for: model.pendingSelection).isEmpty else { return false }
+        select(model.pendingSelection, scroll: true)
+        model.pendingSelection = []
+        return true
     }
 
     func focus() {
@@ -348,8 +363,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     // MARK: - Tags, loaded only for rows on screen
 
     func tags(for item: FileItem) -> [String]? {
-        if let cached = tagCache[item.url] { return cached }
-        guard !tagLoads.contains(item.url) else { return nil }
+        let cached = tagCache[item.url]
+        if let cached, !staleTags.contains(item.url) { return cached }
+        guard !tagLoads.contains(item.url) else { return cached }
         tagLoads.insert(item.url)
         let engine = model.engine
         let url = item.url
@@ -358,17 +374,26 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             let tags = (try? await engine.tags(for: url)) ?? []
             guard let self, self.tagGeneration == generation else { return }
             self.tagLoads.remove(url)
+            self.staleTags.remove(url)
+            let shown = self.tagCache[url] ?? []
             self.tagCache[url] = tags
+            guard tags != shown else { return }
             guard let node = self.nodesByURL[url] ?? self.findNode(url) else { return }
             let row = self.outlineView.row(forItem: node)
-            if row >= 0,
-                let column = self.outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.tags.identifier }
-                )
-            {
-                self.outlineView.reloadData(forRowIndexes: [row], columnIndexes: [column])
+            if row >= 0 {
+                self.outlineView.reloadData(forRowIndexes: [row], columnIndexes: self.tagColumns)
             }
         }
-        return nil
+        return cached
+    }
+
+    /// The columns that show tags: the name (as dots) and the Tags column.
+    private var tagColumns: IndexSet {
+        IndexSet(
+            outlineView.tableColumns.indices.filter {
+                let id = outlineView.tableColumns[$0].identifier
+                return id == Column.name.identifier || id == Column.tags.identifier
+            })
     }
 
     private func findNode(_ url: URL) -> FileNode? {

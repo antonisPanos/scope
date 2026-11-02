@@ -32,9 +32,11 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   user's real files, so only browse and look; anything that changes files happens in
   `~/ScopeScratch` only, and only in Scope Dev.
 - The main thread never touches disk. Copies write under `.scope-partial-` names and
-  rename into place; never overwrite; delete always means Trash. The one exception
-  (owner's decision on #45): on a disk with no Trash, after the user confirms a dialog
-  that names the disk and every item, with Cancel as the default and no "apply to all".
+  rename into place; never overwrite; delete always means Trash. Two exceptions, both
+  only after the user confirms a dialog that names the disk and every item, with Cancel
+  as the default and no "apply to all": a disk with no Trash (owner's decision on #45),
+  and Delete Immediately (⌥⌘⌫, owner's request 2026-11-02), which asks once per disk
+  before anything is removed.
 
 ## Build and test
 
