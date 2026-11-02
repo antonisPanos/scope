@@ -22,6 +22,16 @@ public struct FileEngine: Sendable {
     /// one. Always nil in the app.
     var trashRefusal: (@Sendable (URL) -> Bool)?
 
+    /// Where trashed items go: the system Trash in the app. Tests set a
+    /// folder of their own, so nothing they trash can reach a real Trash.
+    var trash: TrashLocation = .system
+
+    enum TrashLocation: Sendable {
+        case system
+        /// Items are renamed into this folder, which must be on their disk.
+        case folder(URL)
+    }
+
     /// Tests only: an error number to fail reading a file's data with, as a
     /// failing disk would. Always nil in the app.
     var readFault: (@Sendable (String) -> Int32?)?
@@ -172,9 +182,19 @@ public struct FileEngine: Sendable {
         if let trashRefusal, trashRefusal(target) {
             throw CocoaError(.featureUnsupported, userInfo: [NSFilePathErrorKey: target.path])
         }
-        var resulting: NSURL?
-        try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
-        return resulting as URL?
+        switch trash {
+        case .system:
+            var resulting: NSURL?
+            try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
+            return resulting as URL?
+        case .folder(let folder):
+            let trashed = try pathGuard.checkWriteLocation(
+                folder.appendingPathComponent(UUID().uuidString + "-" + target.lastPathComponent))
+            guard Self.renameExclusively(target.path, to: trashed.path) else {
+                throw FileEngineError.posix("Move to Trash", target.path)
+            }
+            return trashed
+        }
     }
 
     /// Removes partial items a crashed or killed copy left in `directory`.
