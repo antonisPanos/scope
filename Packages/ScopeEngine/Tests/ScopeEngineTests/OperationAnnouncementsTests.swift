@@ -79,6 +79,12 @@ import Testing
         #expect(changes.last?.removed == ["b.txt"])
     }
 
+    @Test func namesTheOperationThatMadeTheChange() async throws {
+        let first = try await run(.newFolder(in: disk.work, name: "one"))
+        let second = try await run(.newFolder(in: disk.work, name: "two"))
+        #expect(heard(in: disk.work).map(\.operation) == [first, second])
+    }
+
     @Test func announcesAMoveInBothFolders() async throws {
         try disk.write("a.txt", "a")
         try FileManager.default.createDirectory(at: disk.url("sub"), withIntermediateDirectories: true)

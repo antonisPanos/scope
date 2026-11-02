@@ -46,7 +46,7 @@ public actor OperationCenter {
     }
 
     private final class Entry {
-        let id = UUID()
+        let id: UUID
         let operation: FileOperation
         let control = OperationControl()
         let undo: UndoRecorder
@@ -74,7 +74,13 @@ public actor OperationCenter {
         init(operation: FileOperation, disk: dev_t, announcements: OperationAnnouncements) {
             self.operation = operation
             self.disk = disk
-            undo = UndoRecorder { change in announcements.announce(change) }
+            let id = UUID()
+            self.id = id
+            undo = UndoRecorder { change in
+                var change = change
+                change.operation = id
+                announcements.announce(change)
+            }
             changedPaths = operation.changedItems.map(OperationCenter.lockKey)
             itemPaths = (operation.touchedItems + operation.changedItems).map(OperationCenter.lockKey)
             destinationPaths = [operation.destinationFolder].compactMap { $0 }.map(OperationCenter.lockKey)

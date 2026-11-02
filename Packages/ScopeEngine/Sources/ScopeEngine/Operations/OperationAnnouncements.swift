@@ -7,11 +7,15 @@ public struct FolderItemsChanged: Sendable, Equatable {
     public let folder: URL
     public let added: Set<String>
     public let removed: Set<String>
+    /// The operation that made the change, as `OperationCenter.enqueue`
+    /// returned it, so the window that started it can select what it added.
+    public internal(set) var operation: UUID?
 
-    public init(folder: URL, added: Set<String> = [], removed: Set<String> = []) {
+    public init(folder: URL, added: Set<String> = [], removed: Set<String> = [], operation: UUID? = nil) {
         self.folder = folder
         self.added = added
         self.removed = removed
+        self.operation = operation
     }
 
     /// Every name that changed, for re-reading just those.
