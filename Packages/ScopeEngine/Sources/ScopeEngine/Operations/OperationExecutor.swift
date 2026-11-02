@@ -198,7 +198,7 @@ extension FileEngine {
     private func placeBack(_ trashed: URL, at original: URL) throws {
         let from = try pathGuard.checkWriteLocation(trashed)
         let to = try pathGuard.checkWriteLocation(original)
-        guard renamex_np(from.path, to.path, UInt32(RENAME_EXCL)) == 0 else {
+        guard Self.renameExclusively(from.path, to: to.path) else {
             throw FileEngineError.posix("Put back", from.path)
         }
     }
