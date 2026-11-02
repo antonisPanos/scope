@@ -370,7 +370,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .changedSince(let names):
             "\(names.map { "“\($0)”" }.joined(separator: ", ")) changed since, so nothing was undone."
         case .mountFailed(let message): message
-        case .needsUnsandboxedBuild: "Mounting disk images needs the “Scope Dev (No Sandbox)” build."
+        case .needsUnsandboxedBuild: "Mounting disk images doesn't work in a sandboxed build."
         case .notEnoughSpace(let needed, let available, let volume):
             "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
                 + "and \(Self.bytes(available)) is free. Nothing was copied."

@@ -11,7 +11,6 @@ You need macOS 27.2 and Xcode 27.
 git clone git@github.com:antonisPanos/scope.git
 cd scope
 make setup      # git hooks, and Config/Local.xcconfig for your signing team
-make testdisk   # the throwaway test disks Scope Dev works on
 make build      # builds Scope Dev
 make test       # engine tests
 ```
@@ -20,11 +19,13 @@ Run `make` to see every target.
 
 ## Safety first
 
-Scope moves and deletes files, so development never touches real ones.
+Scope moves and deletes files, so development never changes real ones.
 
-- Scope Dev, the build you run while working, can only reach the test disks
-  (`/Volumes/ScopeTest`, `ScopeTest2`, `ScopeTestCS`). Everything else is dimmed.
-- Don't launch the release `Scope` build while developing: it reads your real home folder.
+- Scope Dev, the build you run while working, reads anywhere but changes files only
+  inside `~/ScopeScratch` (Go > Scratch Folder creates it). Every other change is refused.
+- The release `Scope` build is read-only until `SCOPE_ALLOW_WRITES` is set.
+- Engine tests work in temporary folders and throwaway disk images (`TestVolume`), never
+  in your home folder or your Trash.
 - All file access goes through `FileEngine` in `Packages/ScopeEngine`, and every
   path passes `PathGuard` first. Deletes always go to the Trash (on a disk with
   no Trash, only after the user confirms the items by name).
@@ -82,4 +83,4 @@ CI checks the PR title.
 
 - Fill in the template: what changed and how you tested it.
 - CI must be green: engine tests, and the app build once GitHub's runners have the macOS 27.2 SDK.
-- Attach screenshots for anything visible. Take them in Scope Dev on the test disks.
+- Attach screenshots for anything visible. Take them in Scope Dev, in `~/ScopeScratch` or a folder with nothing private in it.

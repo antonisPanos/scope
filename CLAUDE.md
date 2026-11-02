@@ -18,21 +18,22 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 ## Safety rules (never relax these)
 
 - All file system access goes through `FileEngine` in `Packages/ScopeEngine`, and every
-  path passes `PathGuard` first. Development builds (`SCOPE_DEV`) restrict it to the
-  test disks in `BuildIdentity.testDiskRoots`.
+  path passes `PathGuard` first. Neither build runs in the App Sandbox.
+- Development builds (`SCOPE_DEV`, "Scope Dev") use `PathGuard.writesOnlyUnder`: they read
+  anywhere but change files only inside `~/ScopeScratch` (`BuildIdentity.scratchFolder`).
 - The release build uses `PathGuard.readOnly` until `SCOPE_ALLOW_WRITES` is set in
-  `Config/Scope.xcconfig`. Only the owner decides to set it, after the MVP gate.
+  `Config/Scope.xcconfig`. Only the owner sets it; never add it yourself.
 - Engine write operations must call `checkWriteLocation`, never only `checkLocation`.
-- Tests that need real disk side effects (Trash) run on `/Volumes/ScopeTest` only and
-  skip when it isn't mounted. Never let a test touch the user's real Trash or home.
-- Never run Scope Dev, tests or scripts against real user files. Engine tests use temp
-  folders with a restricted guard; manual testing uses `/Volumes/ScopeTest*` only.
+- Engine tests use temp folders with a restricted guard, and throwaway disk images
+  (`TestVolume`) for anything with disk side effects (Trash, moves between disks). Never let
+  a test touch the user's real Trash, home or files. App tests never write files.
+- Scope Dev and Scope may be launched over Remote Control to check a change. They read the
+  user's real files, so only browse and look; anything that changes files happens in
+  `~/ScopeScratch` only, and only in Scope Dev.
 - The main thread never touches disk. Copies write under `.scope-partial-` names and
   rename into place; never overwrite; delete always means Trash. The one exception
   (owner's decision on #45): on a disk with no Trash, after the user confirms a dialog
   that names the disk and every item, with Cancel as the default and no "apply to all".
-- Keep the test disk list in sync in three places: `BuildIdentity.testDiskRoots`,
-  `Config/ScopeDev.entitlements`, `scripts/testdisk.sh`.
 
 ## Build and test
 
@@ -41,21 +42,18 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   other's timing checks.
 - App: `xcodebuild -project Scope.xcodeproj -scheme "Scope Dev" -derivedDataPath build/DerivedData build`.
 - App tests: `make app-test` runs `ScopeTests/` (Swift Testing) hosted in Scope Dev, so they run
-  sandboxed and guarded. Scope Dev opens no window when it hosts tests (`AppDelegate.isHostingTests`).
+  guarded. Scope Dev opens no window when it hosts tests (`AppDelegate.isHostingTests`).
   New files in `ScopeTests/` are picked up automatically, like `Scope/`.
-- Schemes: `Scope Dev` (sandboxed), `Scope Dev (No Sandbox)` (for disk image mounting), `Scope` (release).
+- Schemes: `Scope Dev` (development, writes only in `~/ScopeScratch`) and `Scope` (release).
 - The Xcode project is hand-written (objectVersion 77, synchronized folder `Scope/`), so new
   files in `Scope/` are picked up automatically. Build settings live in `Config/*.xcconfig`.
 - `Config/Local.xcconfig` (git-ignored) sets the signing team.
 - Screen capture and accessibility are not granted to the terminal. To check the app,
   run Scope Dev and drive it with `scripts/devhook.swift` (compile it once:
   `swiftc -O -o build/devhook scripts/devhook.swift`): commands, typed paths, sidebar picks,
-  `state` (logged) and `snapshot:<name>` (a PNG of the window). Snapshots from the sandboxed
-  build land in its container, which the terminal can't read; use the "Scope Dev (No
-  Sandbox)" build for snapshots. Read results with
+  `state` (logged) and `snapshot:<name>` (a PNG of the window). Read results with
   `/usr/bin/log show --last 30s --predicate 'subsystem == "com.antonispanos.scope"'`.
   Snapshots don't render the sidebar (vibrancy); check it through `state`.
-- Don't launch the release "Scope" build: it would read the user's real home folder.
 - App layout: `Scope/Browser` (window, model, list, path bar), `Scope/Sidebar`,
   `Scope/Commands` (one command list feeds the menus and the Cmd+K palette), `Scope/Theme`.
 - Extract parses archives in `ScopeArchiveService/`, an XPC service embedded in the app and
@@ -66,7 +64,6 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   against the startup disk, whose Trash is the user's.
 - If `hdiutil`/`diskutil image attach` hangs, it is usually waiting on a macOS authorization
   prompt on the user's screen: ask them to look for one. Don't kill system processes.
-- Recents and Tags come from Spotlight. `scripts/testdisk.sh` turns on indexing for the test
-  disks and imports the fixture folders; if they look empty, run `mdimport /Volumes/ScopeTest/attributes/tagged`.
+- Recents and Tags come from Spotlight, over the whole computer.
 - GitHub's runners top out at macOS 26, so CI runs the engine tests (engine targets macOS 15)
   and skips the app build until a runner has the macOS 27.2 SDK.

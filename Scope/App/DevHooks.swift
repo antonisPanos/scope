@@ -10,7 +10,7 @@ import ScopeEngine
 /// whose object is one of:
 ///   "command:<id>"     runs a command from Commands.all in the key window
 ///   "go:<path>"        goes to a typed path in the key window
-///   "snapshot:<name>"  renders the key window (or sheet, or palette) into <container tmp>/<name>.png;
+///   "snapshot:<name>"  renders the key window (or sheet, or palette) into <temporary folder>/<name>.png;
 ///                      names are A-Z, a-z, 0-9, - and _ only
 ///   "appearance:dark" / "appearance:light" / "appearance:system"
 ///   "sidebar:<title>"  opens the sidebar item with that title
@@ -25,8 +25,8 @@ import ScopeEngine
 ///   "state"            logs the key window's location, items and the sidebar
 ///
 /// For example: `swift scripts/devhook.swift command:viewList`.
-/// Snapshots go to the app's own sandbox container, never to the test disk
-/// or anywhere else, and none of this is compiled into the real app.
+/// Snapshots go to the temporary folder and nowhere else, and none of this is
+/// compiled into the real app.
 @MainActor
 enum DevHooks {
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "DevHooks")

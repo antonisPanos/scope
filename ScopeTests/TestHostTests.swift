@@ -1,10 +1,11 @@
 import AppKit
+import ScopeEngine
 import Testing
 
 @testable import Scope
 
-/// The tests run inside Scope Dev, which must stay the sandboxed, guarded
-/// development build while they do.
+/// The tests run inside Scope Dev, which must stay the guarded development
+/// build while they do: it reads anywhere but changes only the scratch folder.
 @MainActor
 struct TestHostTests {
     @Test func theHostIsTheDevelopmentBuild() {
@@ -13,10 +14,19 @@ struct TestHostTests {
         #expect(AppDelegate.isHostingTests)
     }
 
-    @Test func theGuardRefusesTheHomeFolder() {
+    @Test func theGuardChangesOnlyTheScratchFolder() throws {
         let pathGuard = BuildIdentity.current.pathGuard
-        #expect(!pathGuard.permits(BuildIdentity.realHome))
-        #expect(!pathGuard.permits(URL(fileURLWithPath: "/")))
+        // Only asks the guard; nothing is written.
+        #expect(pathGuard.permits(BuildIdentity.realHome))
+        for url in [
+            BuildIdentity.realHome, BuildIdentity.realHome.appendingPathComponent("Documents/new.txt"),
+            URL(fileURLWithPath: "/"), URL(fileURLWithPath: "/tmp/new.txt"),
+        ] {
+            #expect(throws: PathGuardViolation.self, "\(url.path)") { try pathGuard.checkWriteLocation(url) }
+        }
+        let inside = BuildIdentity.scratchFolder.appendingPathComponent("new.txt")
+        #expect(try pathGuard.checkWriteLocation(inside).lastPathComponent == "new.txt")
+        #expect(throws: PathGuardViolation.self) { try pathGuard.checkModifiable(BuildIdentity.scratchFolder) }
     }
 
     @Test func theHostOpensNoWindow() {

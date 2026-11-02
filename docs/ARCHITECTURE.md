@@ -10,7 +10,6 @@ a file engine in its own Swift package. Nothing touches the disk except through 
 | `Scope/` | The app (AppKit shell, SwiftUI where scale doesn't matter) |
 | `Packages/ScopeEngine/` | The file engine: listing and file operations, all behind the path guard |
 | `Config/` | Build settings and entitlements for each build |
-| `scripts/testdisk.sh` | Builds and manages the throwaway test disks |
 | `scripts/make-icons.swift` | Redraws the app icons |
 | `scripts/devhook.swift` | Drives a running Scope Dev from the terminal (development only) |
 
@@ -40,22 +39,25 @@ a file engine in its own Swift package. Nothing touches the disk except through 
 
 The engine targets macOS 15 so its tests run on GitHub's hosted runners; the app needs macOS 27.2.
 
-## The three builds
+## The two builds
 
 | Scheme | App | Sandbox | Path guard | Use it for |
 | --- | --- | --- | --- | --- |
-| Scope Dev | Scope Dev (amber squares) | On, test disks only | Test disks only | All testing |
-| Scope Dev (No Sandbox) | Scope Dev | Off | Test disks only | Mounting disk images (hdiutil can't run sandboxed) |
-| Scope | Scope (white squares) | Off | Read-only: every change is refused | The real app, after the MVP gate |
+| Scope Dev | Scope Dev (amber squares) | Off | Reads anywhere, changes only `~/ScopeScratch` | All testing |
+| Scope | Scope (white squares) | Off | Read-only until `SCOPE_ALLOW_WRITES` | The real app |
 
-Development builds can only touch `/Volumes/ScopeTest`, `/Volumes/ScopeTest2`
-and `/Volumes/ScopeTestCS`. The App Sandbox enforces that in the kernel, and
-the engine's path guard enforces it again in Scope's own code, after
-resolving symlinks, and logs a fault for every refusal.
+Neither build runs in the App Sandbox: a file manager has to reach every
+folder, and mounting disk images (hdiutil) can't run sandboxed. The engine's
+path guard does the limiting, in Scope's own code, after resolving symlinks,
+and logs a fault for every refusal.
+
+Scope Dev may read anything, but it changes files only inside `~/ScopeScratch`
+(`PathGuard.writesOnlyUnder`). The folder itself can't be renamed, moved or
+trashed; Go > Scratch Folder creates it.
 
 The real Scope build can read anything but changes nothing: its engine
 refuses every write until `SCOPE_ALLOW_WRITES` is added to
-`Config/Scope.xcconfig`, which is a deliberate step for after the MVP gate.
+`Config/Scope.xcconfig`, a step only the owner takes.
 
 ## Tests
 
@@ -65,20 +67,7 @@ cd Packages/ScopeEngine && swift test
 
 In Xcode, choose the ScopeEngine scheme and press Cmd+U. Engine tests run in
 fresh temporary folders with a path guard limited to that folder, never on real
-files. The Trash test needs a disk of its own, so it runs in a scratch folder on
-the test disk when that is mounted and is skipped otherwise; it never uses your
-real Trash. CI runs them on every push.
-
-## Test disks
-
-`scripts/testdisk.sh` makes three growable APFS images in `~/ScopeTestDisks`
-and mounts them:
-
-- `/Volumes/ScopeTest`: up to 5 GB, with fixtures for Unicode names, symlinks
-  and aliases, packages, attributes and flags, large files, a folder of 100,000
-  files, archives (including malicious ones) and small disk images. See its README.txt.
-- `/Volumes/ScopeTest2`: a small second disk for moves between disks.
-- `/Volumes/ScopeTestCS`: a small case-sensitive disk for name clashes.
-
-`reset` rebuilds them from scratch, `eject` and `mount` do what they say,
-`status` shows what exists, and `destroy` deletes the images.
+files. Tests with disk side effects (Trash, moves between disks, FAT volumes,
+the 100,000-file speed checks) mount a small sparse disk image of their own
+(`TestVolume`) in the temporary folder and detach and delete it afterwards, so
+they never use your real Trash. CI runs them on every push.

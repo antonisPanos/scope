@@ -3,7 +3,7 @@ import Foundation
 /// Runs a Spotlight query and hands back the matching paths, then keeps
 /// reporting as the index changes. Results come from the Spotlight index, not
 /// from reading the disk, so this runs on the main thread like NSMetadataQuery
-/// expects. Development builds scope every query to the test disks.
+/// expects. Queries cover the whole computer.
 @MainActor
 final class SpotlightQuery {
     private let query = NSMetadataQuery()
@@ -51,12 +51,8 @@ final class SpotlightQuery {
         onResults(urls)
     }
 
-    /// Where queries look: the test disks in development builds, otherwise
-    /// the whole computer.
-    static var scopes: [Any] {
-        let identity = BuildIdentity.current
-        return identity.isDevelopment ? identity.allowedRoots : [NSMetadataQueryLocalComputerScope]
-    }
+    /// Where queries look: the whole computer.
+    static var scopes: [Any] { [NSMetadataQueryLocalComputerScope] }
 
     /// Files used in the last 30 days, newest first, like Finder's Recents.
     static func recents(onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {

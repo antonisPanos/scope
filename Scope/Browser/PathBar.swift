@@ -26,7 +26,7 @@ final class PathBar: NSView {
         pathControl.orientation = .horizontal
         pathControl.spacing = 6
 
-        field.placeholderString = "Type a path, like ~/Documents or /Volumes/ScopeTest"
+        field.placeholderString = "Type a path, like ~/Documents or /Volumes"
         field.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         field.bezelStyle = .roundedBezel
         // A quiet field: no animated focus ring, just the bezel.
@@ -163,8 +163,8 @@ final class PathBar: NSView {
         return url.path
     }
 
-    /// Breadcrumbs from the volume down: test disk paths start at the disk,
-    /// everything else at the startup disk, as in Finder.
+    /// Breadcrumbs from the volume down: paths on another disk start at that
+    /// disk, everything else at the startup disk, as in Finder.
     private static func crumbURLs(for url: URL) -> [URL] {
         var urls: [URL] = []
         var current = url.standardizedFileURL

@@ -1,5 +1,5 @@
-// "Scope Dev": the build used for all testing. Runs in the App Sandbox with
-// access only to the test disks, and its path guard refuses anything else.
+// "Scope Dev": the build used for all testing. No App Sandbox; its path guard
+// lets it read anywhere and change files only in ~/ScopeScratch.
 #include "Base.xcconfig"
 
 PRODUCT_NAME = Scope Dev

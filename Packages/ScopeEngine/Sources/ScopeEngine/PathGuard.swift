@@ -3,8 +3,9 @@ import os
 
 /// Decides which paths the engine may touch.
 ///
-/// Development builds use a restricted guard that only allows the test disks.
-/// Every path is resolved through the file system first (symlinks, `/tmp` vs
+/// Development builds read anywhere but change files only inside one scratch
+/// folder (`writesOnlyUnder`); engine tests restrict reads and writes to their
+/// own temporary folders (`restricted`). Every path is resolved through the file system first (symlinks, `/tmp` vs
 /// `/private/tmp`, and so on), so a symlink or a dropped-in file can't lead the
 /// engine outside the allowed roots. Anything that can't be resolved cleanly is
 /// refused: the guard fails closed.
@@ -19,6 +20,10 @@ public struct PathGuard: Sendable {
     /// Whether operations that change the disk are allowed at all. When false,
     /// every write is refused, wherever it points.
     public let allowsWrites: Bool
+
+    /// When set, writes are allowed only inside these folders (resolved paths,
+    /// the folders themselves included), whatever `policy` allows for reading.
+    public let writeRoots: [String]?
 
     /// Items that may never be renamed, moved or trashed themselves (what is
     /// inside them can be), stored lowercased and precomposed so a differently
@@ -40,9 +45,23 @@ public struct PathGuard: Sendable {
         PathGuard(policy: .restricted(roots: roots.map { resolveRoot($0.path) }), allowsWrites: true)
     }
 
-    private init(policy: Policy, allowsWrites: Bool, protectedItems: [String] = PathGuard.defaultProtectedItems) {
+    /// Every absolute path may be read, but changes are allowed only inside
+    /// `roots`. The roots themselves may be created, but never renamed, moved
+    /// or trashed. Scope Dev uses this with its scratch folder.
+    public static func writesOnlyUnder(_ roots: [URL]) -> PathGuard {
+        let resolved = roots.map { resolveRoot($0.path) }
+        return PathGuard(
+            policy: .unrestricted, allowsWrites: true, writeRoots: resolved,
+            protectedItems: defaultProtectedItems + resolved)
+    }
+
+    private init(
+        policy: Policy, allowsWrites: Bool, writeRoots: [String]? = nil,
+        protectedItems: [String] = PathGuard.defaultProtectedItems
+    ) {
         self.policy = policy
         self.allowsWrites = allowsWrites
+        self.writeRoots = writeRoots
         self.protectedItems = Set(protectedItems.map(Self.protectionKey))
     }
 
@@ -93,7 +112,11 @@ public struct PathGuard: Sendable {
     @discardableResult
     public func checkWriteLocation(_ url: URL) throws(PathGuardViolation) -> URL {
         guard allowsWrites else { throw fail(url, resolved: nil, reason: .writesDisabled) }
-        return try checkLocation(url)
+        let resolved = try checkLocation(url)
+        if let writeRoots, !Self.isInside(resolved.path, anyOf: writeRoots) {
+            throw fail(url, resolved: resolved.path, reason: .outsideWritableFolders)
+        }
+        return resolved
     }
 
     /// Like `checkWriteLocation`, for an existing item about to be renamed,
@@ -160,13 +183,16 @@ public struct PathGuard: Sendable {
         guard case .restricted(let roots) = policy else {
             return .success(URL(fileURLWithPath: resolved))
         }
-        let allowed = roots.contains { root in
-            resolved == root || resolved.hasPrefix(root.hasSuffix("/") ? root : root + "/")
-        }
-        guard allowed else {
+        guard Self.isInside(resolved, anyOf: roots) else {
             return .failure(PathGuardViolation(path: url.path, resolvedPath: resolved, reason: .outsideAllowedRoots))
         }
         return .success(URL(fileURLWithPath: resolved))
+    }
+
+    private static func isInside(_ path: String, anyOf roots: [String]) -> Bool {
+        roots.contains { root in
+            path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
+        }
     }
 
     private func log(_ violation: PathGuardViolation) -> PathGuardViolation {
@@ -239,8 +265,7 @@ public struct PathGuard: Sendable {
     }
 }
 
-/// Thrown when the path guard refuses a path. In development builds this means
-/// Scope tried to touch something outside the test disks, which is a bug.
+/// Thrown when the path guard refuses a path.
 public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, LocalizedError {
     public enum Reason: Sendable, Equatable {
         case outsideAllowedRoots
@@ -249,6 +274,7 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
         case parentReference
         case unresolvable
         case writesDisabled
+        case outsideWritableFolders
         case protectedItem
     }
 
@@ -270,6 +296,8 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
             "\(path) could not be resolved (a dangling or looping symlink)"
         case .writesDisabled:
             "\(path) can't be changed: this build is read-only"
+        case .outsideWritableFolders:
+            "\(path) can't be changed: this build only changes files in its scratch folder"
         case .protectedItem:
             "\((path as NSString).lastPathComponent) can't be renamed, moved or trashed because macOS needs it"
         }

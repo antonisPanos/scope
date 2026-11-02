@@ -3,15 +3,28 @@ import Testing
 
 @testable import ScopeEngine
 
-/// Speed checks against the test disk's folder of 100,000 files. Targets from
-/// the scoping doc: a 10,000-item folder lists in under 500 ms. These record
-/// timings and fail only far beyond the target, to stay stable on busy machines.
-@Suite(.enabled(if: Sandbox.testDiskMounted, "needs the test disk"))
-struct PerformanceTests {
-    let engine = FileEngine(pathGuard: .restricted(to: [Sandbox.testDisk]))
-    let many = Sandbox.testDisk.appendingPathComponent("many")
+/// Speed checks against a folder of 100,000 files on a throwaway disk image.
+/// Targets from the scoping doc: a 10,000-item folder lists in under 500 ms.
+/// These record timings and fail only far beyond the target, to stay stable on
+/// busy machines. One test, so the folder is built once and the image is
+/// detached when it ends.
+@Suite struct PerformanceTests {
+    static let fileCount = 100_000
 
-    @Test func listsAndSortsTheBigFolder() async throws {
+    @Test func bigFolderListsSortsUpdatesAndSearches() async throws {
+        let volume = try TestVolume(name: "ScopePerf", sizeMB: 1024)
+        let many = volume.url("many")
+        try FileManager.default.createDirectory(at: many, withIntermediateDirectories: true)
+        let built = try ContinuousClock().measure { try Self.makeEmptyFiles(Self.fileCount, in: many) }
+        print("Made \(Self.fileCount) files in \(built)")
+        let engine = FileEngine(pathGuard: .restricted(to: [volume.work]))
+
+        let all = try await listsAndSortsTheBigFolder(many, engine: engine)
+        for count in [10_000, 100_000] { try updatesABigListingInPlace(all, count: count) }
+        try await searchesTheWholeVolume(volume.work, engine: engine)
+    }
+
+    private func listsAndSortsTheBigFolder(_ many: URL, engine: FileEngine) async throws -> [FileItem] {
         let clock = ContinuousClock()
         var items: [FileItem] = []
         let listing = try await clock.measure {
@@ -19,17 +32,17 @@ struct PerformanceTests {
         }
         let sorting = clock.measure { _ = FileSort(key: .name).sorted(items) }
         print("Listed \(items.count) items in \(listing), sorted by name in \(sorting)")
-        #expect(items.count >= 100_000)
+        #expect(items.count == Self.fileCount)
         // 100,000 items is ten times the target folder size, so allow ten times the time, plus slack.
         #expect(listing < .seconds(10))
         #expect(sorting < .seconds(5))
+        return items
     }
 
     /// What a change on disk costs a tab at 10,000 and 100,000 items: merging
     /// the re-read names into the listing, sorting, and working out which
     /// rows changed. Ten items change, as when a copy lands.
-    @Test(arguments: [10_000, 100_000]) func updatesABigListingInPlace(count: Int) async throws {
-        let all = try await engine.contentsOfDirectory(at: many)
+    private func updatesABigListingInPlace(_ all: [FileItem], count: Int) throws {
         try #require(all.count >= count)
         let sort = FileSort(key: .name)
         let old = sort.sorted(Array(all.prefix(count)))
@@ -51,18 +64,30 @@ struct PerformanceTests {
         #expect(elapsed < (count > 10_000 ? .seconds(3) : .milliseconds(500)))
     }
 
-    @Test func searchesTheWholeTestDisk() async throws {
+    private func searchesTheWholeVolume(_ root: URL, engine: FileEngine) async throws {
         let clock = ContinuousClock()
         var found = 0
         var firstResult: Duration?
         let start = clock.now
-        for try await batch in try engine.search(SearchQuery(text: "file-0999"), in: Sandbox.testDisk) {
+        for try await batch in try engine.search(SearchQuery(text: "file-0999"), in: root) {
             if firstResult == nil { firstResult = clock.now - start }
             found += batch.count
         }
         let total = clock.now - start
-        print("Searched the test disk in \(total), first result after \(firstResult ?? .zero), \(found) found")
+        print("Searched the volume in \(total), first result after \(firstResult ?? .zero), \(found) found")
+        // file-099900.txt to file-099999.txt
         #expect(found == 100)
         #expect(total < .seconds(15))
+    }
+
+    /// Empty files named file-000000.txt and up: no data blocks, so the image
+    /// stays small and the folder is quick to build.
+    private static func makeEmptyFiles(_ count: Int, in folder: URL) throws {
+        for index in 0..<count {
+            let path = folder.path + "/" + String(format: "file-%06d.txt", index)
+            let descriptor = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            close(descriptor)
+        }
     }
 }

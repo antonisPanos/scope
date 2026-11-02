@@ -174,9 +174,6 @@ final class SidebarStore {
     }
 
     private static func describeEjectError(_ error: Error) -> String {
-        if error is PathGuardViolation, BuildIdentity.current.isDevelopment {
-            return "Scope Dev can only eject the test disks."
-        }
         let nsError = error as NSError
         if nsError.code == NSFileWriteVolumeReadOnlyError || nsError.domain == NSCocoaErrorDomain {
             return "An app may still be using files on it. Close them and try again. (\(error.localizedDescription))"

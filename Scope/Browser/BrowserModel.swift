@@ -447,18 +447,9 @@ final class BrowserModel {
     /// Runs off the main thread: it may check whether the folder still exists.
     nonisolated static func describe(_ error: Error, at url: URL) -> String {
         if let violation = error as? PathGuardViolation {
-            if violation.reason == .outsideAllowedRoots, BuildIdentity.current.isDevelopment {
-                return "\(url.path) is outside the test disks, so Scope Dev won't open it."
-            }
             return violation.description
         }
         if !FileManager.default.fileExists(atPath: url.path) {
-            // Only when the disk itself is gone; a missing folder on a mounted disk was deleted.
-            if let disk = BuildIdentity.testDiskRoots.first(where: {
-                url.path == $0.path || url.path.hasPrefix($0.path + "/")
-            }), !FileManager.default.fileExists(atPath: disk.path) {
-                return "\(disk.lastPathComponent) isn't mounted. Run scripts/testdisk.sh mount, then reload with Cmd+R."
-            }
             return "\(url.path) doesn't exist anymore."
         }
         return error.localizedDescription

@@ -335,7 +335,7 @@ final class BrowserViewController: NSViewController {
         }
         statusLeft.stringValue = left
         if BuildIdentity.current.isDevelopment {
-            statusRight.stringValue = "Scope Dev · test disks only"
+            statusRight.stringValue = "Scope Dev · changes only in ~/ScopeScratch"
             statusRight.textColor = Palette.warning
         } else if !model.engine.pathGuard.allowsWrites {
             statusRight.stringValue = "Read-only build"
@@ -470,9 +470,8 @@ final class BrowserViewController: NSViewController {
     private static func emptyText(for location: Location) -> String {
         switch location {
         case .folder: "This folder is empty."
-        case .recents: "Nothing opened recently" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
-        case .tag(let tag):
-            "No items are tagged \(tag)" + (BuildIdentity.current.isDevelopment ? " on the test disks." : ".")
+        case .recents: "Nothing opened recently."
+        case .tag(let tag): "No items are tagged \(tag)."
         case .search: "Nothing found."
         }
     }

@@ -5,7 +5,7 @@
 ## How it was tested
 
 - [ ] `make test` passes
-- [ ] Built and tried in Scope Dev on the test disks (never real files)
+- [ ] Built and tried in Scope Dev, changing files only in `~/ScopeScratch`
 - [ ] Screenshots attached for visible changes
 
 ## Safety

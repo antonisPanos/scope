@@ -18,7 +18,7 @@ INFOPLIST_KEY_NSHumanReadableCopyright = Personal build
 ENABLE_HARDENED_RUNTIME = YES
 
 // Reasons shown in the macOS prompts the first time Scope opens these places.
-// Only the release build reaches them; Scope Dev is sandboxed to the test disks.
+// Both builds reach them (neither is sandboxed).
 INFOPLIST_KEY_NSDesktopFolderUsageDescription = Scope shows and manages the files on your Desktop.
 INFOPLIST_KEY_NSDocumentsFolderUsageDescription = Scope shows and manages the files in your Documents folder.
 INFOPLIST_KEY_NSDownloadsFolderUsageDescription = Scope shows and manages the files in your Downloads folder.

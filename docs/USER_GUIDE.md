@@ -21,8 +21,8 @@ Finder's shortcuts wherever Finder has one.
 - Live updates: a folder on screen refreshes when its contents change.
 - Light and dark mode with Scope's palette.
 
-In Scope Dev, places outside the test disks show dimmed and can't be opened,
-and the status bar says "Scope Dev · test disks only".
+Scope Dev reads anywhere but changes files only in `~/ScopeScratch` (Go >
+Scratch Folder), and its status bar says so.
 
 ## Views and preview
 
