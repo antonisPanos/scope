@@ -83,6 +83,12 @@ extension FileEngine {
     func extract(_ archiveURL: URL, control: OperationControl, undo: UndoRecorder) async throws {
         if let problem = await extractionSpaceProblem(archiveURL) { throw OperationError.archive(problem) }
         let archivePath = try pathGuard.checkLocation(archiveURL)
+        guard let archiveFile = Self.openForReading(archivePath) else {
+            throw FileEngineError.posix("Open", archivePath.path)
+        }
+        // Only the archive we opened supplies quarantine provenance. Entry
+        // metadata from the parser must never be able to remove it.
+        let quarantine = try archivePath.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
         let folder = archivePath.deletingLastPathComponent()
         let staging = try pathGuard.checkWriteLocation(
             folder.appendingPathComponent(Self.partialPrefix + UUID().uuidString + "-extract"))
@@ -94,7 +100,8 @@ extension FileEngine {
                 $0.bytesTotal = size
                 $0.currentItem = archivePath.lastPathComponent
             }
-            try readArchive(archivePath, into: staging, control: control)
+            try readArchive(archivePath, file: archiveFile, into: staging, quarantine: quarantine, control: control)
+            try quarantineFolders(in: staging, properties: quarantine)
 
             // One top-level item comes out as itself; several go into a folder
             // named after the archive, as Archive Utility does.
@@ -132,12 +139,13 @@ extension FileEngine {
         return name.isEmpty ? "Archive" : name
     }
 
-    private func readArchive(_ archivePath: URL, into staging: URL, control: OperationControl) throws {
+    private func readArchive(
+        _ archivePath: URL, file: FileHandle, into staging: URL, quarantine: [String: Any]?, control: OperationControl
+    ) throws {
         // A bare .gz or .xz holds one compressed file without an archive around it.
         let isBareCompressed =
             ["gz", "bz2", "xz"].contains(archivePath.pathExtension.lowercased())
             && !archivePath.deletingPathExtension().pathExtension.lowercased().hasPrefix("tar")
-        guard let file = Self.openForReading(archivePath) else { throw FileEngineError.posix("Open", archivePath.path) }
         let reader: any ArchiveReading
         do {
             reader = try archiveReaders.open(file, singleFile: isBareCompressed)
@@ -250,14 +258,17 @@ extension FileEngine {
                     let done = compressedEstimate
                     control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
                 }
-                // Like copies, extracted files are on disk before they're shown.
-                guard fsync(output) == 0 else { throw FileEngineError.posix("Write", target.path) }
+                // Set quarantine before restrictive modes, and before the
+                // completed result becomes visible under its final name.
+                try applyQuarantine(quarantine, to: target)
                 fchmod(output, permissions == 0 ? 0o644 : permissions)
                 var times = [
                     timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
                     timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
                 ]
                 futimens(output, &times)
+                // Like copies, extracted files are on disk before they're shown.
+                guard fsync(output) == 0 else { throw FileEngineError.posix("Write", target.path) }
             case .other:
                 // Devices, pipes and sockets are not extracted.
                 control.skipEntry(name)
@@ -265,6 +276,31 @@ extension FileEngine {
             control.update { $0.itemsDone += 1 }
         }
         control.update { $0.bytesDone = $0.bytesTotal }
+    }
+
+    /// Includes the staging root (which may itself be the final result),
+    /// implicit parents, and app bundle roots. Never follows an archive link.
+    private func quarantineFolders(in staging: URL, properties: [String: Any]?) throws {
+        guard properties != nil else { return }
+        try applyQuarantine(properties, to: staging)
+        guard let enumerator = FileManager.default.enumerator(at: staging, includingPropertiesForKeys: nil) else {
+            throw FileEngineError.posix("Read extracted folders", staging.path)
+        }
+        for case let url as URL in enumerator {
+            try Task.checkCancellation()
+            guard let info = Self.lstatInfo(url.path) else { throw FileEngineError.posix("Read", url.path) }
+            if info.st_mode & S_IFMT == S_IFDIR { try applyQuarantine(properties, to: url) }
+        }
+    }
+
+    private func applyQuarantine(_ properties: [String: Any]?, to url: URL) throws {
+        guard let properties else { return }
+        var target = try pathGuard.checkWriteLocation(url)
+        var values = URLResourceValues()
+        // Use the public Launch Services-backed property instead of copying
+        // undocumented raw flags or granting approval to extracted code.
+        values.quarantineProperties = properties
+        try target.setResourceValues(values)
     }
 
     /// The entry's path made relative and checked: absolute paths and any
