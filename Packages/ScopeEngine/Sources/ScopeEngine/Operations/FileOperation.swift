@@ -261,6 +261,10 @@ public struct Conflict: Sendable, Equatable {
 public typealias ConflictResolver = @Sendable (Conflict) async -> (choice: ConflictChoice, applyToAll: Bool)
 
 public enum OperationError: Error, Equatable, LocalizedError {
+    static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
     case itemsBusy([String])
     case stoppedByUser
     case verificationFailed(String)
@@ -269,6 +273,9 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case undoNotPossible(String)
     case mountFailed(String)
     case needsUnsandboxedBuild
+    case notEnoughSpace(needed: Int64, available: Int64, volume: String)
+    case fileTooLarge(String, volume: String)
+    case nameNotAllowed(String, volume: String)
 
     public var errorDescription: String? {
         switch self {
@@ -281,6 +288,14 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .undoNotPossible(let reason): "Can't undo: \(reason)"
         case .mountFailed(let message): message
         case .needsUnsandboxedBuild: "Mounting disk images needs the “Scope Dev (No Sandbox)” build."
+        case .notEnoughSpace(let needed, let available, let volume):
+            "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
+                + "and \(Self.bytes(available)) is free. Nothing was copied."
+        case .fileTooLarge(let name, let volume):
+            "“\(name)” is larger than 4 GB, which \(volume) can't store (its format is FAT32). Nothing was copied."
+        case .nameNotAllowed(let name, let volume):
+            "\(volume) can't store the name “\(name)”: FAT and exFAT disks don't allow \\ / : * ? \" < > |, "
+                + "or a name ending in a space or a dot. Nothing was copied."
         }
     }
 }

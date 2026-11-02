@@ -59,6 +59,7 @@ extension FileEngine {
             $0.bytesTotal = totals.bytes
             $0.itemsTotal = totals.items
         }
+        try preflight(sources, into: destination, moving: moving)
 
         for source in sources {
             try Task.checkCancellation()
