@@ -33,7 +33,7 @@ extension FileEngine {
     /// itself if the disk gets full). For the UI to warn before starting.
     public func extractionSpaceProblem(_ archiveURL: URL) async -> String? {
         guard let archive = try? pathGuard.checkLocation(archiveURL),
-            let needed = Self.declaredUnpackedSize(archive),
+            let needed = declaredUnpackedSize(archive),
             let free = Self.freeSpace(at: archive.deletingLastPathComponent().path),
             needed > free - Self.extractionReserve(at: archive.deletingLastPathComponent().path)
         else {
@@ -54,26 +54,30 @@ extension FileEngine {
     /// The total size of an archive's entries, for formats that record it in
     /// their headers and can be read through quickly without unpacking (zip,
     /// 7z, uncompressed tar). Nil for compressed streams or unknown sizes.
-    static func declaredUnpackedSize(_ archive: URL) -> Int64? {
-        guard ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()), let reader = archive_read_new() else {
+    func declaredUnpackedSize(_ archive: URL) -> Int64? {
+        guard ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()),
+            let file = Self.openForReading(archive),
+            let reader = try? archiveReaders.open(file, singleFile: false)
+        else {
             return nil
         }
-        defer { archive_read_free(reader) }
-        archive_read_support_filter_all(reader)
-        archive_read_support_format_all(reader)
-        guard archive_read_open_filename(reader, archive.path, 64 * 1024) == ARCHIVE_OK else { return nil }
         var total: Int64 = 0
-        var entry: OpaquePointer?
-        while true {
-            let status = archive_read_next_header(reader, &entry)
-            if status == ARCHIVE_EOF { return total }
-            guard status == ARCHIVE_OK || status == ARCHIVE_WARN, let entry, archive_entry_size_is_set(entry) != 0
-            else {
-                return nil
+        do {
+            while let entry = try reader.nextEntry() {
+                guard let size = entry.size else { return nil }
+                total += max(0, size)
             }
-            total += max(0, archive_entry_size(entry))
-            archive_read_data_skip(reader)
+            return total
+        } catch {
+            return nil
         }
+    }
+
+    /// The archive, opened read-only without following a link at its own name.
+    static func openForReading(_ archive: URL) -> FileHandle? {
+        let descriptor = open(archive.path, O_RDONLY | O_NOFOLLOW)
+        guard descriptor >= 0 else { return nil }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     func extract(_ archiveURL: URL, control: OperationControl, undo: UndoRecorder) async throws {
@@ -129,24 +133,21 @@ extension FileEngine {
     }
 
     private func readArchive(_ archivePath: URL, into staging: URL, control: OperationControl) throws {
-        guard let reader = archive_read_new() else {
-            throw OperationError.archive("Couldn't start reading the archive.")
-        }
-        defer { archive_read_free(reader) }
-        archive_read_support_filter_all(reader)
-        archive_read_support_format_all(reader)
         // A bare .gz or .xz holds one compressed file without an archive around it.
         let isBareCompressed =
             ["gz", "bz2", "xz"].contains(archivePath.pathExtension.lowercased())
             && !archivePath.deletingPathExtension().pathExtension.lowercased().hasPrefix("tar")
-        if isBareCompressed { archive_read_support_format_raw(reader) }
-
-        guard archive_read_open_filename(reader, archivePath.path, 64 * 1024) == ARCHIVE_OK else {
+        guard let file = Self.openForReading(archivePath) else { throw FileEngineError.posix("Open", archivePath.path) }
+        let reader: any ArchiveReading
+        do {
+            reader = try archiveReaders.open(file, singleFile: isBareCompressed)
+        } catch {
             throw OperationError.notAnArchive(archivePath.path)
         }
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
-        defer { buffer.deallocate() }
-        var entry: OpaquePointer?
+        func damaged(_ error: ArchiveReadError) -> OperationError {
+            if case .damaged(let message) = error { return .archive(message) }
+            return .notAnArchive(archivePath.path)
+        }
         var compressedEstimate: Int64 = 0
         var writtenSinceSpaceCheck: Int64 = 0
         let reserve = Self.extractionReserve(at: staging.path)
@@ -160,85 +161,85 @@ extension FileEngine {
         while true {
             try Task.checkCancellation()
             try control.waitWhilePaused()
-            let status = archive_read_next_header(reader, &entry)
-            if status == ARCHIVE_EOF { break }
-            guard status == ARCHIVE_OK || status == ARCHIVE_WARN, let entry else {
-                throw OperationError.archive(Self.errorText(reader, fallback: "The archive is damaged."))
+            let next: ArchiveEntry?
+            do {
+                next = try reader.nextEntry()
+            } catch {
+                throw damaged(error)
             }
-            var name = archive_entry_pathname(entry).map { String(cString: $0) } ?? ""
+            guard let entry = next else { break }
+            var name = entry.name
             if isBareCompressed { name = (archivePath.lastPathComponent as NSString).deletingPathExtension }
 
             guard let relative = Self.safeRelativePath(name) else {
                 control.skipEntry(name)
-                archive_read_data_skip(reader)
                 continue
             }
-            if relative.isEmpty || relative.hasPrefix("__MACOSX") {
-                archive_read_data_skip(reader)
-                continue
-            }
+            if relative.isEmpty || relative.hasPrefix("__MACOSX") { continue }
             let target = staging.appendingPathComponent(relative)
             guard Self.parentIsSafe(relative, under: staging) else {
                 // A folder on the way is a link the archive made: writing through it could escape.
                 control.skipEntry(name)
-                archive_read_data_skip(reader)
                 continue
             }
             try FileManager.default.createDirectory(
                 at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             control.update { $0.currentItem = relative }
 
-            let type = UInt32(archive_entry_filetype(entry))
-            let permissions = archive_entry_perm(entry) & 0o777
-            switch type {
-            case AE_IFDIR:
+            let permissions = mode_t(entry.permissions & 0o777)
+            switch entry.kind {
+            case .directory:
                 if Self.lstatInfo(target.path) == nil {
                     guard mkdir(target.path, 0o755) == 0 else {
                         throw FileEngineError.posix("Create folder", target.path)
                     }
                 }
-            case AE_IFLNK:
-                guard let link = archive_entry_symlink(entry).map({ String(cString: $0) }) else { break }
+            case .symlink(let link):
+                guard !link.isEmpty else { break }
                 guard symlink(link, target.path) == 0 else { throw FileEngineError.posix("Create link", target.path) }
-            case AE_IFREG, 0:
-                if let linked = archive_entry_hardlink(entry).map({ String(cString: $0) }) {
-                    // A second name for a file extracted earlier: made as a hard
-                    // link to it, once that file is known to be a plain file
-                    // inside the staging folder.
-                    let original = Self.safeRelativePath(linked).map { staging.appendingPathComponent($0) }
-                    if let original, let relative = Self.safeRelativePath(linked), !relative.isEmpty,
-                        Self.parentIsSafe(relative, under: staging),
-                        Self.lstatInfo(original.path).map({ $0.st_mode & S_IFMT == S_IFREG }) == true,
-                        link(original.path, target.path) == 0
-                    {
-                        control.update { $0.itemsDone += 1 }
-                    } else {
-                        control.skipEntry(name)
-                    }
-                    archive_read_data_skip(reader)
-                    continue
+            case .hardlink(let linked):
+                // A second name for a file extracted earlier: made as a hard
+                // link to it, once that file is known to be a plain file
+                // inside the staging folder.
+                let original = Self.safeRelativePath(linked).map { staging.appendingPathComponent($0) }
+                if let original, let relative = Self.safeRelativePath(linked), !relative.isEmpty,
+                    Self.parentIsSafe(relative, under: staging),
+                    Self.lstatInfo(original.path).map({ $0.st_mode & S_IFMT == S_IFREG }) == true,
+                    link(original.path, target.path) == 0
+                {
+                    control.update { $0.itemsDone += 1 }
+                } else {
+                    control.skipEntry(name)
                 }
+                continue
+            case .file:
                 let output = open(target.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
                 guard output >= 0 else { throw FileEngineError.posix("Create", target.path) }
                 defer { close(output) }
                 while true {
                     try Task.checkCancellation()
                     try control.waitWhilePaused()
-                    let count = archive_read_data(reader, buffer, FileEngine.chunkSize)
-                    if count == 0 { break }
-                    guard count > 0 else {
-                        throw OperationError.archive(Self.errorText(reader, fallback: "The archive is damaged."))
+                    let data: Data
+                    do {
+                        data = try reader.readData(upTo: FileEngine.chunkSize)
+                    } catch {
+                        throw damaged(error)
                     }
-                    var written = 0
-                    while written < count {
-                        let result = write(output, buffer + written, count - written)
-                        if result < 0, errno == EINTR { continue }
-                        guard result > 0 else {
-                            // Something else may have filled the disk between checks.
-                            if errno == ENOSPC || errno == EDQUOT { throw diskFull }
-                            throw FileEngineError.posix("Write", target.path)
+                    if data.isEmpty { break }
+                    let count = data.count
+                    try data.withUnsafeBytes { bytes in
+                        guard let base = bytes.baseAddress else { return }
+                        var written = 0
+                        while written < count {
+                            let result = write(output, base + written, count - written)
+                            if result < 0, errno == EINTR { continue }
+                            guard result > 0 else {
+                                // Something else may have filled the disk between checks.
+                                if errno == ENOSPC || errno == EDQUOT { throw diskFull }
+                                throw FileEngineError.posix("Write", target.path)
+                            }
+                            written += result
                         }
-                        written += result
                     }
                     compressedEstimate += Int64(count)
                     writtenSinceSpaceCheck += Int64(count)
@@ -253,14 +254,13 @@ extension FileEngine {
                 guard fsync(output) == 0 else { throw FileEngineError.posix("Write", target.path) }
                 fchmod(output, permissions == 0 ? 0o644 : permissions)
                 var times = [
-                    timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
-                    timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
+                    timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
+                    timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
                 ]
                 futimens(output, &times)
-            default:
+            case .other:
                 // Devices, pipes and sockets are not extracted.
                 control.skipEntry(name)
-                archive_read_data_skip(reader)
             }
             control.update { $0.itemsDone += 1 }
         }
