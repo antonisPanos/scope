@@ -193,6 +193,10 @@ final class BrowserModel {
 
     // MARK: - Loading
 
+    /// Nested views share this tab's metadata refresh path, including
+    /// changes whose lightweight FileItem snapshot stayed equal.
+    func metadataDidChange() { onChange?(.metadata) }
+
     private func load() {
         generation += 1
         let generation = generation

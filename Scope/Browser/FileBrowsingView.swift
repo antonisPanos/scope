@@ -14,6 +14,7 @@ protocol FileBrowsingView: NSViewController {
     func modelDidChange(_ change: BrowserModel.Change)
     @discardableResult func select(_ urls: [URL], scroll: Bool) -> Bool
     func focus()
+    func close()
     /// The right-click menu; the view shows it over its items and empty space.
     var contextMenu: NSMenu? { get set }
     /// Selects the right-clicked item when it isn't part of the selection yet, as Finder does.
@@ -24,6 +25,10 @@ protocol FileBrowsingView: NSViewController {
     var onRename: (() -> Void)? { get set }
     /// Other keys from Settings > Shortcuts: back, forward, reload, trash.
     var onShortcut: ((FileViewKeys.Action) -> Void)? { get set }
+}
+
+extension FileBrowsingView {
+    func close() {}
 }
 
 /// Keys every file view handles the same way: Cmd+Down and Cmd+O open,

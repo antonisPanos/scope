@@ -273,7 +273,7 @@ final class BrowserViewController: NSViewController {
 
         let selection = fileView.selectedItems.map(\.url)
         let hadFocus = (view.window?.firstResponder as? NSView)?.isDescendant(of: fileView.view) ?? false
-        (fileView as? GalleryViewController)?.close()
+        fileView.close()
         fileView.view.removeFromSuperview()
         fileView.removeFromParent()
         fileView = Self.makeView(for: model.viewMode, model: model)
@@ -399,7 +399,7 @@ final class BrowserViewController: NSViewController {
 
     func close() {
         preview.close()
-        (fileView as? GalleryViewController)?.close()
+        fileView.close()
     }
 
     // MARK: - Bars and panes

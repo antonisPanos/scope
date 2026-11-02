@@ -57,7 +57,12 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     func modelDidChange(_ change: BrowserModel.Change) {
         if change.contains(.location) { root.children = nil }
         if !change.isDisjoint(with: .anyItems) { reloadItems() }
+        if !change.isDisjoint(with: [.anyItems, .sort]) {
+            root.refreshNestedSettings(sort: model.sort, showHidden: AppSettings.shared.showHiddenFiles)
+        }
     }
+
+    func close() { root.children = nil }
 
     var selectedItems: [FileItem] {
         guard let paths = browser.selectionIndexPaths as [IndexPath]? else { return [] }
@@ -68,12 +73,18 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     @discardableResult
     func select(_ urls: [URL], scroll: Bool) -> Bool {
         let wanted = Set(urls.map(\.standardizedFileURL))
-        let rows = (root.children ?? []).indices.filter {
-            (root.children?[$0].item).map { wanted.contains($0.url.standardizedFileURL) } ?? false
+        func paths(in nodes: [ColumnNode], prefix: [Int]) -> [IndexPath] {
+            nodes.enumerated().flatMap { index, node -> [IndexPath] in
+                let path = prefix + [index]
+                let selected = node.item.map { wanted.contains($0.url.standardizedFileURL) } ?? false
+                return (selected ? [IndexPath(indexes: path)] : []) + paths(in: node.children ?? [], prefix: path)
+            }
         }
-        guard !rows.isEmpty else { return false }
-        browser.selectRowIndexes(IndexSet(rows), inColumn: 0)
-        onSelectionChange?()
+        let found = paths(in: root.children ?? [], prefix: [])
+        guard !found.isEmpty else { return false }
+        let depth = found.map(\.count).max()
+        browser.selectionIndexPaths = found.filter { $0.count == depth }
+        selectionChanged()
         return true
     }
 
@@ -85,43 +96,35 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     private func reloadItems() {
         let selected = selectedItems.map(\.url)
-        let fresh = model.items.map { ColumnNode(item: $0) }
-        // Keep the deeper columns' nodes for folders that are still there.
-        let old = Dictionary(
-            (root.children ?? []).compactMap { node in node.item.map { ($0.url, node) } },
-            uniquingKeysWith: { a, _ in a })
-        root.children = fresh.map { node in
-            guard let url = node.item?.url, let kept = old[url], kept.item == node.item else { return node }
-            return kept
-        }
+        root.children = ColumnNode.updating(model.items, from: root.children ?? [])
         browser.loadColumnZero()
         if !model.pendingSelection.isEmpty {
             if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
         } else if !selected.isEmpty {
-            select(selected, scroll: false)
+            if !select(selected, scroll: false) { browser.selectionIndexPaths = [] }
         }
     }
 
     private func loadChildren(of node: ColumnNode) {
-        guard !node.isLoadingChildren, let item = node.item else { return }
+        guard node.childrenListing == nil, let item = node.item else { return }
         node.isLoadingChildren = true
-        let engine = model.engine
-        let sort = model.sort
-        let showHidden = AppSettings.shared.showHiddenFiles
-        Task { [weak self] in
-            let listed = (try? await engine.contentsOfDirectory(at: item.url)) ?? []
-            let sorted = await Task.detached { sort.sorted(showHidden ? listed : listed.filter { !$0.isHidden }) }.value
-            node.children = sorted.map { ColumnNode(item: $0) }
+        node.childrenListing = NestedFolderListing(url: item.url, model: model) { [weak self, weak node] sorted in
+            guard let self, let node else { return }
+            let selected = Set(self.selectedItems.map(\.url))
+            node.children = ColumnNode.updating(sorted, from: node.children ?? [])
             node.isLoadingChildren = false
-            self?.reloadColumn(showing: node)
+            self.model.metadataDidChange()
+            self.reloadColumn(showing: node, selecting: selected)
+            self.onSelectionChange?()
         }
     }
 
     /// Reloads the column that lists `node`'s children, if it is on screen.
-    private func reloadColumn(showing node: ColumnNode) {
+    private func reloadColumn(showing node: ColumnNode, selecting selected: Set<URL>) {
         for column in 0...max(0, browser.lastColumn) {
             if (browser.parentForItems(inColumn: column) as? ColumnNode) === node {
                 browser.reloadColumn(column)
+                if !select(Array(selected), scroll: false) { browser.selectionIndexPaths = [] }
                 return
             }
         }
@@ -129,6 +132,27 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     @objc private func selectionChanged() {
         onSelectionChange?()
+        Task { [weak self] in
+            await Task.yield()
+            self?.releaseHiddenColumns()
+        }
+    }
+
+    private func releaseHiddenColumns() {
+        let visible = Set(
+            (0...max(0, browser.lastColumn)).compactMap {
+                (browser.parentForItems(inColumn: $0) as? ColumnNode).map(ObjectIdentifier.init)
+            })
+        func prune(_ node: ColumnNode) {
+            guard node === root || visible.contains(ObjectIdentifier(node)) else {
+                node.childrenListing = nil
+                node.children = nil
+                node.isLoadingChildren = false
+                return
+            }
+            node.children?.forEach(prune)
+        }
+        prune(root)
     }
 
     @objc private func openClicked() {
@@ -165,12 +189,37 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 /// A node in the column view. The root has no item.
 @MainActor
 final class ColumnNode {
-    let item: FileItem?
+    var item: FileItem?
     var children: [ColumnNode]?
     var isLoadingChildren = false
+    var childrenListing: NestedFolderListing?
+
+    func refreshNestedSettings(sort: FileSort, showHidden: Bool) {
+        childrenListing?.update(sort: sort, showHidden: showHidden)
+        children?.forEach { $0.refreshNestedSettings(sort: sort, showHidden: showHidden) }
+    }
 
     init(item: FileItem?) {
         self.item = item
+    }
+
+    static func updating(_ items: [FileItem], from nodes: [ColumnNode]) -> [ColumnNode] {
+        let old = Dictionary(
+            nodes.compactMap { node in node.item.map { ($0.url, node) } },
+            uniquingKeysWith: { a, _ in a })
+        return items.map { item in
+            guard let kept = old[item.url] else { return ColumnNode(item: item) }
+            let keepsChildren =
+                kept.item?.isBrowsableFolder == true && kept.item?.isSymbolicLink == false
+                && item.isBrowsableFolder && !item.isSymbolicLink
+            kept.item = item
+            if !keepsChildren {
+                kept.childrenListing = nil
+                kept.children = nil
+                kept.isLoadingChildren = false
+            }
+            return kept
+        }
     }
 }
 
