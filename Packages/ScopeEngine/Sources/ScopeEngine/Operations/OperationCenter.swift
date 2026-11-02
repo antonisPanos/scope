@@ -195,8 +195,8 @@ public actor OperationCenter {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
         switch entry.state {
         case .queued:
-            entry.state = .cancelled
-            entry.finished = Date()
+            finish(id, .cancelled)
+            return
         case .running, .paused:
             entry.state = .cancelling
             entry.control.isPaused = false
@@ -316,7 +316,6 @@ public actor OperationCenter {
         let id = entry.id
         entry.task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) { [weak self] in
             let result: State
-            var changedNothing = false
             do {
                 try await engine.run(
                     operation, control: control, undo: undo, resolveConflict: resolver,
@@ -328,20 +327,20 @@ public actor OperationCenter {
                 result = .cancelled
             } catch OperationError.changedSince(let names) {
                 result = .failed(OperationError.changedSince(names).localizedDescription)
-                changedNothing = true
             } catch {
                 result = .failed(error.localizedDescription)
             }
-            await self?.finish(id, result, changedNothing: changedNothing)
+            await self?.finish(id, result)
         }
     }
 
-    private func finish(_ id: UUID, _ result: State, changedNothing: Bool = false) {
+    private func finish(_ id: UUID, _ result: State) {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
-        // An undo that stopped before changing anything leaves its operation
-        // undoable, so the user can try again and agree this time.
-        if changedNothing, let reversed = entry.reverses {
-            entries.first { $0.id == reversed }?.undone = false
+        // Failures and cancellation leave the unapplied prefix available.
+        // Completed steps are removed even when a later step failed.
+        if let reversed = entry.reverses, let original = entries.first(where: { $0.id == reversed }) {
+            original.undo.consumeLast(entry.control.progress.itemsDone)
+            original.undone = original.undo.recorded.isEmpty
         }
         entry.state = (entry.state == .cancelling && result == .done) ? .cancelled : result
         entry.finished = Date()
