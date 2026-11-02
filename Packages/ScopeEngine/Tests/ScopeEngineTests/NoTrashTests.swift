@@ -98,6 +98,25 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: noTrash.work.path))
     }
 
+    @Test func aReplacementWhileConfirmingTheNoTrashFallbackIsKept() async throws {
+        let selected = try noTrash.write("selected.txt", "original")
+        let saved = noTrash.url("saved.txt")
+        await #expect(throws: (any Error).self) {
+            try await engine.run(
+                FileOperation(.trash([selected])), control: OperationControl(), undo: UndoRecorder(),
+                resolveConflict: { _ in (.stop, false) },
+                confirmPermanentDeletion: { _ in
+                    do {
+                        try FileManager.default.moveItem(at: selected, to: saved)
+                        try Data("replacement".utf8).write(to: selected)
+                        return true
+                    } catch { return false }
+                })
+        }
+        #expect(try noTrash.read("selected.txt") == "replacement")
+        #expect(try noTrash.read("saved.txt") == "original")
+    }
+
     @Test func recognisesADiskWithoutATrash() {
         #expect(FileEngine.isTrashUnavailable(CocoaError(.featureUnsupported)))
         #expect(FileEngine.isTrashUnavailable(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP))))
