@@ -157,13 +157,13 @@ private final class BrokenWriter: NSObject, ArchiveWriterServiceProtocol, @unche
     func writeChunk(_ data: Data, reply: @escaping @Sendable (Data?) -> Void) { reply(nil) }
     func endEntry(reply: @escaping @Sendable (Data?) -> Void) { reply(nil) }
     func finishWriting(reply: @escaping @Sendable (Data?) -> Void) { reply(nil) }
-    func readOutput(reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
+    func readOutput(upTo limit: Int, reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
         reached.append(true)
         switch fault {
         case .silence: return
-        case .oversized: reply(Data(count: FileEngine.chunkSize + 1), true, nil)
+        case .oversized: reply(Data(count: limit + 1), true, nil)
         case .neverCompletes: reply(Data(), false, nil)
-        case .flood: reply(Data(count: 64 * 1024), false, nil)
+        case .flood: reply(Data(count: min(limit, 64 * 1024)), false, nil)
         case .failed:
             let first = reads.withLock { value in
                 value += 1

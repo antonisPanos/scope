@@ -37,7 +37,7 @@ struct ArchiveServiceTests {
         let service = ServiceHarness(ArchiveServiceListener())
         var engine = sandbox.engine
         engine.archiveReaders = service.readers()
-        let big = String(repeating: "0123456789abcdef", count: 600_000)  // 9.6 MB, three chunks
+        let big = String(repeating: "0123456789abcdef", count: 600_000)  // 9.6 MB exceeds the production chunk size.
         try sandbox.write("big.tar", TarBuilder().file("big.txt", big).data())
         try await OperationHarness(engine: engine).run(.extract(sandbox.url("big.tar")))
         #expect(try text("big.txt") == big)
@@ -108,13 +108,23 @@ final class ServiceHarness: @unchecked Sendable {
     }
 
     func readers(timeout: Duration = .seconds(60)) -> XPCArchiveReaders {
-        XPCArchiveReaders(timeout: timeout) { [self] in NSXPCConnection(listenerEndpoint: listener.endpoint) }
+        XPCArchiveReaders(timeout: timeout, chunkSize: archiveTestChunkSize) {
+            [self] in NSXPCConnection(listenerEndpoint: listener.endpoint)
+        }
     }
 
     func writers(timeout: Duration = .seconds(60)) -> XPCArchiveWriters {
-        XPCArchiveWriters(timeout: timeout) { [self] in NSXPCConnection(listenerEndpoint: listener.endpoint) }
+        XPCArchiveWriters(timeout: timeout, chunkSize: archiveTestChunkSize) {
+            [self] in NSXPCConnection(listenerEndpoint: listener.endpoint)
+        }
     }
 }
+
+// #123: the sanitizer's large mapped NSXPC buffers can corrupt allocator
+// state. Stream the same complete fixtures through small messages when
+// instrumented; the production factories retain their 4 MB default.
+private let archiveTestChunkSize =
+    dlsym(UnsafeMutableRawPointer(bitPattern: -2), "__tsan_init") == nil ? FileEngine.chunkSize : 3 * 1024
 
 final class RogueListener: NSObject, NSXPCListenerDelegate, Sendable {
     let fault: RogueService.Fault

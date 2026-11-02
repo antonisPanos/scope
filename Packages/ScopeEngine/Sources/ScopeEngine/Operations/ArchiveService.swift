@@ -125,12 +125,18 @@ final class ArchiveServiceHandler: NSObject, ArchiveCodecServiceProtocol, @unche
 public struct XPCArchiveReaders: ArchiveReaderOpening {
     private let connect: @Sendable () -> NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
 
     /// `connect` makes a new, not yet resumed connection to the service.
     /// A call that takes longer than `timeout` stops the reading.
-    public init(timeout: Duration = .seconds(60), connect: @escaping @Sendable () -> NSXPCConnection) {
+    /// `chunkSize` bounds each data reply, from 1 byte to 4 MB.
+    public init(
+        timeout: Duration = .seconds(60), chunkSize: Int = FileEngine.chunkSize,
+        connect: @escaping @Sendable () -> NSXPCConnection
+    ) {
         self.connect = connect
         self.timeout = timeout
+        self.chunkSize = min(FileEngine.chunkSize, max(1, chunkSize))
     }
 
     /// The archive service embedded in the app, by its bundle identifier.
@@ -142,7 +148,7 @@ public struct XPCArchiveReaders: ArchiveReaderOpening {
         let connection = connect()
         connection.remoteObjectInterface = ArchiveService.interface
         connection.resume()
-        let reader = XPCArchiveReader(connection: connection, timeout: timeout)
+        let reader = XPCArchiveReader(connection: connection, timeout: timeout, chunkSize: chunkSize)
         let failure: Data? = try reader.call { service, reply in
             service.open(archive, singleFile: singleFile, reply: reply)
         }
@@ -154,12 +160,14 @@ public struct XPCArchiveReaders: ArchiveReaderOpening {
 final class XPCArchiveReader: ArchiveReading {
     private let connection: NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
 
     static let lost = "The archive couldn't be read: the reader stopped unexpectedly."
 
-    init(connection: NSXPCConnection, timeout: Duration) {
+    init(connection: NSXPCConnection, timeout: Duration, chunkSize: Int) {
         self.connection = connection
         self.timeout = timeout
+        self.chunkSize = chunkSize
     }
 
     deinit {
@@ -177,11 +185,12 @@ final class XPCArchiveReader: ArchiveReading {
     }
 
     func readData(upTo limit: Int) throws(ArchiveReadError) -> Data {
+        let requested = min(limit, chunkSize)
         let chunk: Chunk = try call { service, reply in
-            service.readData(upTo: limit) { reply(Chunk(data: $0, failure: $1)) }
+            service.readData(upTo: requested) { reply(Chunk(data: $0, failure: $1)) }
         }
         if let failure = chunk.failure { throw Self.decodeError(failure) }
-        guard let data = chunk.data, data.count <= limit else { throw .damaged(Self.lost) }
+        guard let data = chunk.data, data.count <= requested else { throw .damaged(Self.lost) }
         return data
     }
 

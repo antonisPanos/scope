@@ -8,7 +8,7 @@ import Foundation
     func writeChunk(_ data: Data, reply: @escaping @Sendable (Data?) -> Void)
     func endEntry(reply: @escaping @Sendable (Data?) -> Void)
     func finishWriting(reply: @escaping @Sendable (Data?) -> Void)
-    func readOutput(reply: @escaping @Sendable (Data, Bool, Data?) -> Void)
+    func readOutput(upTo limit: Int, reply: @escaping @Sendable (Data, Bool, Data?) -> Void)
 }
 
 @objc protocol ArchiveCodecServiceProtocol: ArchiveServiceProtocol, ArchiveWriterServiceProtocol {}
@@ -34,8 +34,8 @@ extension ArchiveServiceHandler {
     func finishWriting(reply: @escaping @Sendable (Data?) -> Void) {
         writing.finish(reply: reply)
     }
-    func readOutput(reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
-        writing.readOutput(reply: reply)
+    func readOutput(upTo limit: Int, reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
+        writing.readOutput(upTo: limit, reply: reply)
     }
 }
 
@@ -101,11 +101,11 @@ final class ArchiveWriterService: @unchecked Sendable {
         }
     }
 
-    func readOutput(reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
+    func readOutput(upTo limit: Int, reply: @escaping @Sendable (Data, Bool, Data?) -> Void) {
         // Wait off the XPC callback queue, and reply as soon as data or
         // completion arrives. Small entries incur no polling delay.
         replies.async { [output] in
-            let result = output.take(wait: true)
+            let result = output.take(upTo: min(max(0, limit), FileEngine.chunkSize), wait: true)
             reply(result.data, result.complete, result.failure.map(encodeWriteFailure))
         }
     }
@@ -176,14 +176,25 @@ final class ArchiveWriterOutput: @unchecked Sendable {
         condition.broadcast()
     }
 
-    func take(wait: Bool = false) -> (data: Data, complete: Bool, failure: ArchiveWriteError?) {
+    func take(
+        upTo limit: Int = FileEngine.chunkSize, wait: Bool = false
+    )
+        -> (data: Data, complete: Bool, failure: ArchiveWriteError?)
+    {
         condition.lock()
         defer { condition.unlock() }
         while wait, running, buffer.isEmpty, !stopped { condition.wait() }
-        let data = buffer
-        buffer = Data()
+        let count = min(max(0, limit), buffer.count)
+        let data: Data
+        if count == buffer.count {
+            data = buffer
+            buffer = Data()
+        } else {
+            data = buffer.subdata(in: buffer.startIndex..<buffer.startIndex + count)
+            buffer.removeFirst(count)
+        }
         condition.broadcast()
-        return (data, !running, failure)
+        return (data, !running && buffer.isEmpty, failure)
     }
 
     func complete(_ error: ArchiveWriteError?) {

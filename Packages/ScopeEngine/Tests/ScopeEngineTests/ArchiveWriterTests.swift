@@ -79,6 +79,19 @@ struct ArchiveWriterTests {
         #expect(try sandbox.names() == ["input.txt"])
     }
 
+    @Test func completionIsReportedOnlyAfterEveryBufferedByteIsDrained() throws {
+        let output = ArchiveWriterOutput(capacity: 8)
+        try output.start()
+        try output.append(Data([1, 2, 3, 4, 5, 6]))
+        output.complete(nil)
+        let first = output.take(upTo: 2)
+        #expect(first.data == Data([1, 2]))
+        #expect(!first.complete)
+        let last = output.take(upTo: 4)
+        #expect(last.data == Data([3, 4, 5, 6]))
+        #expect(last.complete)
+    }
+
     @Test(arguments: [false, true]) func anOutputReplyWakesForDataOrCancellation(cancel: Bool) async throws {
         let output = ArchiveWriterOutput(capacity: 4)
         try output.start()

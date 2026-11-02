@@ -5,10 +5,16 @@ import Foundation
 public struct XPCArchiveWriters: ArchiveWriterOpening {
     private let connect: @Sendable () -> NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
 
-    public init(timeout: Duration = .seconds(60), connect: @escaping @Sendable () -> NSXPCConnection) {
+    /// `chunkSize` bounds each input/output message, from 1 byte to 4 MB.
+    public init(
+        timeout: Duration = .seconds(60), chunkSize: Int = FileEngine.chunkSize,
+        connect: @escaping @Sendable () -> NSXPCConnection
+    ) {
         self.connect = connect
         self.timeout = timeout
+        self.chunkSize = min(FileEngine.chunkSize, max(1, chunkSize))
     }
 
     public static func embedded(_ serviceName: String) -> XPCArchiveWriters {
@@ -23,7 +29,8 @@ public struct XPCArchiveWriters: ArchiveWriterOpening {
         let connection = connect()
         connection.remoteObjectInterface = ArchiveService.writerInterface
         connection.resume()
-        let writer = XPCArchiveWriter(connection: connection, timeout: timeout, control: control, output: output)
+        let writer = XPCArchiveWriter(
+            connection: connection, timeout: timeout, chunkSize: chunkSize, control: control, output: output)
         try writer.perform { service, reply in service.openWriting(format.rawValue, reply: reply) }
         return writer
     }
@@ -32,14 +39,18 @@ public struct XPCArchiveWriters: ArchiveWriterOpening {
 final class XPCArchiveWriter: ArchiveWriting {
     private let connection: NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
     private let control: OperationControl?
     private let output: ArchiveDataSink
     private var finished = false
 
-    init(connection: NSXPCConnection, timeout: Duration, control: OperationControl?, output: @escaping ArchiveDataSink)
-    {
+    init(
+        connection: NSXPCConnection, timeout: Duration, chunkSize: Int,
+        control: OperationControl?, output: @escaping ArchiveDataSink
+    ) {
         self.connection = connection
         self.timeout = timeout
+        self.chunkSize = chunkSize
         self.control = control
         self.output = output
     }
@@ -55,7 +66,17 @@ final class XPCArchiveWriter: ArchiveWriting {
 
     func writeData(_ data: Data) throws(ArchiveWriteError) {
         guard data.count <= FileEngine.chunkSize else { throw .failed("Archive input chunk is too large.") }
-        try perform { service, reply in service.writeChunk(data, reply: reply) }
+        if data.isEmpty {
+            try perform { service, reply in service.writeChunk(data, reply: reply) }
+            return
+        }
+        var offset = data.startIndex
+        while offset < data.endIndex {
+            let end = offset + min(chunkSize, data.endIndex - offset)
+            let chunk = data.subdata(in: offset..<end)
+            try perform { service, reply in service.writeChunk(chunk, reply: reply) }
+            offset = end
+        }
     }
 
     func finishEntry() throws(ArchiveWriteError) {
@@ -90,10 +111,10 @@ final class XPCArchiveWriter: ArchiveWriting {
                 try archiveWriteCheckpoint(control)
                 let start = ContinuousClock.now
                 let chunk: Output = try call { service, reply in
-                    service.readOutput { reply(Output(data: $0, complete: $1, error: $2)) }
+                    service.readOutput(upTo: chunkSize) { reply(Output(data: $0, complete: $1, error: $2)) }
                 }
                 let data = chunk.data
-                guard data.count <= FileEngine.chunkSize else {
+                guard data.count <= chunkSize else {
                     throw .failed("The archive writer returned an oversized output chunk.")
                 }
                 if let error = chunk.error { throw Self.decode(error) }
