@@ -37,10 +37,10 @@ import Testing
         let other = URL(fileURLWithPath: "/Volumes/T/b")
         let trash = URL(fileURLWithPath: "/Volumes/T/.Trashes/501/x.txt")
 
+        let identity = FileIdentity(inode: 1, modified: 0, size: 0)
         #expect(
-            FolderItemsChanged.changes(for: .trashCreated(folder.appendingPathComponent("new.txt"), fileID: 1)) == [
-                FolderItemsChanged(folder: folder, added: ["new.txt"])
-            ])
+            FolderItemsChanged.changes(for: .trashCreated(folder.appendingPathComponent("new.txt"), fileID: identity))
+                == [FolderItemsChanged(folder: folder, added: ["new.txt"])])
         // A rename stays in one folder: one change, both names.
         #expect(
             FolderItemsChanged.changes(

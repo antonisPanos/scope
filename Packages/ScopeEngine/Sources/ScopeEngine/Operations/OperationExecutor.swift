@@ -266,13 +266,19 @@ extension FileEngine {
     // MARK: - Undo
 
     private func applyUndo(_ record: UndoRecord, control: OperationControl, undo: UndoRecorder) async throws {
+        // Checked for every step before any is applied, so a no leaves the
+        // whole operation as it is.
+        let changed = Self.changedSinceMade(record)
+        if !changed.isEmpty, !record.includesChangedItems {
+            throw OperationError.changedSince(changed.map(\.lastPathComponent))
+        }
         control.update { $0.itemsTotal = record.steps.count }
         for step in record.steps.reversed() {
             try Task.checkCancellation()
             switch step {
             case .trashCreated(let url, let fileID):
                 guard Self.lstatInfo(url.path) != nil else { break }
-                guard Self.fileID(url) == fileID else {
+                guard Self.fileID(url).inode == fileID.inode else {
                     throw OperationError.undoNotPossible("“\(url.lastPathComponent)” has been replaced since.")
                 }
                 _ = try await trashItem(at: url)
@@ -346,8 +352,31 @@ extension FileEngine {
         throw FileEngineError.destinationExists(folder.appendingPathComponent(name).path)
     }
 
-    static func fileID(_ url: URL) -> UInt64 {
-        lstatInfo(url.path).map { UInt64($0.st_ino) } ?? 0
+    /// The item's identity now; all zero when it is missing. A folder's
+    /// version isn't kept: its time changes whenever an item is added or
+    /// removed, even by a later operation that undo reverses first.
+    static func fileID(_ url: URL) -> FileIdentity {
+        guard let info = lstatInfo(url.path) else { return FileIdentity(inode: 0, modified: 0, size: 0) }
+        if info.st_mode & S_IFMT == S_IFDIR { return FileIdentity(inode: UInt64(info.st_ino), modified: 0, size: 0) }
+        let modified = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
+        return FileIdentity(inode: UInt64(info.st_ino), modified: modified, size: Int64(info.st_size))
+    }
+
+    /// Files an undo would move to the Trash that were edited after the
+    /// operation made them: same file, other modification time or size. A
+    /// replaced or missing item isn't listed; undo handles those itself.
+    static func changedSinceMade(_ record: UndoRecord) -> [URL] {
+        record.steps.compactMap { step in
+            guard case .trashCreated(let url, let made) = step else { return nil }
+            let now = fileID(url)
+            return now.inode != 0 && now.inode == made.inode && now != made ? url : nil
+        }
+    }
+
+    /// Items an undo of `record` would trash that were edited since, for
+    /// asking before the undo starts.
+    public func changedSinceMade(_ record: UndoRecord) async -> [URL] {
+        await onIOThreads { Self.changedSinceMade(record) }
     }
 }
 

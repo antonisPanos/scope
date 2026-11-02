@@ -124,16 +124,36 @@ public enum ArchiveFormat: String, Sendable, Hashable, CaseIterable, Codable {
 public struct UndoRecord: Sendable, Hashable {
     public var title: String
     public var steps: [UndoStep]
+    /// Whether the user agreed to undo even though items the operation made
+    /// were changed since. Without it, such an undo changes nothing.
+    public var includesChangedItems: Bool
 
-    public init(title: String, steps: [UndoStep] = []) {
+    public init(title: String, steps: [UndoStep] = [], includesChangedItems: Bool = false) {
         self.title = title
         self.steps = steps
+        self.includesChangedItems = includesChangedItems
+    }
+}
+
+/// An item as an operation left it: which file it is, and which version. A
+/// different inode means it was replaced; the same inode with another
+/// modification time or size means it was edited in place.
+public struct FileIdentity: Sendable, Hashable {
+    public let inode: UInt64
+    /// Nanoseconds since 1970.
+    public let modified: Int64
+    public let size: Int64
+
+    public init(inode: UInt64, modified: Int64, size: Int64) {
+        self.inode = inode
+        self.modified = modified
+        self.size = size
     }
 }
 
 public enum UndoStep: Sendable, Hashable {
     /// Undo a create: move the item the operation made to the Trash.
-    case trashCreated(URL, fileID: UInt64)
+    case trashCreated(URL, fileID: FileIdentity)
     /// Undo a rename or same-disk move: move it back.
     case moveBack(from: URL, to: URL)
     /// Undo a trash: put the item back from the Trash.
@@ -302,6 +322,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case notAnArchive(String)
     case archive(String)
     case undoNotPossible(String)
+    /// Items an undo would trash were edited since, and the user wasn't asked.
+    case changedSince([String])
     case mountFailed(String)
     case needsUnsandboxedBuild
     case notEnoughSpace(needed: Int64, available: Int64, volume: String)
@@ -319,6 +341,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
         case .archive(let message): message
         case .undoNotPossible(let reason): "Can't undo: \(reason)"
+        case .changedSince(let names):
+            "\(names.map { "“\($0)”" }.joined(separator: ", ")) changed since, so nothing was undone."
         case .mountFailed(let message): message
         case .needsUnsandboxedBuild: "Mounting disk images needs the “Scope Dev (No Sandbox)” build."
         case .notEnoughSpace(let needed, let available, let volume):

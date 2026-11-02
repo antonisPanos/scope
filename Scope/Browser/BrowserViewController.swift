@@ -315,13 +315,13 @@ final class BrowserViewController: NSViewController {
                 message.stringValue = text
             }
         }
-        if change.contains(.items), model.state == .loaded {
+        if !change.isDisjoint(with: .anyItems), model.state == .loaded {
             message.isHidden = !model.items.isEmpty
             message.stringValue = Self.emptyText(for: model.location)
         }
         fileView.modelDidChange(change)
-        if change.contains(.items) || change.contains(.location) { selectionDidChange() }
-        if change.contains(.location) || change.contains(.status) || change.contains(.items) { updateSearchBar() }
+        if !change.isDisjoint(with: [.anyItems, .location]) { selectionDidChange() }
+        if !change.isDisjoint(with: [.anyItems, .location, .status]) { updateSearchBar() }
         if change.contains(.status) { updateStatus() }
     }
 

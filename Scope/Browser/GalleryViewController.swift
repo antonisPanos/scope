@@ -89,7 +89,7 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
 
     func modelDidChange(_ change: BrowserModel.Change) {
         strip.modelDidChange(change)
-        if change.contains(.items) {
+        if !change.isDisjoint(with: .anyItems) {
             // The gallery always shows something: pick the first item if nothing is selected.
             if strip.selectedItems.isEmpty, let first = model.items.first, model.pendingSelection == nil {
                 strip.select([first.url], scroll: true)
