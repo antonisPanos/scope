@@ -20,17 +20,11 @@ struct SidebarView: View {
     @Bindable var selection: SidebarSelection
 
     var body: some View {
-        List(
-            selection: Binding(
-                get: { selection.selectedID },
-                set: { id in
-                    guard let id, let item = store.allItems.first(where: { $0.id == id }), item.isEnabled else {
-                        return
-                    }
-                    selection.selectedID = id
-                    selection.onSelect?(item)
-                })
-        ) {
+        // No List selection: the system draws a selected sidebar row in the
+        // accent colour while the sidebar has focus, and the teal icons vanish
+        // on it. Scope draws its own quiet grey highlight instead, the same
+        // whether the row was just clicked or the window is showing that place.
+        List {
             Section("Favorites") {
                 ForEach(store.favorites) { row($0) }
             }
@@ -79,12 +73,19 @@ struct SidebarView: View {
             }
         }
         .opacity(item.isEnabled ? 1 : 0.4)
+        .contentShape(Rectangle())
+        .onTapGesture { pick(item) }
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(selection.selectedID == item.id ? 0.1 : 0))
+                .padding(.horizontal, 10)
+        )
+        .accessibilityAddTraits(selection.selectedID == item.id ? [.isButton, .isSelected] : .isButton)
         .help(
             item.isEnabled
                 ? (item.location.folderURL?.path ?? item.title)
                 : "\(BuildIdentity.current.appName) can't open this place"
         )
-        .tag(item.id)
         .contextMenu {
             if item.isEnabled {
                 Button("Open in New Tab") { selection.onOpenInNewTab?(item) }
@@ -97,6 +98,12 @@ struct SidebarView: View {
                 Button("Eject \(item.title)") { selection.onEject?(item) }.disabled(!item.isEnabled)
             }
         }
+    }
+
+    private func pick(_ item: SidebarItem) {
+        guard item.isEnabled else { return }
+        selection.selectedID = item.id
+        selection.onSelect?(item)
     }
 
     @ViewBuilder

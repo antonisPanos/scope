@@ -31,6 +31,16 @@ struct PermanentDeletionAlertTests {
         #expect(one.messageText.contains("Delete “item 1.txt” for good?"))
     }
 
+    @Test func deleteImmediatelyAsksTheSameWay() {
+        let items = [URL(fileURLWithPath: "/Volumes/extsd/a.txt"), URL(fileURLWithPath: "/Volumes/extsd/b")]
+        let alert = OperationsController.permanentDeletionAlert(
+            PermanentDeletion(items: items, volume: "extsd", reason: .requested))
+        #expect(alert.messageText == "Delete these 2 items on “extsd” immediately?")
+        #expect(alert.informativeText.contains("• a.txt\n• b"))
+        #expect(alert.buttons.map(\.title) == ["Cancel", "Delete Permanently"])
+        #expect(alert.buttons[0].keyEquivalent == "\r")
+    }
+
     @Test func longListsAreCut() {
         let text = OperationsController.listing(request(13).items)
         #expect(text.components(separatedBy: "\n").count == 11)

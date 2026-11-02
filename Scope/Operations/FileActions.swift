@@ -83,6 +83,14 @@ extension BrowserWindowController {
         startOperation(.trash(urls))
     }
 
+    /// Deletes the selection for good, skipping the Trash. The engine asks
+    /// first, naming the disk and every item, with Cancel as the default.
+    func deleteSelectionImmediately() {
+        let urls = selectedItems.map(\.url)
+        guard !urls.isEmpty else { return }
+        startOperation(.deletePermanently(urls))
+    }
+
     func compressSelection() {
         let urls = selectedItems.map(\.url)
         guard !urls.isEmpty else { return }

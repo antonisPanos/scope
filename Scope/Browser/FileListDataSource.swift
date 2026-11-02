@@ -106,7 +106,7 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
                 outlineView.makeView(withIdentifier: tableColumn.identifier, owner: nil) as? FileNameCell
                 ?? FileNameCell()
             cell.identifier = tableColumn.identifier
-            cell.configure(with: file)
+            cell.configure(with: file, tags: tags(for: file) ?? [])
             return cell
         case .tags:
             let cell = textCell(outlineView, tableColumn.identifier)

@@ -15,6 +15,11 @@ public struct FileOperation: Sendable, Hashable {
         case rename(URL, to: String)
         case newFolder(in: URL, name: String)
         case trash([URL])
+        /// Removes items for good, skipping the Trash. The engine asks first,
+        /// once per disk, naming every item; nothing is removed on a no.
+        case deletePermanently([URL])
+        /// Adds a Finder tag to items, or with `applied` false takes it off.
+        case setTag([URL], tag: String, applied: Bool)
         /// Compresses items into one archive next to the first item.
         case compress([URL], format: ArchiveFormat)
         /// Extracts an archive next to itself.
@@ -35,7 +40,7 @@ public struct FileOperation: Sendable, Hashable {
     public var touchedItems: [URL] {
         switch kind {
         case .copy(let items, _), .move(let items, _), .duplicate(let items), .trash(let items),
-            .compress(let items, _):
+            .deletePermanently(let items), .compress(let items, _), .setTag(let items, _, _):
             items
         case .rename(let item, _), .extract(let item), .mountImage(let item, _, _), .ejectVolume(let item):
             [item]
@@ -51,11 +56,11 @@ public struct FileOperation: Sendable, Hashable {
     /// use them (or anything inside them) while it runs.
     var changedItems: [URL] {
         switch kind {
-        case .move(let items, _), .trash(let items): items
+        case .move(let items, _), .trash(let items), .deletePermanently(let items): items
         case .rename(let item, _): [item]
         case .ejectVolume(let item): [item]
         case .undo(let record): record.steps.flatMap(\.touchedItems)
-        case .copy, .duplicate, .compress, .extract, .newFolder, .mountImage: []
+        case .copy, .duplicate, .compress, .extract, .newFolder, .mountImage, .setTag: []
         }
     }
 
@@ -85,6 +90,9 @@ public struct FileOperation: Sendable, Hashable {
         case .rename(let item, let name): "Renaming “\(item.lastPathComponent)” to “\(name)”"
         case .newFolder(_, let name): "Creating “\(name)”"
         case .trash(let items): "Moving \(Self.describe(items)) to the Trash"
+        case .deletePermanently(let items): "Deleting \(Self.describe(items)) permanently"
+        case .setTag(let items, let tag, let applied):
+            applied ? "Tagging \(Self.describe(items)) \(tag)" : "Removing the \(tag) tag from \(Self.describe(items))"
         case .compress(let items, let format): "Compressing \(Self.describe(items)) as \(format.fileExtension)"
         case .extract(let item): "Extracting “\(item.lastPathComponent)”"
         case .mountImage(let item, _, _): "Mounting “\(item.lastPathComponent)”"
@@ -96,7 +104,7 @@ public struct FileOperation: Sendable, Hashable {
     /// Whether the operation is a destructive one that key auto-repeat must not trigger.
     public var isDestructive: Bool {
         switch kind {
-        case .trash, .move, .copy: true
+        case .trash, .deletePermanently, .move, .copy: true
         default: false
         }
     }

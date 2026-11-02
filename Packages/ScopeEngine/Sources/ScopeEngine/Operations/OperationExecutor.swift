@@ -37,6 +37,10 @@ extension FileEngine {
                 undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             case .trash(let items):
                 try await trash(items, control: control, undo: undo, confirm: confirmPermanentDeletion)
+            case .deletePermanently(let items):
+                try await deleteForGood(items, control: control, undo: undo, confirm: confirmPermanentDeletion)
+            case .setTag(let items, let tag, let applied):
+                try setTag(tag, applied: applied, on: items, control: control)
             case .compress(let items, let format):
                 try await compress(items, format: format, control: control, undo: undo)
             case .extract(let archive):

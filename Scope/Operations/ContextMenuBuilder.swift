@@ -81,6 +81,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("mountReadOnly")
             add("eject")
             add("trash")
+            add("deleteImmediately")
             separator()
             add("cut", selection.count == 1 ? "Cut “\(selection[0].name)”" : "Cut \(selection.count) Items")
             add("copy", selection.count == 1 ? "Copy “\(selection[0].name)”" : "Copy \(selection.count) Items")
@@ -88,7 +89,11 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("addToSidebar")
             separator()
             submenu("Sort By", sortIDs)
-            if selection.count == 1 { addTags(of: selection[0], to: menu, engine: controller.model.engine) }
+            if controller.allowsWrites {
+                addTagRow(for: selection, to: menu, controller: controller)
+            } else if selection.count == 1 {
+                addTags(of: selection[0], to: menu, engine: controller.model.engine)
+            }
         }
     }
 
@@ -118,7 +123,37 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
         }
     }
 
-    /// The item's tags, read-only for now (editing tags comes in phase 1).
+    /// Finder's row of colour dots: a click adds that tag to every selected
+    /// item, or takes it off when they all have it already. Which ones they
+    /// have is read in the background and ticked when it arrives.
+    private func addTagRow(for selection: [FileItem], to menu: NSMenu, controller: BrowserWindowController) {
+        separator(in: menu)
+        let urls = selection.map(\.url)
+        let row = TagMenuView { [weak controller] tag, add in
+            controller?.startOperation(.setTag(urls, tag: tag, applied: add))
+        }
+        let item = NSMenuItem()
+        item.view = row
+        menu.addItem(item)
+        let build = generation
+        let engine = controller.model.engine
+        Task {
+            var common: Set<String>?
+            for url in urls.prefix(200) {
+                let tags = Set((try? await engine.tags(for: url)) ?? [])
+                common = common.map { $0.intersection(tags) } ?? tags
+                if common?.isEmpty == true { break }
+            }
+            guard build == generation else { return }
+            row.showApplied(common ?? [])
+        }
+    }
+
+    private func separator(in menu: NSMenu) {
+        if let last = menu.items.last, !last.isSeparatorItem { menu.addItem(.separator()) }
+    }
+
+    /// The item's tags as a line, for builds that can't change files.
     /// Reading them is disk work, so it happens in the background and the
     /// line is added to the open menu when they arrive; an item without tags
     /// gets none.

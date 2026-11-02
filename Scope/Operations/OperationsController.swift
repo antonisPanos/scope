@@ -342,7 +342,8 @@ final class OperationsController {
 
     // MARK: - Disks without a Trash
 
-    /// Asks before deleting items for good on a disk with no Trash. It names
+    /// Asks before deleting items for good, on a disk with no Trash or for
+    /// Delete Immediately. It names
     /// the disk and the items, and Cancel is the default: Return and Escape
     /// both keep the items. There is no "apply to all".
     private static func confirm(_ request: PermanentDeletion) async -> Bool {
@@ -365,8 +366,9 @@ final class OperationsController {
         }
         let confirmed = response == .alertSecondButtonReturn
         let outcome = confirmed ? "deleting" : "keeping"
+        let why = request.reason == .noTrash ? "No Trash" : "Delete Immediately"
         logger.notice(
-            "No Trash on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items"
+            "\(why, privacy: .public) on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items"
         )
         return confirmed
     }
@@ -374,7 +376,12 @@ final class OperationsController {
     static func permanentDeletionAlert(_ request: PermanentDeletion) -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "“\(request.volume)” has no Trash. Delete \(describe(request.items)) for good?"
+        switch request.reason {
+        case .noTrash:
+            alert.messageText = "“\(request.volume)” has no Trash. Delete \(describe(request.items)) for good?"
+        case .requested:
+            alert.messageText = "Delete \(describe(request.items)) on “\(request.volume)” immediately?"
+        }
         alert.informativeText =
             "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
             + listing(request.items)

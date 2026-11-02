@@ -1,21 +1,31 @@
 import Foundation
 
-/// Items on a disk with no Trash that a delete would have to remove for good.
-/// The app asks about exactly these; nothing else is ever removed outright.
+/// Items a delete would remove for good, all on one disk. The app asks about
+/// exactly these; nothing else is ever removed outright.
 public struct PermanentDeletion: Sendable, Equatable {
+    /// Why the items would skip the Trash.
+    public enum Reason: Sendable, Equatable {
+        /// A move to the Trash found that the disk has none.
+        case noTrash
+        /// The user chose Delete Immediately.
+        case requested
+    }
+
     /// The items, all on one disk.
     public let items: [URL]
     /// The disk's name, for the question.
     public let volume: String
+    public let reason: Reason
 
-    public init(items: [URL], volume: String) {
+    public init(items: [URL], volume: String, reason: Reason = .noTrash) {
         self.items = items
         self.volume = volume
+        self.reason = reason
     }
 }
 
-/// Answers whether to delete items for good on a disk with no Trash. Only
-/// true removes them, and only the items asked about.
+/// Answers whether to delete items for good. Only true removes them, and
+/// only the items asked about.
 public typealias PermanentDeletionConfirmer = @Sendable (PermanentDeletion) async -> Bool
 
 /// Deleting on disks that have no Trash, such as some network shares and
@@ -57,6 +67,45 @@ extension FileEngine {
         }
     }
 
+    /// Delete Immediately: removes items for good, without the Trash. Before
+    /// anything is removed it asks once for each disk the items are on,
+    /// naming the disk and every item; a no to any question stops the whole
+    /// delete with nothing removed.
+    func deleteForGood(
+        _ items: [URL], control: OperationControl, undo: UndoRecorder, confirm: PermanentDeletionConfirmer
+    ) async throws {
+        let targets = try items.map { try pathGuard.checkWriteLocation($0) }
+        control.update { $0.itemsTotal = targets.count }
+        var disks: [(device: dev_t?, items: [URL])] = []
+        for target in targets {
+            let device = Self.lstatInfo(target.path)?.st_dev
+            if let index = disks.firstIndex(where: { $0.device != nil && $0.device == device }) {
+                disks[index].items.append(target)
+            } else {
+                disks.append((device, [target]))
+            }
+        }
+        for disk in disks {
+            let request = PermanentDeletion(
+                items: disk.items, volume: Self.volumeName(of: disk.items[0]), reason: .requested)
+            let yes = await confirm(request)
+            // A cancel while the question was open wins over the answer.
+            try Task.checkCancellation()
+            guard yes else { throw OperationError.stoppedByUser }
+        }
+        for target in targets {
+            try Task.checkCancellation()
+            control.update { $0.currentItem = target.lastPathComponent }
+            try deletePermanently(target)
+            undo.announce([
+                FolderItemsChanged(
+                    folder: target.deletingLastPathComponent().standardizedFileURL,
+                    removed: [target.lastPathComponent])
+            ])
+            control.update { $0.itemsDone += 1 }
+        }
+    }
+
     /// Whether an error from `trashItem` means the disk has no Trash, rather
     /// than that this one item couldn't go.
     static func isTrashUnavailable(_ error: any Error) -> Bool {
@@ -94,8 +143,9 @@ extension FileEngine {
         return name.flatMap { $0.isEmpty ? nil : $0 } ?? (mount as NSString).lastPathComponent
     }
 
-    /// Removes an item for good, folders with everything in them. Only the
-    /// confirmed delete on a disk without a Trash calls this.
+    /// Removes an item for good, folders with everything in them. Only a
+    /// confirmed delete calls this: on a disk without a Trash, or Delete
+    /// Immediately.
     ///
     /// It works through open folders (`openat`, `unlinkat`) and never follows
     /// a link, so a folder swapped for a link while it runs can't redirect it

@@ -107,6 +107,11 @@ enum Commands {
             run: { $0.trashSelection() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites },
             startsGroup: true, ignoresKeyRepeat: true),
         Command(
+            id: "deleteImmediately", title: "Delete Immediately…", menu: .file, key: Command.backspace,
+            modifiers: [.option, .command],
+            run: { $0.deleteSelectionImmediately() }, isEnabled: { !$0.selectedItems.isEmpty && $0.allowsWrites },
+            ignoresKeyRepeat: true),
+        Command(
             id: "copyToOther", title: "Copy to Other Side", menu: .file, key: "c", modifiers: [.control, .command],
             run: { $0.transferToOtherPane(move: false) },
             isEnabled: { !$0.selectedItems.isEmpty && $0.otherPaneFolder != nil && $0.allowsWrites }, startsGroup: true,
