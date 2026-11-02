@@ -197,7 +197,7 @@ extension FileEngine {
                 control.skipEntry(name)
                 continue
             }
-            if relative.isEmpty || relative.hasPrefix("__MACOSX") { continue }
+            if relative.isEmpty { continue }
             try ArchiveAttributes.validate(entry.extendedAttributes)
             let target = staging.appendingPathComponent(relative)
             guard Self.parentIsSafe(relative, under: staging) else {

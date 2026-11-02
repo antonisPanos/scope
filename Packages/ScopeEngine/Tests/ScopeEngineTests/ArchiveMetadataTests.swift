@@ -99,6 +99,19 @@ struct ArchiveMetadataTests {
         #expect(FileEngine.lstatInfo(sandbox.url("locked.txt").path).map { $0.st_mode & 0o777 } == 0)
     }
 
+    @Test func ordinaryFilesWithMetadataLikeNamesAreKept() async throws {
+        let sandbox = try Sandbox()
+        let archive = try sandbox.write("names.bin", "unused")
+        var engine = sandbox.engine
+        engine.archiveReaders = FakeReaders(entries: [
+            (ArchiveEntry(name: "__MACOSX-note.txt", kind: .file), "ordinary data"),
+            (ArchiveEntry(name: "__MACOSX/user.txt", kind: .file), "also ordinary data"),
+        ])
+        try await OperationHarness(engine: engine).run(.extract(archive))
+        #expect(try String(contentsOf: sandbox.url("names/__MACOSX-note.txt"), encoding: .utf8) == "ordinary data")
+        #expect(try String(contentsOf: sandbox.url("names/__MACOSX/user.txt"), encoding: .utf8) == "also ordinary data")
+    }
+
     private func set(_ name: String, _ data: Data, on url: URL) throws {
         let result = data.withUnsafeBytes { setxattr(url.path, name, $0.baseAddress, data.count, 0, XATTR_NOFOLLOW) }
         guard result == 0 else { throw FileEngineError.posix("Set fixture attribute", name) }
