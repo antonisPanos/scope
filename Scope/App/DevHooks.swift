@@ -24,7 +24,7 @@ import ScopeEngine
 ///   "undo"             undoes the last operation
 ///   "activate"         brings Scope Dev to the front (the palette needs focus)
 ///   "dismiss"          closes any open sheet (alerts)
-///   "state"            logs the key window's location, items and the sidebar
+///   "state"            logs the key window's location, items, the sidebar and its selected item
 ///
 /// For example: `swift scripts/devhook.swift command:viewList`.
 /// Snapshots go to the temporary folder and nowhere else, and none of this is
@@ -180,7 +180,7 @@ enum DevHooks {
             if let controller {
                 let model = controller.model
                 logger.notice(
-                    "State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1), activity drawer \(controller.isActivityVisible ? "shown" : "hidden", privacy: .public), app active \(NSApp.isActive)"
+                    "State: \(model.location.title, privacy: .public), \(model.items.count) items, mode \(model.viewMode.rawValue, privacy: .public), sort \(model.sort.key.rawValue, privacy: .public), selected \(controller.selectedItems.map(\.name).joined(separator: ","), privacy: .public), tabs \(controller.window?.tabbedWindows?.count ?? 1), activity drawer \(controller.isActivityVisible ? "shown" : "hidden", privacy: .public), app active \(NSApp.isActive), sidebar selected \(controller.sidebarSelectedIDForHooks ?? "none", privacy: .public)"
                 )
             }
             for item in SidebarStore.shared.allItems {
