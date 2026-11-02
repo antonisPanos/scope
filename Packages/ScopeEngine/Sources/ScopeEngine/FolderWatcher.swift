@@ -2,18 +2,38 @@ import CoreServices
 import Foundation
 import Synchronization
 
-/// Live change notifications for one folder, through FSEvents.
+/// Live change notifications for one folder.
 ///
-/// Only changes to the folder's direct children are reported, coalesced over
-/// `latency`. The stream is created for folders on screen and ends when its
-/// consumer stops iterating, so nothing is watched in the background.
+/// Only changes to the folder's direct children are reported. Local disks
+/// are watched through FSEvents, coalesced over `latency`. Network shares
+/// are polled instead, since FSEvents doesn't hear about changes other
+/// machines make there. The stream is created for folders on screen and ends
+/// when its consumer stops iterating, so nothing is watched in the background.
 public enum FolderWatcher {
+    /// How a folder is watched.
+    public enum Backend: Sendable, Equatable {
+        /// FSEvents: immediate, for local disks.
+        case fsEvents
+        /// Comparing the folder's entries every `interval`, for file systems
+        /// that send no events, such as SMB and NFS shares.
+        case polling(interval: Duration)
+
+        /// How often network shares are polled.
+        public static let networkInterval: Duration = .seconds(3)
+
+        /// FSEvents on local disks, polling on network ones. Decided from the
+        /// kernel's mount table without waiting on the disk.
+        public static func automatic(for folder: URL, mounts: MountTable = MountTable()) -> Backend {
+            mounts.isNetwork(folder.path) ? .polling(interval: networkInterval) : .fsEvents
+        }
+    }
+
     /// That something in the folder changed.
     public static func changes(
-        in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25
+        in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25, backend: Backend? = nil
     ) throws -> AsyncStream<Void> {
         let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        try watch(folder, pathGuard: pathGuard, latency: latency, signal: continuation) { _ in }
+        try watch(folder, pathGuard: pathGuard, latency: latency, backend: backend, signal: continuation) { _ in }
         return stream
     }
 
@@ -24,28 +44,59 @@ public enum FolderWatcher {
     /// Changes that arrive while the consumer is busy are merged, so it
     /// never falls behind and never misses a name.
     public static func events(
-        in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25
+        in folder: URL, pathGuard: PathGuard, latency: TimeInterval = 0.25, backend: Backend? = nil
     ) throws -> FolderEvents {
         let (signals, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         let pending = PendingChange()
-        try watch(folder, pathGuard: pathGuard, latency: latency, signal: continuation) { change in
+        try watch(folder, pathGuard: pathGuard, latency: latency, backend: backend, signal: continuation) { change in
             pending.add(change)
         }
         return FolderEvents(signals: signals, pending: pending)
     }
 
-    /// Starts FSEvents on `folder`. Each change is first passed to `record`,
-    /// then `signal` is yielded; the stream stops when `signal` terminates.
+    /// Starts watching `folder`. Each change is first passed to `record`,
+    /// then `signal` is yielded; watching stops when `signal` terminates.
     private static func watch(
-        _ folder: URL, pathGuard: PathGuard, latency: TimeInterval,
+        _ folder: URL, pathGuard: PathGuard, latency: TimeInterval, backend: Backend?,
         signal continuation: AsyncStream<Void>.Continuation,
         record: @escaping @Sendable (FolderChange) -> Void
     ) throws {
         let resolved = try pathGuard.checkTarget(folder)
-        let box = WatcherBox(folder: resolved.path) { change in
+        let report: @Sendable (FolderChange) -> Void = { change in
             record(change)
             continuation.yield()
         }
+        switch backend ?? .automatic(for: resolved) {
+        case .fsEvents:
+            watchEvents(resolved, latency: latency, signal: continuation, report: report)
+        case .polling(let interval):
+            let task = Task.detached(executorPreference: IOExecutor.shared, priority: .utility) {
+                await poll(resolved.path, every: interval, report: report)
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Compares the folder's entries every `interval` until cancelled.
+    private static func poll(
+        _ folder: String, every interval: Duration, report: @Sendable (FolderChange) -> Void
+    ) async {
+        var previous = FolderSnapshot.read(folder)
+        while !Task.isCancelled {
+            try? await Task.sleep(for: interval)
+            if Task.isCancelled { return }
+            let current = FolderSnapshot.read(folder)
+            if let change = FolderSnapshot.change(from: previous, to: current) { report(change) }
+            previous = current
+        }
+    }
+
+    private static func watchEvents(
+        _ resolved: URL, latency: TimeInterval,
+        signal continuation: AsyncStream<Void>.Continuation,
+        report: @escaping @Sendable (FolderChange) -> Void
+    ) {
+        let box = WatcherBox(folder: resolved.path, report: report)
 
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passRetained(box).toOpaque(),
@@ -196,5 +247,41 @@ private final class StreamHandle: @unchecked Sendable {
         FSEventStreamInvalidate(stream)
         FSEventStreamRelease(stream)
         self.stream = nil
+    }
+}
+
+/// A folder's entries as polling compares them: each name with what changes
+/// when the item does. Nil when the folder can't be read.
+struct FolderSnapshot {
+    struct Entry: Equatable {
+        var inode: UInt64
+        var modified: Int64
+        var changed: Int64
+        var size: Int64
+    }
+
+    static func read(_ folder: String) -> [String: Entry]? {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder) else { return nil }
+        var entries: [String: Entry] = [:]
+        entries.reserveCapacity(names.count)
+        for name in names {
+            guard let info = FileEngine.lstatInfo(folder + "/" + name) else { continue }
+            entries[name] = Entry(
+                inode: UInt64(info.st_ino),
+                modified: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec),
+                changed: Int64(info.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(info.st_ctimespec.tv_nsec),
+                size: Int64(info.st_size))
+        }
+        return entries
+    }
+
+    /// The change between two snapshots: the names added, removed or
+    /// changed, `.everything` when the folder appeared or went away, or nil.
+    static func change(from old: [String: Entry]?, to new: [String: Entry]?) -> FolderChange? {
+        guard let old, let new else { return (old == nil) == (new == nil) ? nil : .everything }
+        var names: Set<String> = []
+        for (name, entry) in new where old[name] != entry { names.insert(name) }
+        for name in old.keys where new[name] == nil { names.insert(name) }
+        return names.isEmpty ? nil : .children(names)
     }
 }
