@@ -185,6 +185,7 @@ final class BrowserModel {
         unsubscribe()
         spotlight?.stop()
         spotlight = nil
+        isSearching = false
         state = .loading
         addedBy = []
         selectingOperation = nil
@@ -314,6 +315,7 @@ final class BrowserModel {
     /// Streams search results in as the crawler finds them, re-sorting at
     /// most every quarter second so a big result set doesn't stall the list.
     private func runSearch(_ query: SearchQuery, in folder: URL, generation: Int) async {
+        guard generation == self.generation, !Task.isCancelled else { return }
         isSearching = true
         onChange?(.status)
         defer {
