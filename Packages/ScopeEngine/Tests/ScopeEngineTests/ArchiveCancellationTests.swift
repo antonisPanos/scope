@@ -15,7 +15,7 @@ struct ArchiveCancellationTests {
             return await engine.extractionSpaceProblem(archive)
         }
         #expect(await worker.value == nil)
-        #expect(calls.all.count == 0)
+        #expect(calls.all.isEmpty)
     }
 
     @Test func preflightChecksCancellationBetweenHeaders() async throws {
@@ -117,8 +117,9 @@ private final class SilentService: NSObject, ArchiveServiceProtocol, Sendable {
         if phase == .entry {
             reached.append(true)
         } else {
-            reply(
-                try! JSONEncoder().encode(ServiceReply<ArchiveEntry?>.success(ArchiveEntry(name: "leaf", kind: .file))))
+            let encoded = try? JSONEncoder().encode(
+                ServiceReply<ArchiveEntry?>.success(ArchiveEntry(name: "leaf", kind: .file)))
+            reply(encoded ?? Data())
         }
     }
 
