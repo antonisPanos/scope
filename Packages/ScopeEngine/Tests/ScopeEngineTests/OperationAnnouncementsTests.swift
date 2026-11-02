@@ -44,12 +44,16 @@ import Testing
         // A rename stays in one folder: one change, both names.
         #expect(
             FolderItemsChanged.changes(
-                for: .moveBack(from: folder.appendingPathComponent("new"), to: folder.appendingPathComponent("old"))
+                for: .moveBack(
+                    from: folder.appendingPathComponent("new"), to: folder.appendingPathComponent("old"),
+                    fileID: FileIdentity(inode: 1, modified: 0, size: 0))
             ) == [FolderItemsChanged(folder: folder, added: ["new"], removed: ["old"])])
         // A move leaves one folder for another.
         #expect(
             FolderItemsChanged.changes(
-                for: .moveBack(from: other.appendingPathComponent("x"), to: folder.appendingPathComponent("x"))
+                for: .moveBack(
+                    from: other.appendingPathComponent("x"), to: folder.appendingPathComponent("x"),
+                    fileID: FileIdentity(inode: 1, modified: 0, size: 0))
             ) == [
                 FolderItemsChanged(folder: other, added: ["x"]),
                 FolderItemsChanged(folder: folder, removed: ["x"]),

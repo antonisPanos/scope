@@ -139,15 +139,24 @@ public struct UndoRecord: Sendable, Hashable {
 /// different inode means it was replaced; the same inode with another
 /// modification time or size means it was edited in place.
 public struct FileIdentity: Sendable, Hashable {
+    public let device: UInt64
     public let inode: UInt64
+    public let kind: UInt32
     /// Nanoseconds since 1970.
     public let modified: Int64
     public let size: Int64
+    /// A snapshot of descendants for a created directory; nil if it could not be read.
+    public let directoryVersion: Data?
 
-    public init(inode: UInt64, modified: Int64, size: Int64) {
+    public init(
+        inode: UInt64, modified: Int64, size: Int64, device: UInt64 = 0, kind: UInt32 = 0, directoryVersion: Data? = nil
+    ) {
+        self.device = device
+        self.kind = kind
         self.inode = inode
         self.modified = modified
         self.size = size
+        self.directoryVersion = directoryVersion
     }
 }
 
@@ -155,14 +164,14 @@ public enum UndoStep: Sendable, Hashable {
     /// Undo a create: move the item the operation made to the Trash.
     case trashCreated(URL, fileID: FileIdentity)
     /// Undo a rename or same-disk move: move it back.
-    case moveBack(from: URL, to: URL)
+    case moveBack(from: URL, to: URL, fileID: FileIdentity)
     /// Undo a trash: put the item back from the Trash.
     case putBack(trashed: URL, original: URL)
 
     var touchedItems: [URL] {
         switch self {
         case .trashCreated(let url, _): [url]
-        case .moveBack(let from, let to): [from, to]
+        case .moveBack(let from, let to, _): [from, to]
         case .putBack(let trashed, let original): [trashed, original]
         }
     }

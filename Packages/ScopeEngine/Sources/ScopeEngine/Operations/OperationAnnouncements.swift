@@ -37,7 +37,7 @@ public struct FolderItemsChanged: Sendable, Equatable {
         switch step {
         case .trashCreated(let url, _):
             return [FolderItemsChanged(folder: parent(url), added: [url.lastPathComponent])]
-        case .moveBack(let target, let source):
+        case .moveBack(let target, let source, _):
             if parent(target) == parent(source) {
                 return [
                     FolderItemsChanged(
