@@ -86,9 +86,9 @@ enum FileViewKeys {
     }
 
     /// The decision itself, apart from the drag, so tests can call it.
-    static func dropOperation(_ urls: [URL], into folder: URL, optionHeld: Bool, mounts: MountTable)
-        -> NSDragOperation
-    {
+    static func dropOperation(
+        _ urls: [URL], into folder: URL, optionHeld: Bool, mounts: MountTable
+    ) -> NSDragOperation {
         guard !urls.isEmpty, !urls.contains(where: { $0 == folder || folder.path.hasPrefix($0.path + "/") }) else {
             return []
         }
