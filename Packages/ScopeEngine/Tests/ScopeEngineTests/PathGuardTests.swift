@@ -162,8 +162,8 @@ import Testing
         #expect(try scratch.checkTarget(outside.appendingPathComponent("a.txt")).path == outside.path + "/a.txt")
         #expect(scratch.permits(URL(fileURLWithPath: "/")))
         // Writing only inside the scratch folder, also for items not made yet.
-        #expect(try scratch.checkWriteLocation(allowed.appendingPathComponent("new/b.txt")).path
-            == allowed.path + "/new/b.txt")
+        let created = try scratch.checkWriteLocation(allowed.appendingPathComponent("new/b.txt"))
+        #expect(created.path == allowed.path + "/new/b.txt")
         for url in [outside, outside.appendingPathComponent("a.txt"), sandbox.root, URL(fileURLWithPath: "/tmp/x")] {
             #expect(throws: PathGuardViolation.self, "\(url.path)") { try scratch.checkWriteLocation(url) }
             #expect(throws: PathGuardViolation.self, "\(url.path)") { try scratch.checkModifiable(url) }
@@ -182,8 +182,8 @@ import Testing
         try sandbox.symlink("allowed/escape", to: outside.path)
         let scratch = PathGuard.writesOnlyUnder([allowed])
         // The link itself lives inside and may be trashed; writing through it may not.
-        #expect(try scratch.checkModifiable(allowed.appendingPathComponent("escape")).path
-            == allowed.path + "/escape")
+        let link = try scratch.checkModifiable(allowed.appendingPathComponent("escape"))
+        #expect(link.path == allowed.path + "/escape")
         let violation = #expect(throws: PathGuardViolation.self) {
             try scratch.checkWriteLocation(allowed.appendingPathComponent("escape/new.txt"))
         }

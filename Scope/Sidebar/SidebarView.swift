@@ -81,7 +81,8 @@ struct SidebarView: View {
         .opacity(item.isEnabled ? 1 : 0.4)
         .help(
             item.isEnabled
-                ? (item.location.folderURL?.path ?? item.title) : "\(BuildIdentity.current.appName) can't open this place"
+                ? (item.location.folderURL?.path ?? item.title)
+                : "\(BuildIdentity.current.appName) can't open this place"
         )
         .tag(item.id)
         .contextMenu {
