@@ -51,6 +51,8 @@ final class InfoWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 @Observable
 final class InfoModel {
+    typealias FolderCounter = @Sendable (URL, @escaping @Sendable (FolderSize) -> Void) async throws -> FolderSize
+
     let item: FileItem
     let engine: FileEngine
     var details: ItemDetails?
@@ -58,37 +60,53 @@ final class InfoModel {
     var isCounting = false
     var copied: String?
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private let countFolder: FolderCounter
 
-    init(item: FileItem, engine: FileEngine) {
+    init(item: FileItem, engine: FileEngine, countFolder: FolderCounter? = nil) {
         self.item = item
         self.engine = engine
+        self.countFolder =
+            countFolder ?? { url, progress in
+                try await engine.folderSize(of: url, progress: progress)
+            }
     }
 
     func load() {
+        cancel()
+        let generation = generation
         let engine = engine
         let url = item.url
         tasks.append(
             Task { [weak self] in
+                guard self?.generation == generation, !Task.isCancelled else { return }
                 let details = try? await engine.details(for: url)
-                self?.details = details
+                guard let self, self.generation == generation, !Task.isCancelled else { return }
+                self.details = details
             })
         guard item.isBrowsableFolder || item.isPackage else { return }
         isCounting = true
+        let countFolder = countFolder
         tasks.append(
             Task { [weak self] in
-                let result = try? await Task.detached(priority: .utility) {
-                    try await engine.folderSize(of: url) { partial in
-                        Task { @MainActor in self?.folderSize = partial }
+                guard self?.generation == generation, !Task.isCancelled else { return }
+                let result = try? await countFolder(url) { partial in
+                    Task { @MainActor in
+                        guard let self, self.generation == generation else { return }
+                        self.folderSize = partial
                     }
-                }.value
-                guard let self, !Task.isCancelled else { return }
+                }
+                guard let self, self.generation == generation, !Task.isCancelled else { return }
                 if let result { self.folderSize = result }
                 self.isCounting = false
             })
     }
 
     func cancel() {
+        generation += 1
         tasks.forEach { $0.cancel() }
+        tasks.removeAll()
+        isCounting = false
     }
 
     func copy(_ value: String) {
