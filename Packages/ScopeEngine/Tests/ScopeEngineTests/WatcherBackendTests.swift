@@ -34,7 +34,8 @@ import Testing
         try FileManager.default.removeItem(at: sandbox.url("folder/removed.txt"))
         try sandbox.write("folder/added.txt", "a")
         let after = FolderSnapshot.read(folder)
-        #expect(FolderSnapshot.change(from: before, to: after) == .children(["edited.txt", "removed.txt", "added.txt"]))
+        let expected = FolderChange.children(["edited.txt", "removed.txt", "added.txt"])
+        #expect(FolderSnapshot.change(from: before, to: after) == expected)
 
         // The folder going away (or coming back) means everything.
         #expect(FolderSnapshot.read(sandbox.url("missing").path) == nil)
