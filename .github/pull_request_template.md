@@ -11,4 +11,5 @@
 ## Safety
 
 - [ ] File access still goes through `FileEngine` and `PathGuard`
-- [ ] No change to the release build's read-only setting
+- [ ] Scope Dev still restricts changes to `~/ScopeScratch`
+- [ ] Tests use disposable fixtures and never the user's real Trash or files

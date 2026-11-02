@@ -82,8 +82,9 @@ open it, and drag Scope to Applications. Scope needs macOS 27.2 or later.
 
 > Releases aren't notarized yet. The first time you open Scope, right-click it and choose Open.
 
-Scope is in early development (0.x). Release builds are read-only for now: they browse,
-preview and search, but they won't change files until the write path has had more testing.
+Scope is in early development (0.x). Production builds support full file operations with
+normal macOS permissions. For local development, use Scope Dev, which changes files only
+inside `~/ScopeScratch`.
 
 ## Build from source
 

@@ -231,7 +231,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         command.run(self)
     }
 
-    /// False in the read-only release build.
+    /// Whether this window's engine permits operations that change files.
     var allowsWrites: Bool { model.engine.pathGuard.allowsWrites }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

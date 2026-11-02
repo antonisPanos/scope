@@ -36,8 +36,7 @@ public struct PathGuard: Sendable {
     /// the protected items can't be renamed, moved or trashed.
     public static let unrestricted = PathGuard(policy: .unrestricted, allowsWrites: true)
 
-    /// Every absolute path may be read, but nothing may be changed. The real
-    /// Scope build uses this until the MVP gate in the test plan is met.
+    /// Every absolute path may be read, but nothing may be changed.
     public static let readOnly = PathGuard(policy: .unrestricted, allowsWrites: false)
 
     /// A guard that only allows paths inside `roots` (the roots themselves included).

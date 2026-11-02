@@ -21,8 +21,9 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   path passes `PathGuard` first. Neither build runs in the App Sandbox.
 - Development builds (`SCOPE_DEV`, "Scope Dev") use `PathGuard.writesOnlyUnder`: they read
   anywhere but change files only inside `~/ScopeScratch` (`BuildIdentity.scratchFolder`).
-- The release build uses `PathGuard.readOnly` until `SCOPE_ALLOW_WRITES` is set in
-  `Config/Scope.xcconfig`. Only the owner sets it; never add it yourself.
+- Production builds (`Scope`) enable `SCOPE_ALLOW_WRITES` by default and use normal
+  macOS file permissions (owner's decision, 2026-11-02). Development restrictions belong
+  in `Scope Dev`; file-changing QA must still use scratch folders or disposable fixtures.
 - Engine write operations must call `checkWriteLocation`, never only `checkLocation`.
 - Engine tests use temp folders with a restricted guard, and throwaway disk images
   (`TestVolume`) for anything with disk side effects (Trash, moves between disks). Never let
