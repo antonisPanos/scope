@@ -365,16 +365,19 @@ extension FileEngine {
         let isFolderLike = ns.pathExtension.isEmpty
         let base = isFolderLike ? name : ns.deletingPathExtension
         let suffix = isFolderLike ? "" : "." + ns.pathExtension
-        var candidates: [String] = []
+        let first: String
+        let numberedBase: String
         switch style {
         case .numbered:
-            candidates.append(name)
-            candidates += (2...10_000).lazy.map { "\(base) \($0)\(suffix)" }.prefix(9_999)
+            first = name
+            numberedBase = base
         case .copy:
-            candidates.append("\(base) copy\(suffix)")
-            candidates += (2...10_000).lazy.map { "\(base) copy \($0)\(suffix)" }.prefix(9_999)
+            first = "\(base) copy\(suffix)"
+            numberedBase = "\(base) copy"
         }
-        for candidate in candidates {
+        for number in 1...10_000 {
+            try Task.checkCancellation()
+            let candidate = number == 1 ? first : "\(numberedBase) \(number)\(suffix)"
             let url = folder.appendingPathComponent(candidate)
             if Self.lstatInfo(url.path) == nil { return try pathGuard.checkWriteLocation(url) }
         }
