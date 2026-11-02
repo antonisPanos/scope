@@ -6,8 +6,11 @@ import Testing
 
 @MainActor struct MetadataRefreshTests {
     @Test func metadataNotificationsDoNotDependOnFileItemEquality() async throws {
-        let source = URL(fileURLWithPath: #filePath)
-        let folder = source.deletingLastPathComponent()
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        // A distinct source-only folder avoids sharing a cached listing
+        // with other tests that intentionally have no announcement feed.
+        let folder = root.appendingPathComponent(".github/workflows")
+        let source = folder.appendingPathComponent("ci.yml")
         let announcements = OperationAnnouncements()
         let model = BrowserModel(
             engine: FileEngine(pathGuard: .readOnly), location: .folder(folder),
@@ -22,7 +25,9 @@ import Testing
         #expect(model.state == .loaded)
         let before = model.items
         // Simulate a metadata-only watcher event without changing a file.
-        announcements.announce(FolderItemsChanged(folder: folder, added: [source.lastPathComponent]))
+        await Task.detached {
+            announcements.announce(FolderItemsChanged(folder: folder, added: [source.lastPathComponent]))
+        }.value
         for _ in 0..<500 {
             if notified { break }
             try await Task.sleep(for: .milliseconds(10))
