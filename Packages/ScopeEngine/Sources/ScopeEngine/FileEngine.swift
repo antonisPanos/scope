@@ -150,10 +150,11 @@ public struct FileEngine: Sendable {
 
     /// Moves an item to `destination` (the full new path, not its folder).
     /// Only moves within one disk are supported for now; they are a single
-    /// atomic rename.
-    public func moveItem(at url: URL, to destination: URL) async throws {
+    /// atomic rename. `puttingBack` marks an undo that takes a trashed item
+    /// out of the Trash (`PathGuard.checkPutBack`).
+    public func moveItem(at url: URL, to destination: URL, puttingBack: Bool = false) async throws {
         try await onIOThreads {
-            let source = try pathGuard.checkModifiable(url)
+            let source = try puttingBack ? pathGuard.checkPutBack(url) : pathGuard.checkModifiable(url)
             let target = try pathGuard.checkWriteLocation(destination)
             guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
             let targetFolder = target.deletingLastPathComponent().path

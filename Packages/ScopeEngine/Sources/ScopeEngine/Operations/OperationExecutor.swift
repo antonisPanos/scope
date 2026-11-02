@@ -196,7 +196,7 @@ extension FileEngine {
     /// A synchronous same-disk rename back from the Trash, for cleanup paths
     /// that must not be interrupted by cancellation.
     private func placeBack(_ trashed: URL, at original: URL) throws {
-        let from = try pathGuard.checkWriteLocation(trashed)
+        let from = try pathGuard.checkPutBack(trashed)
         let to = try pathGuard.checkWriteLocation(original)
         guard Self.renameExclusively(from.path, to: to.path) else {
             throw FileEngineError.posix("Put back", from.path)
@@ -326,7 +326,7 @@ extension FileEngine {
                 guard Self.lstatInfo(trashed.path) != nil else {
                     throw OperationError.undoNotPossible("“\(trashed.lastPathComponent)” is no longer in the Trash.")
                 }
-                try await moveItem(at: trashed, to: original)
+                try await moveItem(at: trashed, to: original, puttingBack: true)
             }
             // Undoing a step reverses the change it recorded.
             undo.announce(FolderItemsChanged.changes(for: step).map(\.reversed))

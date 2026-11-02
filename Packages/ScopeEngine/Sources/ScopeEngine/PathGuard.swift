@@ -119,6 +119,30 @@ public struct PathGuard: Sendable {
         return resolved
     }
 
+    /// Like `checkWriteLocation`, for an item in a Trash that Scope is putting
+    /// back (undoing a trash). Taking an item out of a Trash changes nothing
+    /// the user hasn't already thrown away, so a guard that only writes in its
+    /// scratch folder allows it; where it lands still passes
+    /// `checkWriteLocation`.
+    @discardableResult
+    public func checkPutBack(_ url: URL) throws(PathGuardViolation) -> URL {
+        guard allowsWrites else { throw fail(url, resolved: nil, reason: .writesDisabled) }
+        let resolved = try checkLocation(url)
+        if let writeRoots, !Self.isInside(resolved.path, anyOf: writeRoots), !Self.isInTrash(resolved.path) {
+            throw fail(url, resolved: resolved.path, reason: .outsideWritableFolders)
+        }
+        return resolved
+    }
+
+    /// Whether `path` is an item inside the user's Trash (~/.Trash) or a
+    /// volume's (.Trashes/<uid>), not the Trash folder itself.
+    static func isInTrash(_ path: String) -> Bool {
+        if path.hasPrefix(userHome + "/.Trash/") { return true }
+        guard let range = path.range(of: "/.Trashes/") else { return false }
+        let rest = path[range.upperBound...].split(separator: "/", maxSplits: 1)
+        return rest.count == 2 && rest[0].allSatisfy(\.isNumber) && !rest[1].isEmpty
+    }
+
     /// Like `checkWriteLocation`, for an existing item about to be renamed,
     /// moved or trashed. Also refuses the items macOS needs in place: volume
     /// roots, system folders, the home folder and its standard folders.
