@@ -88,6 +88,10 @@ func writeIconSet(name: String, squareColor: NSColor) throws {
 }
 
 let amber = NSColor(red: 0xF5 / 255, green: 0xA5 / 255, blue: 0x24 / 255, alpha: 1)
-try writeIconSet(name: "AppIcon", squareColor: .white)
+// Not pure white: a black and white icon makes actool store it as grayscale,
+// and macOS then shows it shrunk onto a grey plate instead of filling the
+// rounded tile like Scope Dev's. The faint blue keeps it in colour.
+let white = NSColor(srgbRed: 0xFC / 255, green: 0xFD / 255, blue: 0xFF / 255, alpha: 1)
+try writeIconSet(name: "AppIcon", squareColor: white)
 try writeIconSet(name: "AppIconDev", squareColor: amber)
 print("Icons written to \(catalog)")
