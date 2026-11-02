@@ -22,6 +22,10 @@ public struct FileEngine: Sendable {
     /// one. Always nil in the app.
     var trashRefusal: (@Sendable (URL) -> Bool)?
 
+    /// Tests only: an error number to fail reading a file's data with, as a
+    /// failing disk would. Always nil in the app.
+    var readFault: (@Sendable (String) -> Int32?)?
+
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
     /// half-written item under its real name.
@@ -224,7 +228,7 @@ public struct FileEngine: Sendable {
         }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
-        var job = CopyJob(progress: progress, control: control)
+        var job = CopyJob(progress: progress, control: control, readFault: readFault)
         try job.measure(source.path)
 
         let partial = target.deletingLastPathComponent()
@@ -338,10 +342,15 @@ private struct CopyJob {
     var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32, hasACL: Bool)] = []
 
     let control: OperationControl?
+    let readFault: (@Sendable (String) -> Int32?)?
 
-    init(progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?) {
+    init(
+        progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
+        readFault: (@Sendable (String) -> Int32?)? = nil
+    ) {
         self.progressHandler = progress
         self.control = control
+        self.readFault = readFault
     }
 
     mutating func measure(_ path: String) throws {
@@ -400,6 +409,7 @@ private struct CopyJob {
     }
 
     private mutating func copyData(from source: String, to destination: String, info: stat) throws {
+        if let code = readFault?(source) { throw FileEngineError.posix("Read", source, code) }
         let size = off_t(info.st_size)
         // Locked files take the copy path, so the flag can be held back as usual.
         if info.st_flags == 0, clone(from: source, to: destination) {
