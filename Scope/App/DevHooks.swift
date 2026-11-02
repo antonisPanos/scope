@@ -16,6 +16,8 @@ import ScopeEngine
 ///   "sidebar:<title>"  opens the sidebar item with that title
 ///   "select:<names>"   selects items by name (comma separated) in the folder on screen
 ///   "press:<title>"    presses a button on an open sheet
+///   "type:<text>"      puts text in the first text field of an open sheet (the Rename and New Folder name)
+///   "cancel"           cancels the newest running operation, as its Cancel button does
 ///   "ops"              logs every operation in the activity list
 ///   "search:<mode>:<text>"  searches (mode: contains, glob, regex, contents)
 ///   "searchkind:<kind>" limits the search to one kind; "endsearch" ends it
@@ -144,6 +146,15 @@ enum DevHooks {
                 window.setFrame(frame, display: true)
                 logger.notice("Resized to \(window.frame.width) (asked \(width)), min \(window.minSize.width)")
             }
+        case "type":
+            for window in NSApp.windows {
+                guard let sheet = window.attachedSheet else { continue }
+                findField(in: sheet.contentView)?.stringValue = argument
+            }
+        case "cancel":
+            if let running = OperationsController.shared.snapshots.last(where: \.isActive) {
+                OperationsController.shared.cancel(running.id)
+            }
         case "undo":
             controller?.undoLastOperation()
         case "activate":
@@ -187,6 +198,15 @@ enum DevHooks {
         if let button = view as? NSButton, button.title == title { return button }
         for subview in view.subviews {
             if let found = findButton(title, in: subview) { return found }
+        }
+        return nil
+    }
+
+    private static func findField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable { return field }
+        for subview in view.subviews {
+            if let found = findField(in: subview) { return found }
         }
         return nil
     }

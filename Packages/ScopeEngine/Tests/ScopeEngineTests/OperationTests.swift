@@ -36,29 +36,50 @@ import Testing
 
     /// A file macOS stores compressed (much of /System and /Applications):
     /// its data lives in a hidden attribute, so it takes fewer blocks than its
-    /// size, like a sparse file. Copies must carry its real contents, on the
-    /// same disk and to another one, and must not be marked compressed.
+    /// size, like a sparse file. Copies must carry its real contents and must
+    /// not be marked compressed. The source is a system font, read only:
+    /// `ditto --hfsCompression` doesn't compress on every macOS.
     @Test func copiesCompressedFilesWithTheirContents() async throws {
-        let text = String(repeating: "Scope keeps every byte of a compressed file. ", count: 20_000)
-        let plain = try disk.write("plain.txt", text)
-        try FileManager.default.createDirectory(at: disk.url("source"), withIntermediateDirectories: true)
-        try TestVolume.run("/usr/bin/ditto", ["--hfsCompression", plain.path, disk.url("source/packed.txt").path])
-        let packed = try #require(FileEngine.lstatInfo(disk.url("source/packed.txt").path))
-        try #require(packed.st_flags & UInt32(UF_COMPRESSED) != 0, "ditto didn't compress the file")
-        try #require(Int64(packed.st_blocks) * 512 < Int64(packed.st_size))
+        let fonts = URL(fileURLWithPath: "/System/Library/Fonts")
+        let names = try FileManager.default.contentsOfDirectory(atPath: fonts.path).sorted()
+        let packedName = try #require(names.first(where: Self.isCompressed(in: fonts)), "no compressed system font")
+        let source = fonts.appendingPathComponent(packedName)
+        let original = try Data(contentsOf: source)
+        let engine = FileEngine(pathGuard: .restricted(to: [fonts, disk.mountPoint, other.mountPoint]))
+        let ops = OperationHarness(engine: engine)
 
-        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
-        try await ops.run(.copy([disk.url("source")], into: disk.url("dest")))
-        try await ops.run(.copy([disk.url("source")], into: other.work))
+        try await ops.run(.copy([source], into: disk.work))
+        try await ops.run(.copy([source], into: other.work))
 
-        for copy in [disk.url("dest/source/packed.txt"), other.url("source/packed.txt")] {
-            #expect(try String(contentsOf: copy, encoding: .utf8) == text, "\(copy.path)")
+        for copy in [disk.url(packedName), other.url(packedName)] {
+            #expect(try Data(contentsOf: copy) == original, "\(copy.path)")
             let info = try #require(FileEngine.lstatInfo(copy.path))
             #expect(info.st_flags & UInt32(UF_COMPRESSED) == 0, "\(copy.path)")
-            #expect(info.st_size == packed.st_size)
             let names = Self.xattrNames(copy.path)
             #expect(!names.contains("com.apple.ResourceFork"), "\(copy.path)")
             #expect(!names.contains("com.apple.decmpfs"), "\(copy.path)")
+        }
+    }
+
+    /// Scope Dev's guard changes only its scratch folder, but undoing a trash
+    /// takes the item back out of the Trash, which lies outside it.
+    @Test func undoesATrashWhenWritesAreLimitedToAScratchFolder() async throws {
+        try disk.write("scratch/a.txt", "a")
+        let scratch = disk.url("scratch")
+        let ops = OperationHarness(engine: FileEngine(pathGuard: .writesOnlyUnder([scratch])))
+
+        let record = try await ops.run(.trash([scratch.appendingPathComponent("a.txt")]))
+        #expect(!disk.exists("scratch/a.txt"))
+        try await ops.undo(record)
+        #expect(try disk.read("scratch/a.txt") == "a")
+    }
+
+    private static func isCompressed(in folder: URL) -> (String) -> Bool {
+        { name in
+            guard let info = FileEngine.lstatInfo(folder.path + "/" + name), info.st_mode & S_IFMT == S_IFREG else {
+                return false
+            }
+            return info.st_flags & UInt32(UF_COMPRESSED) != 0 && Int64(info.st_blocks) * 512 < Int64(info.st_size)
         }
     }
 

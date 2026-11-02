@@ -200,4 +200,20 @@ import Testing
         try sandbox.write("scratch/a.txt", "a")
         #expect(try scratch.checkModifiable(missing.appendingPathComponent("a.txt")).path == missing.path + "/a.txt")
     }
+
+    @Test func putBackIsAllowedOnlyFromATrash() throws {
+        let scratch = PathGuard.writesOnlyUnder([allowed])
+        let home = PathGuard.defaultProtectedItems.first { $0.hasPrefix("/Users/") } ?? "/Users/x"
+        #expect(PathGuard.isInTrash(home + "/.Trash/a.txt"))
+        #expect(PathGuard.isInTrash("/Volumes/Disk/.Trashes/501/a.txt"))
+        #expect(!PathGuard.isInTrash(home + "/.Trash"))
+        #expect(!PathGuard.isInTrash("/Volumes/Disk/.Trashes/501"))
+        #expect(!PathGuard.isInTrash("/Volumes/Disk/.Trashes/x/a.txt"))
+        #expect(!PathGuard.isInTrash(home + "/Documents/a.txt"))
+        // Outside the scratch folder and outside any Trash: refused.
+        #expect(throws: PathGuardViolation.self) { try scratch.checkPutBack(outside.appendingPathComponent("a.txt")) }
+        #expect(throws: PathGuardViolation.self) {
+            try PathGuard.readOnly.checkPutBack(URL(fileURLWithPath: home + "/.Trash/a.txt"))
+        }
+    }
 }
