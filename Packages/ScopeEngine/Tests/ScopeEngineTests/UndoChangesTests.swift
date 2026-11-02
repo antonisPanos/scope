@@ -74,6 +74,41 @@ import Testing
         #expect(try disk.names() == ["a.txt"])
     }
 
+    @Test(arguments: ["edit", "add", "remove", "replace"])
+    func changedDescendantsRequireConfirmation(change: String) async throws {
+        try disk.write("source/nested/leaf.txt", "original")
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        var record = try await ops.run(.copy([disk.url("source")], into: disk.url("dest")))
+        switch change {
+        case "edit": try edit("dest/source/nested/leaf.txt", appending: " edits")
+        case "add": try disk.write("dest/source/nested/new.txt", "new")
+        case "remove": try FileManager.default.removeItem(at: disk.url("dest/source/nested/leaf.txt"))
+        default:
+            try FileManager.default.moveItem(at: disk.url("dest/source/nested/leaf.txt"), to: disk.url("saved.txt"))
+            try disk.write("dest/source/nested/leaf.txt", "replacement")
+        }
+        let changed = await engine.changedSinceMade(record)
+        #expect(changed.map(\.path) == [disk.url("dest/source").path])
+        let before = try TreeSnapshot(disk.url("dest"))
+        await #expect(throws: OperationError.self) { try await ops.undo(record) }
+        #expect(try TreeSnapshot(disk.url("dest")) == before)
+        record.includesChangedItems = true
+        try await ops.undo(record)
+        #expect(try disk.names("dest").isEmpty)
+    }
+
+    @Test func directoryVersionsDoNotFollowLinks() async throws {
+        try disk.write("outside/leaf.txt", "outside")
+        try FileManager.default.createDirectory(at: disk.url("source"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: disk.url("source/link"), withDestinationURL: disk.url("outside"))
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        let record = try await ops.run(.copy([disk.url("source")], into: disk.url("dest")))
+        try edit("outside/leaf.txt", appending: " edits")
+        #expect(await engine.changedSinceMade(record).isEmpty)
+        try await ops.undo(record)
+        #expect(try disk.read("outside/leaf.txt") == "outside edits")
+    }
+
     @Test func theCenterAsksBeforeQueueingTheUndo() async throws {
         let center = OperationCenter(engine: engine) { _ in (.stop, false) }
         try disk.write("a.txt", "a")

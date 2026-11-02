@@ -30,7 +30,7 @@ extension FileEngine {
                 try await duplicate(items, control: control, undo: undo)
             case .rename(let item, let name):
                 let renamed = try await rename(item, to: name)
-                undo.add(.moveBack(from: renamed, to: try pathGuard.checkLocation(item)))
+                undo.add(.moveBack(from: renamed, to: try pathGuard.checkLocation(item), fileID: Self.fileID(renamed)))
             case .newFolder(let folder, let name):
                 let target = try uniqueName(name, in: try pathGuard.checkWriteLocation(folder), style: .numbered)
                 try await createFolder(at: target)
@@ -125,7 +125,7 @@ extension FileEngine {
                     continue
                 }
                 if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-                undo.add(.moveBack(from: target, to: source))
+                undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
                 let size = (try? measure([target]))?.bytes ?? 0
                 control.update {
                     $0.bytesDone += size
@@ -307,13 +307,16 @@ extension FileEngine {
             switch step {
             case .trashCreated(let url, let fileID):
                 guard Self.lstatInfo(url.path) != nil else { break }
-                guard Self.fileID(url).inode == fileID.inode else {
+                guard Self.sameItem(Self.fileID(url), fileID) else {
                     throw OperationError.undoNotPossible("“\(url.lastPathComponent)” has been replaced since.")
                 }
                 _ = try await trashItem(at: url)
-            case .moveBack(let from, let to):
+            case .moveBack(let from, let to, let made):
                 guard Self.lstatInfo(from.path) != nil else {
                     throw OperationError.undoNotPossible("“\(from.lastPathComponent)” isn't there anymore.")
+                }
+                guard Self.sameItem(Self.fileID(from), made) else {
+                    throw OperationError.undoNotPossible("“\(from.lastPathComponent)” has been replaced since.")
                 }
                 if from.lastPathComponent != to.lastPathComponent,
                     from.deletingLastPathComponent() == to.deletingLastPathComponent()
@@ -384,14 +387,24 @@ extension FileEngine {
         throw FileEngineError.destinationExists(folder.appendingPathComponent(name).path)
     }
 
-    /// The item's identity now; all zero when it is missing. A folder's
-    /// version isn't kept: its time changes whenever an item is added or
-    /// removed, even by a later operation that undo reverses first.
+    /// The item's identity and version now; all zero when it is missing.
+    /// Directory versions compare descendants, excluding directory times so
+    /// later operations undone first can restore the original state.
     static func fileID(_ url: URL) -> FileIdentity {
         guard let info = lstatInfo(url.path) else { return FileIdentity(inode: 0, modified: 0, size: 0) }
-        if info.st_mode & S_IFMT == S_IFDIR { return FileIdentity(inode: UInt64(info.st_ino), modified: 0, size: 0) }
+        if info.st_mode & S_IFMT == S_IFDIR {
+            return FileIdentity(
+                inode: UInt64(info.st_ino), modified: 0, size: 0, device: UInt64(info.st_dev),
+                kind: UInt32(info.st_mode & S_IFMT), directoryVersion: try? DirectoryVersion.read(url, expected: info))
+        }
         let modified = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
-        return FileIdentity(inode: UInt64(info.st_ino), modified: modified, size: Int64(info.st_size))
+        return FileIdentity(
+            inode: UInt64(info.st_ino), modified: modified, size: Int64(info.st_size), device: UInt64(info.st_dev),
+            kind: UInt32(info.st_mode & S_IFMT))
+    }
+
+    private static func sameItem(_ now: FileIdentity, _ made: FileIdentity) -> Bool {
+        now.inode != 0 && now.inode == made.inode && now.device == made.device && now.kind == made.kind
     }
 
     /// Files an undo would move to the Trash that were edited after the
@@ -401,7 +414,8 @@ extension FileEngine {
         record.steps.compactMap { step in
             guard case .trashCreated(let url, let made) = step else { return nil }
             let now = fileID(url)
-            return now.inode != 0 && now.inode == made.inode && now != made ? url : nil
+            return sameItem(now, made)
+                && (now != made || (made.kind == UInt32(S_IFDIR) && made.directoryVersion == nil)) ? url : nil
         }
     }
 
