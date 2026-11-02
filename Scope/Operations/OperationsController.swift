@@ -110,8 +110,15 @@ final class OperationsController {
     }
 
     func undo(_ id: UUID, from window: NSWindow?) async {
+        // Files edited since the operation made them are trashed only after a yes.
+        let changed = await center.changedSinceMade(id)
+        if !changed.isEmpty {
+            guard await Self.confirmUndo(changing: changed, on: window) else { return }
+        }
         do {
-            if let undoID = try await center.undo(id) { unreadIDs.insert(undoID) }
+            if let undoID = try await center.undo(id, includingChanged: !changed.isEmpty) {
+                unreadIDs.insert(undoID)
+            }
             refresh()
         } catch {
             Self.showAlert("Can't undo.", error.localizedDescription, on: window)
@@ -249,6 +256,35 @@ final class OperationsController {
         }
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "Apply to all"
+        return alert
+    }
+
+    /// Asks before an undo moves files edited since to the Trash. They stay
+    /// in the Trash, so Undo Anyway is the default (Return) and Cancel takes
+    /// Escape, as in other Mac questions.
+    private static func confirmUndo(changing items: [URL], on window: NSWindow?) async -> Bool {
+        let alert = changedSinceAlert(items)
+        let response: NSApplication.ModalResponse
+        if let window, window.attachedSheet == nil {
+            response = await alert.beginSheetModal(for: window)
+        } else {
+            response = alert.runModal()
+        }
+        return response == .alertFirstButtonReturn
+    }
+
+    static func changedSinceAlert(_ items: [URL]) -> NSAlert {
+        let alert = NSAlert()
+        if items.count == 1 {
+            alert.messageText = "“\(items[0].lastPathComponent)” was changed after it was made. Undo anyway?"
+            alert.informativeText = "Undo moves it to the Trash with the changes, so you can still get it back."
+        } else {
+            alert.messageText = "\(items.count) items were changed after they were made. Undo anyway?"
+            alert.informativeText =
+                "Undo moves them to the Trash with the changes, so you can still get them back.\n\n" + listing(items)
+        }
+        alert.addButton(withTitle: "Undo Anyway")
+        alert.addButton(withTitle: "Cancel")
         return alert
     }
 
