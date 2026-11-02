@@ -73,11 +73,17 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     @discardableResult
     func select(_ urls: [URL], scroll: Bool) -> Bool {
         let wanted = Set(urls.map(\.standardizedFileURL))
-        let rows = (root.children ?? []).indices.filter {
-            (root.children?[$0].item).map { wanted.contains($0.url.standardizedFileURL) } ?? false
+        func paths(in nodes: [ColumnNode], prefix: [Int]) -> [IndexPath] {
+            nodes.enumerated().flatMap { index, node -> [IndexPath] in
+                let path = prefix + [index]
+                let selected = node.item.map { wanted.contains($0.url.standardizedFileURL) } ?? false
+                return (selected ? [IndexPath(indexes: path)] : []) + paths(in: node.children ?? [], prefix: path)
+            }
         }
-        guard !rows.isEmpty else { return false }
-        browser.selectRowIndexes(IndexSet(rows), inColumn: 0)
+        let found = paths(in: root.children ?? [], prefix: [])
+        guard !found.isEmpty else { return false }
+        let depth = found.map(\.count).max()
+        browser.selectionIndexPaths = found.filter { $0.count == depth }
         onSelectionChange?()
         return true
     }
@@ -90,20 +96,12 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     private func reloadItems() {
         let selected = selectedItems.map(\.url)
-        let fresh = model.items.map { ColumnNode(item: $0) }
-        // Keep the deeper columns' nodes for folders that are still there.
-        let old = Dictionary(
-            (root.children ?? []).compactMap { node in node.item.map { ($0.url, node) } },
-            uniquingKeysWith: { a, _ in a })
-        root.children = fresh.map { node in
-            guard let url = node.item?.url, let kept = old[url], kept.item == node.item else { return node }
-            return kept
-        }
+        root.children = ColumnNode.updating(model.items, from: root.children ?? [])
         browser.loadColumnZero()
         if !model.pendingSelection.isEmpty {
             if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
         } else if !selected.isEmpty {
-            select(selected, scroll: false)
+            if !select(selected, scroll: false) { browser.selectionIndexPaths = [] }
         }
     }
 
@@ -113,13 +111,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         node.childrenListing = NestedFolderListing(url: item.url, model: model) { [weak self, weak node] sorted in
             guard let self, let node else { return }
             let selected = Set(self.selectedItems.map(\.url))
-            let old = Dictionary(
-                (node.children ?? []).compactMap { child in child.item.map { ($0.url, child) } },
-                uniquingKeysWith: { a, _ in a })
-            node.children = sorted.map { item in
-                if let kept = old[item.url], kept.item == item { return kept }
-                return ColumnNode(item: item)
-            }
+            node.children = ColumnNode.updating(sorted, from: node.children ?? [])
             node.isLoadingChildren = false
             self.model.metadataDidChange()
             self.reloadColumn(showing: node, selecting: selected)
@@ -132,10 +124,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         for column in 0...max(0, browser.lastColumn) {
             if (browser.parentForItems(inColumn: column) as? ColumnNode) === node {
                 browser.reloadColumn(column)
-                let rows = (node.children ?? []).indices.filter {
-                    node.children?[$0].item.map { selected.contains($0.url) } ?? false
-                }
-                browser.selectRowIndexes(IndexSet(rows), inColumn: column)
+                if !select(Array(selected), scroll: false) { browser.selectionIndexPaths = [] }
                 return
             }
         }
@@ -200,7 +189,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 /// A node in the column view. The root has no item.
 @MainActor
 final class ColumnNode {
-    let item: FileItem?
+    var item: FileItem?
     var children: [ColumnNode]?
     var isLoadingChildren = false
     var childrenListing: NestedFolderListing?
@@ -212,6 +201,25 @@ final class ColumnNode {
 
     init(item: FileItem?) {
         self.item = item
+    }
+
+    static func updating(_ items: [FileItem], from nodes: [ColumnNode]) -> [ColumnNode] {
+        let old = Dictionary(
+            nodes.compactMap { node in node.item.map { ($0.url, node) } },
+            uniquingKeysWith: { a, _ in a })
+        return items.map { item in
+            guard let kept = old[item.url] else { return ColumnNode(item: item) }
+            let keepsChildren =
+                kept.item?.isBrowsableFolder == true && kept.item?.isSymbolicLink == false
+                && item.isBrowsableFolder && !item.isSymbolicLink
+            kept.item = item
+            if !keepsChildren {
+                kept.childrenListing = nil
+                kept.children = nil
+                kept.isLoadingChildren = false
+            }
+            return kept
+        }
     }
 }
 

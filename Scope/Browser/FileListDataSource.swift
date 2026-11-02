@@ -27,7 +27,10 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
             guard let self, let node else { return }
             let old = Dictionary((node.children ?? []).map { ($0.item.url, $0) }, uniquingKeysWith: { a, _ in a })
             node.children = sorted.map { item in
-                if let kept = old[item.url], kept.item == item { return kept }
+                if let kept = old[item.url] {
+                    kept.update(item)
+                    return kept
+                }
                 return FileNode(item: item)
             }
             node.isLoadingChildren = false

@@ -19,6 +19,18 @@ final class FileNode {
     init(item: FileItem) {
         self.item = item
     }
+
+    func update(_ item: FileItem) {
+        let keepsChildren =
+            self.item.isBrowsableFolder && !self.item.isSymbolicLink
+            && item.isBrowsableFolder && !item.isSymbolicLink
+        self.item = item
+        if !keepsChildren {
+            children = nil
+            childrenListing = nil
+            isLoadingChildren = false
+        }
+    }
 }
 
 /// The list and details views: an NSOutlineView fed by the browser model.
@@ -225,9 +237,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         roots = model.items.map { item in
             let node = nodesByURL[item.url] ?? FileNode(item: item)
             if node.item != item {
-                node.item = item
-                node.children = nil
-                node.childrenListing = nil
+                node.update(item)
             }
             reused[item.url] = node
             return node
@@ -259,9 +269,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         var redrawn: [FileNode] = []
         for index in changes.reloaded where updated[index].item != items[index] {
             let node = updated[index]
-            node.item = items[index]
-            node.children = nil
-            node.childrenListing = nil
+            node.update(items[index])
             tagCache[node.item.url] = nil
             redrawn.append(node)
         }
