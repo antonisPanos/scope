@@ -84,7 +84,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         guard !found.isEmpty else { return false }
         let depth = found.map(\.count).max()
         browser.selectionIndexPaths = found.filter { $0.count == depth }
-        onSelectionChange?()
+        selectionChanged()
         return true
     }
 
