@@ -383,7 +383,7 @@ import Testing
     @Test func extractRefusesEntriesThatEscape() async throws {
         // A tar with "../../escaped.txt", "/tmp/absolute.txt", and a symlink
         // to /etc followed by a file written through it.
-        let tar = try TarBuilder()
+        let tar = TarBuilder()
             .file("../../escaped.txt", "escape")
             .file("/tmp/scope-absolute-\(UUID().uuidString).txt", "absolute")
             .symlink("link-out", to: "/etc")

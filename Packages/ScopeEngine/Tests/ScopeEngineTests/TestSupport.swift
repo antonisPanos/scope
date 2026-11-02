@@ -8,6 +8,9 @@ import Testing
 /// used everywhere so comparisons don't trip over /var vs /private/var.
 final class Sandbox {
     let root: URL
+    /// Where `engine` puts trashed items: a folder next to `root`, so a test
+    /// that trashes something here can't reach the user's real Trash.
+    let trash: URL
     let engine: FileEngine
 
     /// The test disk made by scripts/testdisk.sh. Tests that need a disk of
@@ -26,7 +29,11 @@ final class Sandbox {
         let resolved = try #require(realpath(base.path, nil))
         defer { free(resolved) }
         root = URL(fileURLWithPath: String(cString: resolved))
-        engine = FileEngine(pathGuard: .restricted(to: [root]))
+        trash = URL(fileURLWithPath: root.path + "-trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        var engine = FileEngine(pathGuard: .restricted(to: [root, trash]))
+        engine.trash = .folder(trash)
+        self.engine = engine
     }
 
     deinit {
@@ -41,6 +48,7 @@ final class Sandbox {
             }
         }
         try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: trash)
     }
 
     func url(_ relative: String) -> URL { root.appendingPathComponent(relative) }
