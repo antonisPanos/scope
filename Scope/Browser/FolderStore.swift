@@ -237,12 +237,11 @@ final class FolderStore {
         let url = folder.url
         let (updates, continuation) = AsyncStream.makeStream(of: Update.self)
         var feeds: [@Sendable () -> Void] = []
-        if let events = try? FolderWatcher.events(in: url, pathGuard: folder.engine.pathGuard) {
-            let feed = Task {
-                for await change in events { continuation.yield(Update(change: change)) }
-            }
-            feeds.append { feed.cancel() }
+        let watchFeed = Task {
+            guard let events = try? await folder.engine.folderEvents(at: url), !Task.isCancelled else { return }
+            for await change in events { continuation.yield(Update(change: change)) }
         }
+        feeds.append { watchFeed.cancel() }
         if let announcements = folder.announcements {
             let token = announcements.observe { change in
                 // On the operation's worker thread, so resolving links here

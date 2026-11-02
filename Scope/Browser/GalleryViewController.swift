@@ -110,18 +110,27 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
     }
 
     func close() {
+        previewTask?.cancel()
         preview.close()
     }
 
+    private var previewTask: Task<Void, Never>?
+
     private func updatePreview() {
+        previewTask?.cancel()
         guard let item = strip.selectedItems.first else {
             preview.previewItem = nil
             caption.stringValue = ""
             return
         }
         caption.stringValue = item.name
-        if (preview.previewItem as? NSURL) as URL? != item.url {
-            preview.previewItem = model.engine.pathGuard.permits(item.url) ? item.url as NSURL : nil
+        preview.previewItem = nil
+        let engine = model.engine
+        let url = item.url
+        previewTask = Task { [weak self] in
+            let readable = await engine.readableURLs([url]).first
+            guard let self, !Task.isCancelled, self.strip.selectedItems.first?.url == url else { return }
+            self.preview.previewItem = readable.map { $0 as NSURL }
         }
     }
 }

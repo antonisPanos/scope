@@ -22,6 +22,8 @@ public struct FileEngine: Sendable {
     /// app can run the parsing in a sandboxed service of its own; the engine
     /// opens the file, checks every entry's name and writes every file.
     public var archiveReaders: any ArchiveReaderOpening = LibArchiveReaders()
+    /// Tests only: simulate slow path resolution at the I/O boundary.
+    var readValidationHook: (@Sendable () -> Void)?
 
     /// Tests only: items for which the Trash refuses, as on a disk without
     /// one. Always nil in the app.

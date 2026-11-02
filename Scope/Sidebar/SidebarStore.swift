@@ -225,7 +225,9 @@ final class SidebarStore {
                     isEnabled: pathGuard.permits(url)))
         }
 
-        for volume in Volumes.mounted() {
+        let volumes = Volumes.mounted()
+        Volumes.updateRootName(from: volumes)
+        for volume in volumes {
             var item = SidebarItem(
                 id: "vol:" + volume.url.path,
                 kind: volume.isDiskImage ? .diskImage : .volume,

@@ -37,7 +37,7 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
     }
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-        guard let node = item as? FileNode, model.engine.pathGuard.permits(node.item.url) else { return nil }
+        guard let node = item as? FileNode, model.readAccess.permits(node.item.url) else { return nil }
         return node.item.url as NSURL
     }
 

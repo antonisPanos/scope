@@ -1,5 +1,6 @@
 import Foundation
 import ScopeEngine
+import Synchronization
 
 /// What a browser tab shows: a folder, or a virtual list of items.
 enum Location: Hashable, Sendable {
@@ -51,5 +52,10 @@ enum Location: Hashable, Sendable {
 
 extension Volumes {
     /// Name of the startup disk, for showing "/" the way Finder does.
-    static let rootName: String? = mounted().first { $0.isRootVolume }?.name
+    private static let rootNameCache = Mutex<String?>(nil)
+    static var rootName: String? { rootNameCache.withLock { $0 } }
+
+    static func updateRootName(from volumes: [VolumeInfo]) {
+        rootNameCache.withLock { $0 = volumes.first { $0.isRootVolume }?.name }
+    }
 }

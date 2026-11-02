@@ -34,6 +34,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var splitGroup: NSToolbarItemGroup?
     var previewGroup: NSToolbarItemGroup?
     var searchDebounce: Task<Void, Never>?
+    var quickLookTask: Task<Void, Never>?
+    var quickLookURLs: [URL] = []
 
     init(location: Location) {
         let first = BrowserViewController(
@@ -205,6 +207,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func windowWillClose(_ notification: Notification) {
+        quickLookTask?.cancel()
+        quickLookURLs = []
         palette?.close()
         firstResponderObservation = nil
         for tab in workspace.allContents {

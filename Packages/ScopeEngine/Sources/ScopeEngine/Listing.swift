@@ -10,10 +10,12 @@ extension FileEngine {
     public func listing(
         of folder: URL, includeHidden: Bool = true, batchSize: Int = 200, interval: Duration = .milliseconds(100)
     ) throws -> AsyncThrowingStream<[FileItem], Error> {
-        let directory = try pathGuard.checkTarget(folder)
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: [FileItem].self)
         let task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
+                readValidationHook?()
+                let directory = try pathGuard.checkTarget(folder)
                 try Self.readListing(
                     directory, includeHidden: includeHidden, batchSize: max(1, batchSize), interval: interval
                 ) { batch in
