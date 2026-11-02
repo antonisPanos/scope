@@ -45,9 +45,9 @@ extension FileEngine {
             var details = ItemDetails(item: item)
 
             let values = try? location.resourceValues(forKeys: [
-                .tagNamesKey, .contentAccessDateKey, .volumeLocalizedNameKey,
+                .contentAccessDateKey, .volumeLocalizedNameKey,
             ])
-            details.tags = values?.tagNames ?? []
+            details.tags = (try? FinderTags.names(at: location)) ?? []
             details.volumeName = values?.volumeLocalizedName
             if let info = Self.lstatInfo(location.path) {
                 details.permissions = Self.modeString(info.st_mode)

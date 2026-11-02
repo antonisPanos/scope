@@ -102,7 +102,7 @@ public struct FileEngine: Sendable {
     public func tags(for url: URL) async throws -> [String] {
         return try await onIOThreads {
             let target = try pathGuard.checkLocation(url)
-            return try target.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []
+            return try FinderTags.names(at: target)
         }
     }
 
