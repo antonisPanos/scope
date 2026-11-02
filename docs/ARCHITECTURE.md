@@ -34,7 +34,9 @@ a file engine in its own Swift package. Nothing touches the disk except through 
 - `OperationCenter` runs copies, moves, trash, compress and extract as jobs you can pause and
   cancel. The app reaches it through `OperationsController`. Jobs on the same disk run one at a time.
 - Copies are written under a hidden `.scope-partial-` name and renamed into place. Nothing is
-  overwritten, and deletes always go to the Trash.
+  overwritten, and deletes always go to the Trash. A disk with no Trash is the one exception: the
+  engine asks the app (`confirmPermanentDeletion`), which names the disk and every item, and only
+  a yes removes them, through open folders that never follow a link (`PermanentDelete.swift`).
 
 The engine targets macOS 15 so its tests run on GitHub's hosted runners; the app needs macOS 27.2.
 

@@ -53,7 +53,10 @@ and the status bar says "Scope Dev · test disks only".
   operation with progress, speed, time running and left, Pause, Cancel, the
   queue with Start Now and reordering, and Undo for finished ones. The Dock
   icon shows a progress bar.
-- Safety: nothing is overwritten or deleted. Copies are written under a hidden
+- Some disks, such as certain network shares, have no Trash. Deleting there
+  asks first, naming the disk and every item; Cancel is the default, and only
+  Delete Permanently removes them. Items on other disks still go to the Trash.
+- Safety: nothing is overwritten, and nothing is deleted without asking. Copies are written under a hidden
   partial name and renamed into place; moves between disks verify every
   file's SHA-256 before the original goes to the Trash; archive entries with
   ../ or absolute paths, or that would write through a link, are skipped.

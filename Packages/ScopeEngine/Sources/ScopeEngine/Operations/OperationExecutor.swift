@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Runs one file operation. Every path passes the path guard; nothing is ever
-/// overwritten or deleted: a replaced item goes to the Trash only once its
+/// overwritten or deleted outright: a replaced item goes to the Trash only once its
 /// replacement is complete, and a move across disks trashes the original only
 /// after the copy is verified.
 extension FileEngine {
@@ -10,7 +10,8 @@ extension FileEngine {
         _ operation: FileOperation,
         control: OperationControl,
         undo: UndoRecorder,
-        resolveConflict: @escaping ConflictResolver
+        resolveConflict: @escaping ConflictResolver,
+        confirmPermanentDeletion: @escaping PermanentDeletionConfirmer = { _ in false }
     ) async throws {
         try await onIOThreads {
             var conflicts = ConflictPolicy(resolver: resolveConflict)
@@ -31,7 +32,7 @@ extension FileEngine {
                 try await createFolder(at: target)
                 undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             case .trash(let items):
-                try await trash(items, control: control, undo: undo)
+                try await trash(items, control: control, undo: undo, confirm: confirmPermanentDeletion)
             case .compress(let items, let format):
                 try await compress(items, format: format, control: control, undo: undo)
             case .extract(let archive):
@@ -59,6 +60,7 @@ extension FileEngine {
             $0.bytesTotal = totals.bytes
             $0.itemsTotal = totals.items
         }
+        try preflight(sources, into: destination, moving: moving)
 
         for source in sources {
             try Task.checkCancellation()
@@ -200,26 +202,10 @@ extension FileEngine {
         }
     }
 
-    private func trash(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
-        control.update { $0.itemsTotal = items.count }
-        for item in items {
-            try Task.checkCancellation()
-            let original = try pathGuard.checkWriteLocation(item)
-            control.update { $0.currentItem = original.lastPathComponent }
-            if let trashed = try await trashItem(at: original) {
-                undo.add(.putBack(trashed: trashed, original: original))
-            }
-            control.update { $0.itemsDone += 1 }
-        }
-    }
-
     /// Trashes without a cancellation check, for the last step of a move and
     /// for the item a finished replacement takes the place of.
     private func trashItemNow(_ url: URL) throws -> URL? {
-        let target = try pathGuard.checkModifiable(url)
-        var resulting: NSURL?
-        try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
-        return resulting as URL?
+        try moveToTrash(try pathGuard.checkModifiable(url))
     }
 
     // MARK: - Verification

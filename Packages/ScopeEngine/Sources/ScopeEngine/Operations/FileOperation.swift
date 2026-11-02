@@ -281,8 +281,16 @@ public struct Conflict: Sendable, Equatable {
 public typealias ConflictResolver = @Sendable (Conflict) async -> (choice: ConflictChoice, applyToAll: Bool)
 
 public enum OperationError: Error, Equatable, LocalizedError {
+    static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
     case itemsBusy([String])
     case stoppedByUser
+    /// The user said no to deleting for good on a disk with no Trash.
+    case noTrash(String)
+    /// A folder being deleted for good has another disk mounted inside.
+    case diskInside(String)
     case verificationFailed(String)
     case notAnArchive(String)
     case archive(String)
@@ -291,12 +299,17 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case changedSince([String])
     case mountFailed(String)
     case needsUnsandboxedBuild
+    case notEnoughSpace(needed: Int64, available: Int64, volume: String)
+    case fileTooLarge(String, volume: String)
+    case nameNotAllowed(String, volume: String)
 
     public var errorDescription: String? {
         switch self {
         case .itemsBusy(let names):
             "\(names.joined(separator: ", ")) \(names.count == 1 ? "is" : "are") in use by another operation."
         case .stoppedByUser: "Stopped."
+        case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
+        case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
         case .archive(let message): message
@@ -305,6 +318,14 @@ public enum OperationError: Error, Equatable, LocalizedError {
             "\(names.map { "“\($0)”" }.joined(separator: ", ")) changed since, so nothing was undone."
         case .mountFailed(let message): message
         case .needsUnsandboxedBuild: "Mounting disk images needs the “Scope Dev (No Sandbox)” build."
+        case .notEnoughSpace(let needed, let available, let volume):
+            "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
+                + "and \(Self.bytes(available)) is free. Nothing was copied."
+        case .fileTooLarge(let name, let volume):
+            "“\(name)” is larger than 4 GB, which \(volume) can't store (its format is FAT32). Nothing was copied."
+        case .nameNotAllowed(let name, let volume):
+            "\(volume) can't store the name “\(name)”: FAT and exFAT disks don't allow \\ / : * ? \" < > |, "
+                + "or a name ending in a space or a dot. Nothing was copied."
         }
     }
 }
