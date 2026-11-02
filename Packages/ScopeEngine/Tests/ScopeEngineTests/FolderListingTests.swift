@@ -46,6 +46,25 @@ import Testing
         #expect(fresh.map(\.name) == ["a.txt"])
     }
 
+    @Test func incrementalListingsDescribeLinksWithoutFollowingTheirTargets() async throws {
+        let outside = try Sandbox()
+        let target = try outside.write("target.txt", "outside")
+        try sandbox.write("local.txt", "inside")
+        try sandbox.symlink("normal", to: "local.txt")
+        try sandbox.symlink("dangling", to: "missing")
+        try sandbox.symlink("outside", to: target.path)
+        try sandbox.symlink("loop", to: "loop")
+        let names: Set<String> = ["normal", "dangling", "outside", "loop"]
+        let full = try await sandbox.engine.contentsOfDirectory(at: sandbox.root)
+        let fresh = try await sandbox.engine.children(named: names, in: sandbox.root)
+        #expect(Set(fresh.map(\.name)) == names)
+        #expect(fresh.allSatisfy { $0.isSymbolicLink })
+        #expect(Set(FolderListing.updating(full, names: names, with: fresh)) == Set(full))
+        // Listing an outside link does not permit opening its target.
+        #expect(!sandbox.engine.pathGuard.permits(sandbox.url("outside")))
+        #expect(try String(contentsOf: target, encoding: .utf8) == "outside")
+    }
+
     @Test func rowChangesTurnTheOldRowsIntoTheNew() throws {
         for name in ["a", "b", "c", "d", "e"] { try sandbox.write(name, name) }
         let old = try items(["a", "b", "c", "d"])
