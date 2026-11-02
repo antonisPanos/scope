@@ -283,9 +283,10 @@ final class BrowserViewController: NSViewController {
         selectionDidChange()
     }
 
-    private func selectionDidChange() {
+    private func selectionDidChange(refreshMetadata: Bool = false) {
         let selected = fileView.selectedItems
-        preview.show(selected.count == 1 ? selected[0] : nil, count: selected.count)
+        preview.show(
+            selected.count == 1 ? selected[0] : nil, count: selected.count, refreshMetadata: refreshMetadata)
         updateStatus()
         onSelectionChange?()
     }
@@ -320,7 +321,9 @@ final class BrowserViewController: NSViewController {
             message.stringValue = Self.emptyText(for: model.location)
         }
         fileView.modelDidChange(change)
-        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) { selectionDidChange() }
+        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
+            selectionDidChange(refreshMetadata: change.contains(.metadata))
+        }
         if !change.isDisjoint(with: [.anyItems, .location, .status]) { updateSearchBar() }
         if change.contains(.status) { updateStatus() }
     }

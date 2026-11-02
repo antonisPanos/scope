@@ -14,6 +14,7 @@ final class PreviewPaneController: NSViewController {
     private let grid = NSGridView()
     private let placeholder = NSTextField(labelWithString: "")
     private var loadTask: Task<Void, Never>?
+    private var detailsTask: Task<Void, Never>?
     private var shownURL: URL?
     /// The item on show, so the same item shown again (after any change in
     /// its folder) doesn't restart the preview.
@@ -90,13 +91,17 @@ final class PreviewPaneController: NSViewController {
     }
 
     /// Shows the single selected item, or a summary when none or several are selected.
-    func show(_ item: FileItem?, count: Int) {
-        if let item, item == shownItem { return }
+    func show(_ item: FileItem?, count: Int, refreshMetadata: Bool = false) {
+        if let item, item == shownItem {
+            if refreshMetadata { loadDetails(for: item.url) }
+            return
+        }
         shownItem = item
         generation += 1
         let generation = generation
         guard let item else {
             loadTask?.cancel()
+            detailsTask?.cancel()
             shownURL = nil
             preview.previewItem = nil
             setContentHidden(true)
@@ -121,7 +126,19 @@ final class PreviewPaneController: NSViewController {
             let readable = await engine.readableURLs([url]).first
             guard !Task.isCancelled, let self, self.generation == generation else { return }
             self.preview.previewItem = readable.map { $0 as NSURL }
+        }
+        loadDetails(for: url)
+    }
+
+    /// Metadata changes don't change FileItem equality or restart Quick Look.
+    private func loadDetails(for url: URL) {
+        detailsTask?.cancel()
+        let engine = engine
+        let generation = generation
+        detailsTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled, let details = try? await engine.details(for: url) else { return }
+            guard let self else { return }
             guard self.generation == generation, !Task.isCancelled else { return }
             self.fill(rows: self.detailRows(details))
         }
@@ -131,6 +148,7 @@ final class PreviewPaneController: NSViewController {
         shownItem = nil
         generation += 1
         loadTask?.cancel()
+        detailsTask?.cancel()
         preview.close()
     }
 
