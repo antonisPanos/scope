@@ -189,6 +189,10 @@ final class XPCArchiveReader: ArchiveReading {
     func call<Value: Sendable>(
         _ send: (any ArchiveServiceProtocol, @escaping @Sendable (Value) -> Void) -> Void
     ) throws(ArchiveReadError) -> Value {
+        guard !Task.isCancelled else {
+            connection.invalidate()
+            throw .damaged(Self.lost)
+        }
         let outcome = Outcome<Value>()
         let proxy = connection.remoteObjectProxyWithErrorHandler { _ in outcome.finish(nil) }
         guard let service = proxy as? any ArchiveServiceProtocol else { throw .damaged(Self.lost) }
@@ -227,9 +231,18 @@ private final class Outcome<Value: Sendable>: Sendable {
     /// The reply, or nil if the connection failed or no reply came in time.
     func wait(for timeout: Duration) -> Value? {
         let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-        if done.wait(timeout: .now() + seconds) == .timedOut {
-            state.withLock { state in
-                if case .waiting = state { state = .timedOut }
+        let deadline = DispatchTime.now() + seconds
+        while true {
+            if Task.isCancelled {
+                finish(nil)
+                return nil
+            }
+            if done.wait(timeout: min(deadline, .now() + .milliseconds(25))) == .success { break }
+            guard DispatchTime.now() < deadline else {
+                state.withLock { state in
+                    if case .waiting = state { state = .timedOut }
+                }
+                break
             }
         }
         return state.withLock { state in

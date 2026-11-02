@@ -32,16 +32,18 @@ extension FileEngine {
     /// or the size isn't known until extracting (the extraction then stops by
     /// itself if the disk gets full). For the UI to warn before starting.
     public func extractionSpaceProblem(_ archiveURL: URL) async -> String? {
-        guard let archive = try? pathGuard.checkLocation(archiveURL),
-            let needed = declaredUnpackedSize(archive),
-            let free = Self.freeSpace(at: archive.deletingLastPathComponent().path),
-            needed > free - Self.extractionReserve(at: archive.deletingLastPathComponent().path)
-        else {
-            return nil
+        return await onIOThreads {
+            guard !Task.isCancelled, let archive = try? pathGuard.checkLocation(archiveURL),
+                let needed = declaredUnpackedSize(archive),
+                let free = Self.freeSpace(at: archive.deletingLastPathComponent().path),
+                needed > free - Self.extractionReserve(at: archive.deletingLastPathComponent().path)
+            else {
+                return nil
+            }
+            let size = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            return "“\(archive.lastPathComponent)” unpacks to \(size(needed)), "
+                + "but only \(size(max(0, free))) is free on this disk."
         }
-        let size = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-        return "“\(archive.lastPathComponent)” unpacks to \(size(needed)), "
-            + "but only \(size(max(0, free))) is free on this disk."
     }
 
     /// Free space on the disk holding `path`, for this user.
@@ -57,7 +59,7 @@ extension FileEngine {
     /// Impossible declarations saturate at Int64.max so preflight refuses
     /// them instead of treating an overflow or negative size as unknown.
     func declaredUnpackedSize(_ archive: URL) -> Int64? {
-        guard ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()),
+        guard !Task.isCancelled, ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()),
             let file = Self.openForReading(archive),
             let reader = try? archiveReaders.open(file, singleFile: false)
         else {
@@ -65,14 +67,14 @@ extension FileEngine {
         }
         var total: Int64 = 0
         do {
-            while let entry = try reader.nextEntry() {
+            while !Task.isCancelled, let entry = try reader.nextEntry() {
                 guard let size = entry.size else { return nil }
                 guard size >= 0 else { return .max }
                 let (sum, overflow) = total.addingReportingOverflow(size)
                 guard !overflow else { return .max }
                 total = sum
             }
-            return total
+            return Task.isCancelled ? nil : total
         } catch {
             return nil
         }
@@ -86,7 +88,9 @@ extension FileEngine {
     }
 
     func extract(_ archiveURL: URL, control: OperationControl, undo: UndoRecorder) async throws {
+        try Task.checkCancellation()
         if let problem = await extractionSpaceProblem(archiveURL) { throw OperationError.archive(problem) }
+        try Task.checkCancellation()
         let archivePath = try pathGuard.checkLocation(archiveURL)
         guard let archiveFile = Self.openForReading(archivePath) else {
             throw FileEngineError.posix("Open", archivePath.path)
@@ -106,6 +110,7 @@ extension FileEngine {
                 $0.currentItem = archivePath.lastPathComponent
             }
             try readArchive(archivePath, file: archiveFile, into: staging, quarantine: quarantine, control: control)
+            try Task.checkCancellation()
             try quarantineFolders(in: staging, properties: quarantine)
 
             // One top-level item comes out as itself; several go into a folder
@@ -121,6 +126,7 @@ extension FileEngine {
                 resultSource = staging
                 resultName = Self.archiveBaseName(archivePath)
             }
+            try Task.checkCancellation()
             let target = try uniqueName(resultName, in: folder, style: .numbered)
             guard Self.renameExclusively(resultSource.path, to: target.path) else {
                 throw FileEngineError.posix("Extract", target.path)
@@ -130,6 +136,7 @@ extension FileEngine {
             if resultSource != staging { Self.removeQuietly(staging.path) }
         } catch {
             Self.removeQuietly(staging.path)
+            try Task.checkCancellation()
             throw error
         }
     }
