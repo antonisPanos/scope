@@ -81,9 +81,8 @@ enum FileViewKeys {
     /// the disks come from the kernel's mount table. The drop itself checks
     /// them exactly, off the main thread, and copies when the badge said copy.
     static func dropOperation(_ info: NSDraggingInfo, into folder: URL) -> NSDragOperation {
-        dropOperation(
-            droppedURLs(info), into: folder, optionHeld: NSEvent.modifierFlags.contains(.option),
-            mounts: MountTable())
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        return dropOperation(droppedURLs(info), into: folder, optionHeld: optionHeld, mounts: MountTable())
     }
 
     /// The decision itself, apart from the drag, so tests can call it.
