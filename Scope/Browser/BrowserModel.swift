@@ -31,6 +31,8 @@ final class BrowserModel {
     }
 
     let engine: FileEngine
+    /// Changes operations make, as they make them; nil in a tab that doesn't follow them.
+    let announcements: OperationAnnouncements?
     var onChange: ((Change) -> Void)?
 
     private(set) var location: Location
@@ -38,8 +40,9 @@ final class BrowserModel {
     private(set) var state: LoadState = .loading
     /// Free space on the volume being shown, for the status bar.
     private(set) var availableCapacity: Int64?
-    /// An item to select once the next listing arrives (after "Go to" a file).
-    var pendingSelection: URL?
+    /// Items to select once they show up: after "Go to" a file, or the
+    /// items an operation started from this tab added.
+    var pendingSelection: [URL] = []
     /// True while a search is still crawling.
     private(set) var isSearching = false
     /// How `items` changed, set only while `.itemsUpdated` is announced.
@@ -70,11 +73,17 @@ final class BrowserModel {
     private var spotlight: SpotlightQuery?
     private var settingsObserver: NSObjectProtocol?
     private var generation = 0
+    /// What recent operations added to this folder, so the window that
+    /// started one can select it even when the news came first.
+    private var addedBy: [(operation: UUID, urls: [URL])] = []
+    /// The operation whose new items get selected as they show up.
+    private var selectingOperation: UUID?
 
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Browser")
 
-    init(engine: FileEngine, location: Location) {
+    init(engine: FileEngine, location: Location, announcements: OperationAnnouncements? = nil) {
         self.engine = engine
+        self.announcements = announcements
         self.location = location
         self.viewMode = AppSettings.shared.lastViewMode
         self.sort = AppSettings.shared.lastSort
@@ -111,7 +120,7 @@ final class BrowserModel {
     }
 
     func navigate(to destination: Location, select: URL? = nil) {
-        pendingSelection = select
+        pendingSelection = select.map { [$0] } ?? []
         guard destination != location else {
             if select != nil { onChange?(.items) }
             return
@@ -133,7 +142,7 @@ final class BrowserModel {
     func goBack() {
         guard let previous = backStack.popLast() else { return }
         forwardStack.append(location)
-        pendingSelection = location.folderURL
+        pendingSelection = location.folderURL.map { [$0] } ?? []
         location = previous
         load()
     }
@@ -164,6 +173,8 @@ final class BrowserModel {
         spotlight?.stop()
         spotlight = nil
         state = .loading
+        addedBy = []
+        selectingOperation = nil
         allItems = []
         items = []
         availableCapacity = nil
@@ -281,16 +292,48 @@ final class BrowserModel {
         onChange?(.status)
     }
 
-    /// Follows the folder as it changes on disk, without clearing what is on
-    /// screen in between: only the children that changed are read again,
-    /// and the views update just those rows.
+    /// One change to the folder on screen: from the watcher, or announced
+    /// by an operation as it made it (with what it added, and which one).
+    private struct FolderUpdate: Sendable {
+        var change: FolderChange
+        var added: Set<String> = []
+        var operation: UUID?
+    }
+
+    /// Follows the folder as it changes, without clearing what is on screen
+    /// in between: only the children that changed are read again, and the
+    /// views update just those rows. Operations announce their changes at
+    /// once; the watcher catches everything else (other apps, other disks),
+    /// and re-reading a change already shown finds nothing new.
     private func startWatching(_ url: URL, generation: Int) {
-        guard let events = try? FolderWatcher.events(in: url, pathGuard: engine.pathGuard) else { return }
+        let (updates, continuation) = AsyncStream.makeStream(of: FolderUpdate.self)
+        var feeds: [@Sendable () -> Void] = []
+        if let events = try? FolderWatcher.events(in: url, pathGuard: engine.pathGuard) {
+            let feed = Task {
+                for await change in events { continuation.yield(FolderUpdate(change: change)) }
+            }
+            feeds.append { feed.cancel() }
+        }
+        if let announcements {
+            let token = announcements.observe { change in
+                // On the operation's worker thread, so resolving links here
+                // keeps the disk off the main thread.
+                guard change.folder.standardizedFileURL.path == url.standardizedFileURL.path
+                    || change.folder.resolvingSymlinksInPath().path == url.resolvingSymlinksInPath().path
+                else { return }
+                continuation.yield(
+                    FolderUpdate(change: .children(change.names), added: change.added, operation: change.operation))
+            }
+            feeds.append { announcements.stop(token) }
+        }
+        guard !feeds.isEmpty else { return }
+        continuation.onTermination = { [feeds] _ in feeds.forEach { $0() } }
         watchTask = Task { [weak self] in
-            for await change in events {
+            defer { continuation.finish() }
+            for await update in updates {
                 guard let self, generation == self.generation else { return }
                 do {
-                    switch change {
+                    switch update.change {
                     case .children(let names):
                         let fresh = try await self.engine.children(named: names, in: url)
                         guard generation == self.generation else { return }
@@ -299,6 +342,9 @@ final class BrowserModel {
                         let listed = try await self.engine.contentsOfDirectory(at: url)
                         guard generation == self.generation else { return }
                         self.allItems = listed
+                    }
+                    if let operation = update.operation, !update.added.isEmpty {
+                        self.noteAdded(update.added.map { url.appendingPathComponent($0) }, by: operation)
                     }
                     await self.applyFilterAndSort(inPlace: true)
                 } catch {
@@ -311,6 +357,30 @@ final class BrowserModel {
                     self.onChange?([.items, .state, .status])
                 }
             }
+        }
+    }
+
+    // MARK: - Selecting what an operation added
+
+    /// Selects the items `operation` adds to this folder: those it already
+    /// added and those still to come, until the tab moves elsewhere or
+    /// another operation is selected.
+    func selectItems(addedBy operation: UUID) {
+        selectingOperation = operation
+        guard let urls = addedBy.first(where: { $0.operation == operation })?.urls else { return }
+        pendingSelection = urls
+        onChange?(.items)
+    }
+
+    private func noteAdded(_ urls: [URL], by operation: UUID) {
+        if let index = addedBy.firstIndex(where: { $0.operation == operation }) {
+            addedBy[index].urls += urls.filter { !addedBy[index].urls.contains($0) }
+        } else {
+            addedBy.append((operation, urls))
+            if addedBy.count > 8 { addedBy.removeFirst() }
+        }
+        if operation == selectingOperation, let all = addedBy.first(where: { $0.operation == operation })?.urls {
+            pendingSelection = all
         }
     }
 
@@ -336,7 +406,8 @@ final class BrowserModel {
             onChange?([.items, .status])
             return
         }
-        guard !changes.isEmpty else { return }
+        // Nothing moved, but items an operation added may still need selecting.
+        guard !changes.isEmpty || !pendingSelection.isEmpty else { return }
         Self.logger.debug(
             "Rows changed: \(changes.removed.count) removed, \(changes.inserted.count) added, \(changes.reloaded.count) redrawn"
         )

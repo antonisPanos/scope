@@ -37,7 +37,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     init(location: Location) {
         let first = BrowserViewController(
-            model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+            model: BrowserModel(
+                engine: BuildIdentity.current.makeEngine(), location: location,
+                announcements: OperationsController.shared.center.announcements))
         workspace = WorkspaceController(pane: PaneController(tab: first))
 
         let window = NSWindow(

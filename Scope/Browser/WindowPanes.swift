@@ -81,7 +81,9 @@ extension BrowserWindowController {
 
     func makeTab(at location: Location) -> BrowserViewController {
         let tab = BrowserViewController(
-            model: BrowserModel(engine: BuildIdentity.current.makeEngine(), location: location))
+            model: BrowserModel(
+                engine: BuildIdentity.current.makeEngine(), location: location,
+                announcements: OperationsController.shared.center.announcements))
         wire(tab)
         // A real starting size, so its layout doesn't fight a zero-sized frame.
         tab.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)

@@ -204,9 +204,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         nodesByURL = reused
         outlineView.reloadData()
 
-        if let pending = model.pendingSelection {
+        if !model.pendingSelection.isEmpty {
             // Kept until the item shows up: the first update after navigating is empty.
-            if select([pending], scroll: true) { model.pendingSelection = nil }
+            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
         } else {
             select(selected, scroll: false)
         }
@@ -240,7 +240,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
         outlineView.endUpdates()
         for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
-        if let pending = model.pendingSelection, select([pending], scroll: true) { model.pendingSelection = nil }
+        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
     }
 
     private func reloadVisibleNames() {
