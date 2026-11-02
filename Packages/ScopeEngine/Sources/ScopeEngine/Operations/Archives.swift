@@ -54,6 +54,8 @@ extension FileEngine {
     /// The total size of an archive's entries, for formats that record it in
     /// their headers and can be read through quickly without unpacking (zip,
     /// 7z, uncompressed tar). Nil for compressed streams or unknown sizes.
+    /// Impossible declarations saturate at Int64.max so preflight refuses
+    /// them instead of treating an overflow or negative size as unknown.
     func declaredUnpackedSize(_ archive: URL) -> Int64? {
         guard ["zip", "7z", "tar"].contains(archive.pathExtension.lowercased()),
             let file = Self.openForReading(archive),
@@ -65,7 +67,10 @@ extension FileEngine {
         do {
             while let entry = try reader.nextEntry() {
                 guard let size = entry.size else { return nil }
-                total += max(0, size)
+                guard size >= 0 else { return .max }
+                let (sum, overflow) = total.addingReportingOverflow(size)
+                guard !overflow else { return .max }
+                total = sum
             }
             return total
         } catch {
