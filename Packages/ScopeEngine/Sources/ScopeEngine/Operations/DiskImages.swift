@@ -84,28 +84,59 @@ extension FileEngine {
         process.standardError = stderr
         process.standardInput = stdin
         let box = ProcessBox(process)
+        // Both outputs are read while the tool runs: a pipe holds only 64 KB,
+        // and a tool that fills it would wait until the timeout killed it.
+        let collected = ToolOutputCollector()
+        let reading = DispatchGroup()
+        reading.enter()
+        reading.enter()
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ToolOutput, Error>) in
                 process.terminationHandler = { finished in
-                    let output = stdout.fileHandleForReading.readDataToEndOfFile()
-                    let error = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    continuation.resume(
-                        returning: ToolOutput(status: finished.terminationStatus, standardOutput: output, error: error))
+                    let status = finished.terminationStatus
+                    reading.notify(queue: .global()) {
+                        let (output, error) = collected.result
+                        continuation.resume(
+                            returning: ToolOutput(
+                                status: status, standardOutput: output, error: String(decoding: error, as: UTF8.self)))
+                    }
                 }
                 do {
                     try process.run()
-                    if let input { stdin.fileHandleForWriting.write(Data((input + "\n").utf8)) }
-                    try? stdin.fileHandleForWriting.close()
-                    DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { box.terminate() }
                 } catch {
+                    reading.leave()
+                    reading.leave()
                     continuation.resume(throwing: error)
+                    return
                 }
+                DispatchQueue.global().async {
+                    collected.setOutput(stdout.fileHandleForReading.readDataToEndOfFile())
+                    reading.leave()
+                }
+                DispatchQueue.global().async {
+                    collected.setError(stderr.fileHandleForReading.readDataToEndOfFile())
+                    reading.leave()
+                }
+                if let input { stdin.fileHandleForWriting.write(Data((input + "\n").utf8)) }
+                try? stdin.fileHandleForWriting.close()
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { box.terminate() }
             }
         } onCancel: {
             box.terminate()
         }
     }
+}
+
+/// A tool's two outputs, filled in by the threads that read them.
+private final class ToolOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var output = Data()
+    private var error = Data()
+
+    func setOutput(_ data: Data) { lock.withLock { output = data } }
+    func setError(_ data: Data) { lock.withLock { error = data } }
+    var result: (Data, Data) { lock.withLock { (output, error) } }
 }
 
 private final class ProcessBox: @unchecked Sendable {

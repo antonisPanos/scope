@@ -40,6 +40,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     private var tagCache: [URL: [String]] = [:]
     private var tagLoads: Set<URL> = []
     private let headerView = NSTableHeaderView()
+    private var observers: [NSObjectProtocol] = []
+
+    isolated deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
 
     enum Column: String, CaseIterable {
         case name, location, modified, created, added, size, kind, tags
@@ -145,14 +150,17 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         scrollView.backgroundColor = Palette.windowBackground
         view = scrollView
         scrollView.contentView.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            forName: NSView.frameDidChangeNotification, object: scrollView.contentView, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.fitNameColumn(fill: false) }
-        }
-        NotificationCenter.default.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadVisibleNames() }
-        }
+        let center = NotificationCenter.default
+        observers.append(
+            center.addObserver(
+                forName: NSView.frameDidChangeNotification, object: scrollView.contentView, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.fitNameColumn(fill: false) }
+            })
+        observers.append(
+            center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reloadVisibleNames() }
+            })
         applyViewMode()
         applySortIndicator()
         // When swapped in for another view, the model already has items.
