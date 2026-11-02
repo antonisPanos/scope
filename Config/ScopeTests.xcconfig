@@ -1,0 +1,27 @@
+// The app's unit tests (ScopeTests/), hosted in Scope Dev: they run inside
+// the sandboxed development build, so its path guard and sandbox apply.
+// Run them with `make app-test`. They need the macOS 27.2 SDK, so CI can't
+// run them yet.
+
+MACOSX_DEPLOYMENT_TARGET = 27.2
+SDKROOT = macosx
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG SCOPE_DEV
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+ONLY_ACTIVE_ARCH = YES
+DEBUG_INFORMATION_FORMAT = dwarf
+
+PRODUCT_NAME = ScopeTests
+PRODUCT_BUNDLE_IDENTIFIER = com.antonispanos.scope.dev.tests
+GENERATE_INFOPLIST_FILE = YES
+
+TEST_HOST = $(BUILT_PRODUCTS_DIR)/Scope Dev.app/Contents/MacOS/Scope Dev
+BUNDLE_LOADER = $(TEST_HOST)
+
+// Signed like the app, so the host's hardened runtime accepts the bundle.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

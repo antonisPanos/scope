@@ -15,8 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.run()
     }
 
+    /// True when Scope Dev runs as the host of the app's unit tests. It then
+    /// opens no window and watches nothing, so the tests start from a quiet app.
+    static var isHostingTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.make()
+        guard !Self.isHostingTests else {
+            Self.logger.notice("Hosting unit tests; no window opened")
+            return
+        }
         NSWindow.allowsAutomaticWindowTabbing = true
         SidebarStore.shared.start()
         _ = SystemNotifier.shared  // becomes the notification delegate before any click arrives
