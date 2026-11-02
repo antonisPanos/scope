@@ -40,22 +40,15 @@ extension BrowserWindowController {
         let pathGuard = model.engine.pathGuard
         Task {
             let resolved = await Task.detached { () -> (URL, Bool)? in
-                guard let target = try? URL(resolvingAliasFileAt: url, options: [.withoutUI, .withoutMounting]) else {
-                    return nil
-                }
-                let isFolder =
-                    (try? target.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]))
-                    .map { ($0.isDirectory ?? false) && !($0.isPackage ?? false) } ?? false
-                return (target, isFolder)
+                guard let source = try? pathGuard.checkTarget(url),
+                    let target = try? URL(resolvingAliasFileAt: source, options: [.withoutUI, .withoutMounting]),
+                    let checked = try? pathGuard.checkTarget(target),
+                    let values = try? checked.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                else { return nil }
+                return (checked, values.isDirectory == true && values.isPackage != true)
             }.value
             guard let (target, isFolder) = resolved else {
-                showProblem("“\(url.lastPathComponent)” points to an item that doesn't exist.")
-                return
-            }
-            guard pathGuard.permits(target) else {
-                showProblem(
-                    "“\(url.lastPathComponent)” points to \(target.path), which \(BuildIdentity.current.appName) can't open."
-                )
+                showProblem("\(BuildIdentity.current.appName) can't open the target of “\(url.lastPathComponent)”.")
                 return
             }
             if isFolder {
@@ -67,11 +60,14 @@ extension BrowserWindowController {
     }
 
     private func openFile(_ url: URL) {
-        guard model.engine.pathGuard.permits(url) else {
-            showProblem("\(BuildIdentity.current.appName) can't open \(url.path).")
-            return
+        let engine = model.engine
+        Task { [weak self] in
+            guard let target = await engine.readableURLs([url]).first else {
+                self?.showProblem("\(BuildIdentity.current.appName) can't open \(url.path).")
+                return
+            }
+            NSWorkspace.shared.open(target)
         }
-        NSWorkspace.shared.open(url)
     }
 
     /// Handles a path typed into the path bar or the command palette.
@@ -81,18 +77,9 @@ extension BrowserWindowController {
             showProblem("“\(text)” isn't a path.")
             return
         }
-        let pathGuard = model.engine.pathGuard
-        guard pathGuard.permits(url) else {
-            showProblem("\(BuildIdentity.current.appName) can't open \(url.path).")
-            return
-        }
+        let engine = model.engine
         Task {
-            let kind = await Task.detached { () -> Bool? in
-                guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]) else {
-                    return nil
-                }
-                return (values.isDirectory ?? false) && !(values.isPackage ?? false)
-            }.value
+            let kind = try? await engine.item(at: url).isBrowsableFolder
             switch kind {
             case nil:
                 showProblem("There's no folder at \(url.path).")

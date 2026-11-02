@@ -34,6 +34,7 @@ final class BrowserModel {
     }
 
     let engine: FileEngine
+    let readAccess: ReadAccessCache
     /// Changes operations make, as they make them; nil in a tab that doesn't follow them.
     let announcements: OperationAnnouncements?
     var onChange: ((Change) -> Void)?
@@ -99,6 +100,7 @@ final class BrowserModel {
 
     init(engine: FileEngine, location: Location, announcements: OperationAnnouncements? = nil) {
         self.engine = engine
+        self.readAccess = ReadAccessCache(engine: engine)
         self.announcements = announcements
         self.location = location
         self.viewMode = AppSettings.shared.lastViewMode
@@ -112,12 +114,14 @@ final class BrowserModel {
                 Task { await self.applyFilterAndSort() }
             }
         }
+        readAccess.onChange = { [weak self] in self?.onChange?(.status) }
         load()
     }
 
     /// Stops watching and querying; call when the tab closes so it releases everything it held.
     func close() {
         sortRevision += 1
+        readAccess.close()
         loadTask?.cancel()
         unsubscribe()
         spotlight?.stop()
@@ -134,7 +138,7 @@ final class BrowserModel {
     var canGoUp: Bool {
         guard let url = location.searchRoot else { return false }
         let parent = url.deletingLastPathComponent()
-        return parent.path != url.path && engine.pathGuard.permits(parent)
+        return parent.path != url.path && readAccess.permits(parent)
     }
 
     func navigate(to destination: Location, select: URL? = nil) {

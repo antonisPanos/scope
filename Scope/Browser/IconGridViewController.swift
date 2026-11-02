@@ -299,7 +299,7 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
     func collectionView(
         _ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath
     ) -> NSPasteboardWriting? {
-        guard items.indices.contains(indexPath.item), model.engine.pathGuard.permits(items[indexPath.item].url) else {
+        guard items.indices.contains(indexPath.item), model.readAccess.permits(items[indexPath.item].url) else {
             return nil
         }
         return items[indexPath.item].url as NSURL

@@ -104,7 +104,7 @@ final class PreviewPaneController: NSViewController {
         subtitle.stringValue = item.kind
         fill(rows: basicRows(item))
         // Only items the path guard permits are handed to Quick Look.
-        preview.previewItem = engine.pathGuard.permits(item.url) ? item.url as NSURL : nil
+        preview.previewItem = nil
 
         loadTask?.cancel()
         let engine = engine
@@ -112,8 +112,12 @@ final class PreviewPaneController: NSViewController {
         loadTask = Task { [weak self] in
             // Wait a moment so arrowing through a folder doesn't read every file.
             try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            let readable = await engine.readableURLs([url]).first
+            guard !Task.isCancelled, let self, self.generation == generation else { return }
+            self.preview.previewItem = readable.map { $0 as NSURL }
             guard !Task.isCancelled, let details = try? await engine.details(for: url) else { return }
-            guard let self, self.generation == generation, !Task.isCancelled else { return }
+            guard self.generation == generation, !Task.isCancelled else { return }
             self.fill(rows: self.detailRows(details))
         }
     }

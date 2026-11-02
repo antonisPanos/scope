@@ -279,6 +279,6 @@ enum Commands {
         Command(
             id: id, title: title, menu: .go, key: key, modifiers: modifiers,
             run: { $0.model.navigate(to: .folder(url(BuildIdentity.realHome))) },
-            isEnabled: { $0.model.engine.pathGuard.permits(url(BuildIdentity.realHome)) })
+            isEnabled: { $0.model.readAccess.permits(url(BuildIdentity.realHome)) })
     }
 }

@@ -7,9 +7,10 @@ extension BrowserWindowController: @preconcurrency QLPreviewPanelDataSource, @pr
     func toggleQuickLook() {
         guard let panel = QLPreviewPanel.shared() else { return }
         if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
+            quickLookTask?.cancel()
             panel.orderOut(nil)
         } else {
-            panel.makeKeyAndOrderFront(nil)
+            prepareQuickLook(showing: true)
         }
     }
 
@@ -18,11 +19,23 @@ extension BrowserWindowController: @preconcurrency QLPreviewPanelDataSource, @pr
         guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(), panel.isVisible,
             panel.dataSource === self
         else { return }
-        panel.reloadData()
+        prepareQuickLook(showing: false)
     }
 
-    var quickLookURLs: [URL] {
-        selectedItems.map(\.url).filter { model.engine.pathGuard.permits($0) }
+    private func prepareQuickLook(showing: Bool) {
+        quickLookTask?.cancel()
+        quickLookURLs = []
+        let urls = selectedItems.map(\.url)
+        let engine = model.engine
+        quickLookTask = Task { [weak self] in
+            let readable = await engine.readableURLs(urls)
+            guard let self, !Task.isCancelled, self.selectedItems.map(\.url) == urls,
+                let panel = QLPreviewPanel.shared()
+            else { return }
+            self.quickLookURLs = readable
+            if showing { panel.makeKeyAndOrderFront(nil) }
+            panel.reloadData()
+        }
     }
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
@@ -38,6 +51,8 @@ extension BrowserWindowController: @preconcurrency QLPreviewPanelDataSource, @pr
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
         MainActor.assumeIsolated {
+            quickLookTask?.cancel()
+            quickLookURLs = []
             panel.dataSource = nil
             panel.delegate = nil
         }

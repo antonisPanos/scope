@@ -53,9 +53,10 @@ import Testing
         }
     }
 
-    @Test func refusesFoldersOutsideTheGuard() throws {
-        #expect(throws: PathGuardViolation.self) {
-            _ = try sandbox.engine.listing(of: URL(fileURLWithPath: "/etc"))
+    @Test func refusesFoldersOutsideTheGuard() async throws {
+        let stream = try sandbox.engine.listing(of: URL(fileURLWithPath: "/etc"))
+        await #expect(throws: PathGuardViolation.self) {
+            for try await _ in stream {}
         }
     }
 
