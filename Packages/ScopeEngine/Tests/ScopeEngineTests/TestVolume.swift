@@ -3,9 +3,11 @@ import Testing
 
 @testable import ScopeEngine
 
-/// A small APFS disk image mounted for a test, so operations that use the
-/// Trash, or move between disks, never touch the startup disk (whose Trash is
-/// the user's own). Detached and deleted afterwards.
+/// A small disk image mounted for a test, so operations that use the Trash,
+/// or move between disks, never touch the startup disk (whose Trash is the
+/// user's own). Detached and deleted afterwards. APFS unless a test asks for
+/// another format, such as "MS-DOS FAT32" (whose name must be at most 11
+/// capital letters or digits).
 final class TestVolume {
     let mountPoint: URL
     /// A fresh folder on the volume; tests work inside it.
@@ -13,7 +15,7 @@ final class TestVolume {
     private let image: URL
     private let folder: URL
 
-    init(name: String = "ScopeOps", sizeMB: Int = 512) throws {
+    init(name: String = "ScopeOps", sizeMB: Int = 512, fileSystem: String = "APFS") throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("ScopeVolume-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Sparse, so the image only takes the space its files use.
@@ -23,8 +25,8 @@ final class TestVolume {
         try Self.run(
             "/usr/bin/hdiutil",
             [
-                "create", "-size", "\(sizeMB)m", "-type", "SPARSEBUNDLE", "-fs", "APFS", "-volname", name, image.path,
-                "-quiet",
+                "create", "-size", "\(sizeMB)m", "-type", "SPARSEBUNDLE", "-fs", fileSystem, "-volname", name,
+                image.path, "-quiet",
             ])
         try Self.run("/usr/bin/hdiutil", ["attach", image.path, "-nobrowse", "-mountpoint", mount.path, "-quiet"])
         let resolved = try #require(realpath(mount.path, nil))
