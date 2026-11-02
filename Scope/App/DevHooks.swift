@@ -10,7 +10,8 @@ import ScopeEngine
 /// whose object is one of:
 ///   "command:<id>"     runs a command from Commands.all in the key window
 ///   "go:<path>"        goes to a typed path in the key window
-///   "snapshot:<name>"  renders the key window (or sheet, or palette) into <container tmp>/<name>.png
+///   "snapshot:<name>"  renders the key window (or sheet, or palette) into <container tmp>/<name>.png;
+///                      names are A-Z, a-z, 0-9, - and _ only
 ///   "appearance:dark" / "appearance:light" / "appearance:system"
 ///   "sidebar:<title>"  opens the sidebar item with that title
 ///   "select:<names>"   selects items by name (comma separated) in the folder on screen
@@ -153,8 +154,7 @@ enum DevHooks {
                 let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
             {
                 view.cacheDisplay(in: view.bounds, to: rep)
-                let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(argument + ".png")
-                try? rep.representation(using: .png, properties: [:])?.write(to: file)
+                write(rep, name: argument)
             }
         case "dismiss":
             for window in NSApp.windows {
@@ -202,9 +202,27 @@ enum DevHooks {
             let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
         else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
+        write(rep, name: name)
+    }
+
+    /// Whether `name` can name a snapshot: letters, digits, `-` and `_`
+    /// only, so it can't step out of the temporary folder with `../` or a
+    /// slash. Any local process can post these hooks.
+    static func isValidSnapshotName(_ name: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+        return !name.isEmpty && name.count <= 64 && name.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    /// Writes a snapshot as `<temporary folder>/<name>.png`. Taking the same
+    /// snapshot again replaces the earlier one, which only ever lives there.
+    private static func write(_ rep: NSBitmapImageRep, name: String) {
+        guard isValidSnapshotName(name) else {
+            logger.error("Snapshot refused: \(name, privacy: .public) isn't a plain name (A-Z, 0-9, - and _)")
+            return
+        }
         let file = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name + ".png")
         do {
-            try rep.representation(using: .png, properties: [:])?.write(to: file)
+            try rep.representation(using: .png, properties: [:])?.write(to: file, options: .atomic)
             logger.notice("Snapshot written to \(file.path, privacy: .public)")
         } catch {
             logger.error("Snapshot failed: \(error.localizedDescription, privacy: .public)")
