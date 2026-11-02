@@ -54,7 +54,8 @@ Scratch Folder), and its status bar says so.
   without publishing an archive. Compression refuses custom ACLs or file flags
   it cannot preserve. Ownership and creation dates are not retained, so use a
   backup tool when those matter. Download quarantine comes from the archive's
-  provenance, never untrusted metadata stored inside it.
+  provenance, never untrusted metadata stored inside it. Repacking a downloaded
+  file also marks the new archive as quarantined.
 - When a name is taken: Keep Both, Replace (the old item goes to the Trash),
   Skip or Stop, with "Apply to all".
 - The activity drawer (Option+Cmd+A or the toolbar ring) lists every

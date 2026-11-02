@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 import Testing
 
@@ -110,6 +111,31 @@ struct ArchiveMetadataTests {
         try await OperationHarness(engine: engine).run(.extract(archive))
         #expect(try String(contentsOf: sandbox.url("names/__MACOSX-note.txt"), encoding: .utf8) == "ordinary data")
         #expect(try String(contentsOf: sandbox.url("names/__MACOSX/user.txt"), encoding: .utf8) == "also ordinary data")
+    }
+
+    @Test(arguments: [false, true]) func repackingDownloadsKeepsQuarantine(folder: Bool) async throws {
+        let sandbox = try Sandbox()
+        let file = try sandbox.write("original/note.txt", "harmless text")
+        var source = file
+        var values = URLResourceValues()
+        values.quarantineProperties = [
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
+            kLSQuarantineAgentNameKey as String: "ScopeMetadataTest",
+            kLSQuarantineTimeStampKey as String: Date(timeIntervalSince1970: 1_700_000_000),
+        ]
+        try source.setResourceValues(values)
+        let input = folder ? sandbox.url("original") : file
+        var engine = sandbox.engine
+        engine.archiveReaders = ServiceHarness(ArchiveServiceListener()).readers()
+        let ops = OperationHarness(engine: engine)
+        try await ops.run(.compress([input], format: .zip))
+        let archive = input.appendingPathExtension("zip")
+        let properties = try archive.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
+        #expect(properties?[kLSQuarantineAgentNameKey as String] as? String == "ScopeMetadataTest")
+        try await ops.run(.extract(archive))
+        let extracted = folder ? sandbox.url("original 2/note.txt") : sandbox.url("original/note 2.txt")
+        let restored = try extracted.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
+        #expect(restored?[kLSQuarantineAgentNameKey as String] as? String == "ScopeMetadataTest")
     }
 
     private func set(_ name: String, _ data: Data, on url: URL) throws {

@@ -439,6 +439,7 @@ extension FileEngine {
         }
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
         defer { buffer.deallocate() }
+        var sourceQuarantine: [String: Any]?
 
         func addMetadata(_ url: URL, name: String, info: stat) throws {
             guard info.st_mode & S_IFMT == S_IFDIR || info.st_mode & S_IFMT == S_IFREG else { return }
@@ -458,6 +459,9 @@ extension FileEngine {
             guard !hasACL, Self.settableFlags(info.st_flags) == 0 else {
                 throw OperationError.archive(
                     "“\(name)” has access rules or file flags this archive cannot preserve. No archive was kept.")
+            }
+            if sourceQuarantine == nil, fgetxattr(descriptor, "com.apple.quarantine", nil, 0, 0, 0) > 0 {
+                sourceQuarantine = try url.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
             }
             let attributes = try ArchiveAttributes.read(descriptor)
             guard !attributes.isEmpty else { return }
@@ -535,5 +539,9 @@ extension FileEngine {
         guard archive_write_close(writer) == ARCHIVE_OK else {
             throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't finish the archive."))
         }
+        // Repacking a download must not remove its first-open protection.
+        // Use fresh public-API quarantine on the archive, rather than flags
+        // supplied by entries inside a future untrusted archive.
+        try applyQuarantine(sourceQuarantine, to: destination)
     }
 }
