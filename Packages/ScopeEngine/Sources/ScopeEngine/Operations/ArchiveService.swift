@@ -159,6 +159,7 @@ final class XPCArchiveReader: ArchiveReading {
 
     func nextEntry() throws(ArchiveReadError) -> ArchiveEntry? {
         let encoded: Data = try call { service, reply in service.nextEntry(reply: reply) }
+        guard encoded.count <= AppleDouble.limit * 4 / 3 + 1024 * 1024 else { throw .damaged(Self.lost) }
         switch try? JSONDecoder().decode(ServiceReply<ArchiveEntry?>.self, from: encoded) {
         case .some(.success(let entry)): return entry
         case .some(.failure(let error)): throw error

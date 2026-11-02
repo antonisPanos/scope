@@ -47,6 +47,14 @@ Scratch Folder), and its status bar says so.
 - Drag and drop between folders and from Finder: a move on the same disk, a
   copy across disks or with Option held.
 - Undo (Cmd+Z) for every operation, including a cancelled one's finished part.
+- Archives preserve resource forks, FinderInfo, tags, other ordinary extended
+  attributes, permissions and modification dates using standard AppleDouble
+  records. ZIPs interoperate with Finder/ditto; non-Mac tools may show `__MACOSX`
+  or `._` sidecars. Metadata is limited to 64 MB per item; exceeding it fails
+  without publishing an archive. Compression refuses custom ACLs or file flags
+  it cannot preserve. Ownership and creation dates are not retained, so use a
+  backup tool when those matter. Download quarantine comes from the archive's
+  provenance, never untrusted metadata stored inside it.
 - When a name is taken: Keep Both, Replace (the old item goes to the Trash),
   Skip or Stop, with "Apply to all".
 - The activity drawer (Option+Cmd+A or the toolbar ring) lists every

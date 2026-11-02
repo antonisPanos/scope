@@ -111,7 +111,6 @@ extension FileEngine {
             }
             try readArchive(archivePath, file: archiveFile, into: staging, quarantine: quarantine, control: control)
             try Task.checkCancellation()
-            try quarantineFolders(in: staging, properties: quarantine)
 
             // One top-level item comes out as itself; several go into a folder
             // named after the archive, as Archive Utility does.
@@ -169,6 +168,9 @@ extension FileEngine {
             return .notAnArchive(archivePath.path)
         }
         var compressedEstimate: Int64 = 0
+        var metadata: [(relative: String, attributes: [String: Data])] = []
+        var directories: [(relative: String, entry: ArchiveEntry)] = []
+        var files: [(relative: String, entry: ArchiveEntry)] = []
         var writtenSinceSpaceCheck: Int64 = 0
         let reserve = Self.extractionReserve(at: staging.path)
         // Checked more often than the reserve can fill, so the check, not a
@@ -196,6 +198,7 @@ extension FileEngine {
                 continue
             }
             if relative.isEmpty || relative.hasPrefix("__MACOSX") { continue }
+            try ArchiveAttributes.validate(entry.extendedAttributes)
             let target = staging.appendingPathComponent(relative)
             guard Self.parentIsSafe(relative, under: staging) else {
                 // A folder on the way is a link the archive made: writing through it could escape.
@@ -206,14 +209,18 @@ extension FileEngine {
                 at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             control.update { $0.currentItem = relative }
 
-            let permissions = mode_t(entry.permissions & 0o777)
             switch entry.kind {
+            case .metadata:
+                metadata.append((relative, entry.extendedAttributes))
+                continue
             case .directory:
                 if Self.lstatInfo(target.path) == nil {
                     guard mkdir(target.path, 0o755) == 0 else {
                         throw FileEngineError.posix("Create folder", target.path)
                     }
                 }
+                directories.append((relative, entry))
+                metadata.append((relative, entry.extendedAttributes))
             case .symlink(let link):
                 guard !link.isEmpty else { break }
                 guard symlink(link, target.path) == 0 else { throw FileEngineError.posix("Create link", target.path) }
@@ -272,13 +279,11 @@ extension FileEngine {
                 }
                 // Set quarantine before restrictive modes, and before the
                 // completed result becomes visible under its final name.
+                try ArchiveAttributes.apply(entry.extendedAttributes, to: output)
                 try applyQuarantine(quarantine, to: target)
-                fchmod(output, permissions == 0 ? 0o644 : permissions)
-                var times = [
-                    timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
-                    timespec(tv_sec: Int(entry.modified), tv_nsec: 0),
-                ]
-                futimens(output, &times)
+                // Some formats deliver sidecars after data. Keep the private
+                // staging file writable until all metadata has arrived.
+                files.append((relative, entry))
                 // Like copies, extracted files are on disk before they're shown.
                 guard fsync(output) == 0 else { throw FileEngineError.posix("Write", target.path) }
             case .other:
@@ -287,6 +292,9 @@ extension FileEngine {
             }
             control.update { $0.itemsDone += 1 }
         }
+        // Mark every folder while staging permissions still allow descent.
+        try quarantineFolders(in: staging, properties: quarantine)
+        try restoreArchiveMetadata(metadata, files: files, directories: directories, under: staging)
         control.update { $0.bytesDone = $0.bytesTotal }
     }
 
@@ -302,6 +310,49 @@ extension FileEngine {
             try Task.checkCancellation()
             guard let info = Self.lstatInfo(url.path) else { throw FileEngineError.posix("Read", url.path) }
             if info.st_mode & S_IFMT == S_IFDIR { try applyQuarantine(properties, to: url) }
+        }
+    }
+
+    private func restoreArchiveMetadata(
+        _ metadata: [(relative: String, attributes: [String: Data])],
+        files: [(relative: String, entry: ArchiveEntry)],
+        directories: [(relative: String, entry: ArchiveEntry)], under staging: URL
+    ) throws {
+        // AppleDouble records may precede or follow their data entry. They
+        // can describe only an existing regular file/directory in staging.
+        for record in metadata {
+            try Task.checkCancellation()
+            guard Self.parentIsSafe(record.relative, under: staging) else { throw AppleDouble.invalid() }
+            let target = try pathGuard.checkWriteLocation(staging.appendingPathComponent(record.relative))
+            guard let info = Self.lstatInfo(target.path),
+                info.st_mode & S_IFMT == S_IFDIR || info.st_mode & S_IFMT == S_IFREG
+            else { throw AppleDouble.invalid() }
+            let descriptor = open(target.path, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
+            guard descriptor >= 0 else { throw FileEngineError.posix("Restore archive metadata", target.path) }
+            defer { close(descriptor) }
+            try ArchiveAttributes.apply(record.attributes, to: descriptor)
+        }
+        // Restore file modes only after late AppleDouble attributes; restore
+        // directories deepest first after every child has been written.
+        for record in files + directories.sorted(by: { $0.relative.count > $1.relative.count }) {
+            try Task.checkCancellation()
+            let target = try pathGuard.checkWriteLocation(staging.appendingPathComponent(record.relative))
+            let directory = record.entry.kind == .directory
+            let descriptor = open(target.path, O_RDONLY | (directory ? O_DIRECTORY : 0) | O_NOFOLLOW_ANY | O_CLOEXEC)
+            guard descriptor >= 0 else { throw FileEngineError.posix("Restore folder metadata", target.path) }
+            defer { close(descriptor) }
+            let permissions = record.entry.permissions.map { mode_t($0 & 0o777) } ?? (directory ? 0o755 : 0o644)
+            guard fchmod(descriptor, permissions) == 0 else {
+                throw FileEngineError.posix("Restore folder permissions", target.path)
+            }
+            var times = [
+                timespec(tv_sec: Int(record.entry.modified), tv_nsec: 0),
+                timespec(tv_sec: Int(record.entry.modified), tv_nsec: 0),
+            ]
+            guard futimens(descriptor, &times) == 0 else {
+                throw FileEngineError.posix("Restore folder dates", target.path)
+            }
+            _ = fsync(descriptor)
         }
     }
 
@@ -389,11 +440,50 @@ extension FileEngine {
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
         defer { buffer.deallocate() }
 
+        func addMetadata(_ url: URL, name: String, info: stat) throws {
+            guard info.st_mode & S_IFMT == S_IFDIR || info.st_mode & S_IFMT == S_IFREG else { return }
+            let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
+            guard descriptor >= 0 else { throw FileEngineError.posix("Read archive metadata", url.path) }
+            defer { close(descriptor) }
+            var opened = stat()
+            guard fstat(descriptor, &opened) == 0, opened.st_dev == info.st_dev, opened.st_ino == info.st_ino,
+                opened.st_mode & S_IFMT == info.st_mode & S_IFMT
+            else { throw AppleDouble.invalid() }
+            var hasACL = false
+            if let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) {
+                defer { acl_free(UnsafeMutableRawPointer(acl)) }
+                var first: acl_entry_t?
+                hasACL = acl_get_entry(acl, Int32(ACL_FIRST_ENTRY.rawValue), &first) == 0
+            }
+            guard !hasACL, Self.settableFlags(info.st_flags) == 0 else {
+                throw OperationError.archive(
+                    "“\(name)” has access rules or file flags this archive cannot preserve. No archive was kept.")
+            }
+            let attributes = try ArchiveAttributes.read(descriptor)
+            guard !attributes.isEmpty else { return }
+            let data = try AppleDouble.encode(attributes)
+            let path = name as NSString
+            let parent = path.deletingLastPathComponent
+            let sidecar = (parent.isEmpty ? "" : parent + "/") + "._" + path.lastPathComponent
+            guard let entry = archive_entry_new() else { throw AppleDouble.invalid() }
+            defer { archive_entry_free(entry) }
+            archive_entry_set_pathname(entry, format == .tarGz ? sidecar : "__MACOSX/" + sidecar)
+            archive_entry_set_filetype(entry, AE_IFREG)
+            archive_entry_set_perm(entry, 0o600)
+            archive_entry_set_size(entry, Int64(data.count))
+            guard archive_write_header(writer, entry) == ARCHIVE_OK else { throw AppleDouble.invalid() }
+            let written = data.withUnsafeBytes { archive_write_data(writer, $0.baseAddress, data.count) }
+            guard written == data.count, archive_write_finish_entry(writer) == ARCHIVE_OK else {
+                throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't preserve macOS metadata."))
+            }
+        }
+
         func add(_ url: URL, as name: String) throws {
             try Task.checkCancellation()
             try control.waitWhilePaused()
             guard let info = Self.lstatInfo(url.path), let entry = archive_entry_new() else { return }
             defer { archive_entry_free(entry) }
+            try addMetadata(url, name: name, info: info)
             archive_entry_set_pathname(entry, name)
             archive_entry_set_perm(entry, info.st_mode & 0o7777)
             archive_entry_set_mtime(entry, info.st_mtimespec.tv_sec, 0)
@@ -419,7 +509,7 @@ extension FileEngine {
                 guard archive_write_header(writer, entry) == ARCHIVE_OK else {
                     throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't add \(name)."))
                 }
-                let input = open(url.path, O_RDONLY)
+                let input = open(url.path, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
                 guard input >= 0 else { throw FileEngineError.posix("Open", url.path) }
                 defer { close(input) }
                 while true {
