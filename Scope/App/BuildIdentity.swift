@@ -53,7 +53,20 @@ struct BuildIdentity {
         #endif
     }
 
+    /// The archive service in Contents/XPCServices, by its bundle identifier
+    /// (set in Config/ScopeArchiveService.xcconfig).
+    static var archiveServiceName: String {
+        #if SCOPE_DEV
+        "com.antonispanos.scope.dev.archive-service"
+        #else
+        "com.antonispanos.scope.archive-service"
+        #endif
+    }
+
     func makeEngine() -> FileEngine {
-        FileEngine(pathGuard: pathGuard)
+        var engine = FileEngine(pathGuard: pathGuard)
+        // Archives are parsed in the sandboxed archive service, never in the app.
+        engine.archiveReaders = XPCArchiveReaders.embedded(Self.archiveServiceName)
+        return engine
     }
 }

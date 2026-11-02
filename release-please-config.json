@@ -22,7 +22,8 @@
     ".": {
       "package-name": "Scope",
       "extra-files": [
-        { "type": "generic", "path": "Config/Base.xcconfig" }
+        { "type": "generic", "path": "Config/Base.xcconfig" },
+        { "type": "generic", "path": "Config/ScopeArchiveService.xcconfig" }
       ]
     }
   }

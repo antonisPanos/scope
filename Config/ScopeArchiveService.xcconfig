@@ -1,0 +1,35 @@
+// The archive service embedded in every build of Scope (Contents/XPCServices).
+// It reads archives for Extract, sandboxed with no file access.
+
+MACOSX_DEPLOYMENT_TARGET = 27.2
+SDKROOT = macosx
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+MARKETING_VERSION = 0.1.0 // x-release-please-version
+CURRENT_PROJECT_VERSION = 1
+
+PRODUCT_NAME = ScopeArchiveService
+// Scope finds it by this name: keep in sync with BuildIdentity.archiveServiceName.
+PRODUCT_BUNDLE_IDENTIFIER = com.antonispanos.scope.dev.archive-service
+PRODUCT_BUNDLE_IDENTIFIER[config=Release] = com.antonispanos.scope.archive-service
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_FILE = Config/ScopeArchiveService-Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = Scope Archive Service
+SKIP_INSTALL = YES
+
+CODE_SIGN_ENTITLEMENTS = Config/ScopeArchiveService.entitlements
+ENABLE_HARDENED_RUNTIME = YES
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+SWIFT_OPTIMIZATION_LEVEL[config=Release] = -O
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG
+SWIFT_ACTIVE_COMPILATION_CONDITIONS[config=Release] =
+DEBUG_INFORMATION_FORMAT = dwarf
+DEBUG_INFORMATION_FORMAT[config=Release] = dwarf-with-dsym
+ONLY_ACTIVE_ARCH = YES
+ONLY_ACTIVE_ARCH[config=Release] = NO
+
+#include? "Local.xcconfig"

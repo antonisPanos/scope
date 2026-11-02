@@ -32,7 +32,7 @@ public struct ArchiveEntry: Sendable, Codable, Equatable {
     }
 }
 
-public enum ArchiveReadError: Error, Equatable, Sendable {
+public enum ArchiveReadError: Error, Equatable, Sendable, Codable {
     /// The file isn't an archive this reader understands.
     case notAnArchive
     /// The archive is damaged or uses something unsupported; the reader's message.
