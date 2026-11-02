@@ -10,14 +10,26 @@
 		A10000000000000000000301 /* ScopeEngine in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000502 /* ScopeEngine */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000A01 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000701 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000601;
+			remoteInfo = Scope;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		A10000000000000000000101 /* Scope.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scope.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000102 /* ScopeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ScopeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000111 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		A10000000000000000000112 /* ScopeDev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ScopeDev.xcconfig; sourceTree = "<group>"; };
 		A10000000000000000000113 /* ScopeDevUnsandboxed.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ScopeDevUnsandboxed.xcconfig; sourceTree = "<group>"; };
 		A10000000000000000000114 /* Scope.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Scope.xcconfig; sourceTree = "<group>"; };
 		A10000000000000000000115 /* ScopeDev.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScopeDev.entitlements; sourceTree = "<group>"; };
 		A10000000000000000000116 /* ScopeDevUnsandboxed.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScopeDevUnsandboxed.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000118 /* ScopeTests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ScopeTests.xcconfig; sourceTree = "<group>"; };
 		A10000000000000000000117 /* Scope.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Scope.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -25,6 +37,11 @@
 		A10000000000000000000201 /* Scope */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Scope;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000202 /* ScopeTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ScopeTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -38,6 +55,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000404 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -45,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000201 /* Scope */,
+				A10000000000000000000202 /* ScopeTests */,
 				A10000000000000000000011 /* Config */,
 				A10000000000000000000012 /* Products */,
 			);
@@ -60,6 +85,7 @@
 				A10000000000000000000115 /* ScopeDev.entitlements */,
 				A10000000000000000000116 /* ScopeDevUnsandboxed.entitlements */,
 				A10000000000000000000117 /* Scope.entitlements */,
+				A10000000000000000000118 /* ScopeTests.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -68,6 +94,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000101 /* Scope.app */,
+				A10000000000000000000102 /* ScopeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -98,6 +125,27 @@
 			productReference = A10000000000000000000101 /* Scope.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A10000000000000000000602 /* ScopeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000803 /* Build configuration list for PBXNativeTarget "ScopeTests" */;
+			buildPhases = (
+				A10000000000000000000405 /* Sources */,
+				A10000000000000000000404 /* Frameworks */,
+				A10000000000000000000406 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000B01 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000202 /* ScopeTests */,
+			);
+			name = ScopeTests;
+			productName = ScopeTests;
+			productReference = A10000000000000000000102 /* ScopeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -110,6 +158,10 @@
 				TargetAttributes = {
 					A10000000000000000000601 = {
 						CreatedOnToolsVersion = 27.2;
+					};
+					A10000000000000000000602 = {
+						CreatedOnToolsVersion = 27.2;
+						TestTargetID = A10000000000000000000601;
 					};
 				};
 			};
@@ -131,12 +183,20 @@
 			projectRoot = "";
 			targets = (
 				A10000000000000000000601 /* Scope */,
+				A10000000000000000000602 /* ScopeTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A10000000000000000000403 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000406 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -153,7 +213,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000405 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000B01 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000601 /* Scope */;
+			targetProxy = A10000000000000000000A01 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000901 /* Debug */ = {
@@ -200,6 +275,27 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000921 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000118 /* ScopeTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		A10000000000000000000922 /* Debug Unsandboxed */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000118 /* ScopeTests.xcconfig */;
+			buildSettings = {
+			};
+			name = "Debug Unsandboxed";
+		};
+		A10000000000000000000923 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000118 /* ScopeTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -219,6 +315,16 @@
 				A10000000000000000000911 /* Debug */,
 				A10000000000000000000912 /* Debug Unsandboxed */,
 				A10000000000000000000913 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000803 /* Build configuration list for PBXNativeTarget "ScopeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000921 /* Debug */,
+				A10000000000000000000922 /* Debug Unsandboxed */,
+				A10000000000000000000923 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

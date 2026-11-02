@@ -1,6 +1,6 @@
 # One entry point for everyday tasks. Run `make` or `make help` to list them.
 .DEFAULT_GOAL := help
-.PHONY: help setup hooks build build-all test format lint testdisk install-dev devhook dmg release
+.PHONY: help setup hooks build build-all test app-test format lint testdisk install-dev devhook dmg release
 
 DERIVED := build/DerivedData
 XCB := xcodebuild -project Scope.xcodeproj -derivedDataPath $(DERIVED)
@@ -24,6 +24,9 @@ build-all: ## Build all three schemes
 
 test: ## Run the engine tests
 	cd Packages/ScopeEngine && swift test --no-parallel
+
+app-test: ## Run the app's unit tests inside Scope Dev (ScopeTests/)
+	$(XCB) -scheme "Scope Dev" test -only-testing:ScopeTests
 
 format: ## Format Swift files changed from main (FILES=... to pick files, ALL=1 for everything)
 	@files="$${FILES:-$$(if [ -n "$(ALL)" ]; then git ls-files '*.swift'; else git diff --name-only --diff-filter=ACMR origin/main -- '*.swift'; git ls-files --others --exclude-standard '*.swift'; fi)}"; \

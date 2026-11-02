@@ -69,3 +69,6 @@ jobs:
           for scheme in "Scope Dev" "Scope Dev (No Sandbox)" "Scope"; do
             xcodebuild -project Scope.xcodeproj -scheme "$scheme" -derivedDataPath build/DerivedData build
           done
+      - name: Run the app tests
+        if: steps.sdk.outputs.available == 'true'
+        run: xcodebuild -project Scope.xcodeproj -scheme "Scope Dev" -derivedDataPath build/DerivedData test -only-testing:ScopeTests

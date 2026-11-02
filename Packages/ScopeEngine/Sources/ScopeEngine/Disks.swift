@@ -18,7 +18,9 @@ public struct MountTable: Sendable {
         self.init(mountPoints: Self.read())
     }
 
-    init(mountPoints: [String]) {
+    /// A table of known mount points, for tests and for callers that have
+    /// them already. "/" is always included.
+    public init(mountPoints: [String]) {
         self.mountPoints = Set(mountPoints + ["/"]).sorted { $0.count > $1.count }
     }
 

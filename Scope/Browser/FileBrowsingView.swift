@@ -81,7 +81,15 @@ enum FileViewKeys {
     /// the disks come from the kernel's mount table. The drop itself checks
     /// them exactly, off the main thread, and copies when the badge said copy.
     static func dropOperation(_ info: NSDraggingInfo, into folder: URL) -> NSDragOperation {
-        let urls = droppedURLs(info)
+        dropOperation(
+            droppedURLs(info), into: folder, optionHeld: NSEvent.modifierFlags.contains(.option),
+            mounts: MountTable())
+    }
+
+    /// The decision itself, apart from the drag, so tests can call it.
+    static func dropOperation(_ urls: [URL], into folder: URL, optionHeld: Bool, mounts: MountTable)
+        -> NSDragOperation
+    {
         guard !urls.isEmpty, !urls.contains(where: { $0 == folder || folder.path.hasPrefix($0.path + "/") }) else {
             return []
         }
@@ -89,7 +97,7 @@ enum FileViewKeys {
         if urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL }) {
             return []
         }
-        if NSEvent.modifierFlags.contains(.option) { return .copy }
-        return MountTable().seemOnSameDisk(urls, as: folder) ? .move : .copy
+        if optionHeld { return .copy }
+        return mounts.seemOnSameDisk(urls, as: folder) ? .move : .copy
     }
 }

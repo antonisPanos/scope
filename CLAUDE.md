@@ -38,6 +38,9 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   Suites run one at a time: test helpers block pool threads, and parallel suites starve each
   other's timing checks.
 - App: `xcodebuild -project Scope.xcodeproj -scheme "Scope Dev" -derivedDataPath build/DerivedData build`.
+- App tests: `make app-test` runs `ScopeTests/` (Swift Testing) hosted in Scope Dev, so they run
+  sandboxed and guarded. Scope Dev opens no window when it hosts tests (`AppDelegate.isHostingTests`).
+  New files in `ScopeTests/` are picked up automatically, like `Scope/`.
 - Schemes: `Scope Dev` (sandboxed), `Scope Dev (No Sandbox)` (for disk image mounting), `Scope` (release).
 - The Xcode project is hand-written (objectVersion 77, synchronized folder `Scope/`), so new
   files in `Scope/` are picked up automatically. Build settings live in `Config/*.xcconfig`.
