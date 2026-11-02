@@ -38,6 +38,8 @@ public enum FolderWatcher {
                 kCFAllocatorDefault, callback, &context, [resolved.path] as CFArray,
                 FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency, flags)
         else {
+            // The stream never took the box, so its release callback won't run.
+            Unmanaged.passUnretained(box).release()
             continuation.finish()
             return stream
         }

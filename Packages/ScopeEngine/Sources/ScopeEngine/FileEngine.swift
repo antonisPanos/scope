@@ -232,6 +232,9 @@ public struct FileEngine: Sendable {
             Self.removeQuietly(partial.path)
             throw error
         }
+        // The files are synced as they're written; this makes the rename
+        // itself survive a power cut, before a move trashes the original.
+        Self.syncFolder(target.deletingLastPathComponent().path)
         job.finish(at: target.path)
     }
 
@@ -247,6 +250,15 @@ public struct FileEngine: Sendable {
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
             && name.utf8.count <= 255
+    }
+
+    /// Asks the disk to write out a folder's entries (new names, renames).
+    /// Best effort: a disk that can't sync folders is not an error.
+    static func syncFolder(_ path: String) {
+        let folder = open(path, O_RDONLY | O_DIRECTORY)
+        guard folder >= 0 else { return }
+        _ = fsync(folder)
+        close(folder)
     }
 
     static func lstatInfo(_ path: String) -> stat? {
@@ -350,6 +362,7 @@ private struct CopyJob {
                 let childRelative = relative.isEmpty ? name : relative + "/" + name
                 try copy(from: source + "/" + name, to: destination + "/" + name, relative: childRelative)
             }
+            FileEngine.syncFolder(destination)
             deferred.append((relative, source, true, info.st_flags, false))
         case S_IFLNK:
             var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)

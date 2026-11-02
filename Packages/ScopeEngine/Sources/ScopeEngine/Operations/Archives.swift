@@ -109,6 +109,7 @@ extension FileEngine {
             guard renamex_np(resultSource.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
                 throw FileEngineError.posix("Extract", target.path)
             }
+            Self.syncFolder(target.deletingLastPathComponent().path)
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             if resultSource != staging { Self.removeQuietly(staging.path) }
         } catch {
@@ -231,6 +232,7 @@ extension FileEngine {
                     var written = 0
                     while written < count {
                         let result = write(output, buffer + written, count - written)
+                        if result < 0, errno == EINTR { continue }
                         guard result > 0 else {
                             // Something else may have filled the disk between checks.
                             if errno == ENOSPC || errno == EDQUOT { throw diskFull }
@@ -247,6 +249,8 @@ extension FileEngine {
                     let done = compressedEstimate
                     control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
                 }
+                // Like copies, extracted files are on disk before they're shown.
+                guard fsync(output) == 0 else { throw FileEngineError.posix("Write", target.path) }
                 fchmod(output, permissions == 0 ? 0o644 : permissions)
                 var times = [
                     timespec(tv_sec: archive_entry_mtime(entry), tv_nsec: 0),
@@ -309,6 +313,7 @@ extension FileEngine {
             guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
                 throw FileEngineError.posix("Compress", target.path)
             }
+            Self.syncFolder(target.deletingLastPathComponent().path)
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
         } catch {
             Self.removeQuietly(partial.path)
