@@ -245,6 +245,15 @@ final class OperationsController {
     /// both keep the items. There is no "apply to all".
     private static func confirm(_ request: PermanentDeletion) async -> Bool {
         let alert = permanentDeletionAlert(request)
+        // Cancel holds Return, so Escape, which NSAlert would give it, is
+        // routed to it here.
+        let cancel = alert.buttons[0]
+        let escape = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 53, event.window === alert.window else { return event }
+            cancel.performClick(nil)
+            return nil
+        }
+        defer { escape.map(NSEvent.removeMonitor) }
         let window = NSApp.keyWindow ?? NSApp.mainWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
@@ -255,7 +264,8 @@ final class OperationsController {
         let confirmed = response == .alertSecondButtonReturn
         let outcome = confirmed ? "deleting" : "keeping"
         logger.notice(
-            "No Trash on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items")
+            "No Trash on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items"
+        )
         return confirmed
     }
 
@@ -266,7 +276,8 @@ final class OperationsController {
         alert.informativeText =
             "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
             + listing(request.items)
-        alert.addButton(withTitle: "Cancel")
+        // Cancel is the default: Return keeps the items.
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
         let delete = alert.addButton(withTitle: "Delete Permanently")
         delete.hasDestructiveAction = true
         delete.keyEquivalent = ""
