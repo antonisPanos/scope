@@ -18,6 +18,10 @@ public struct CopyProgress: Sendable, Equatable {
 public struct FileEngine: Sendable {
     public let pathGuard: PathGuard
 
+    /// Tests only: items for which the Trash refuses, as on a disk without
+    /// one. Always nil in the app.
+    var trashRefusal: (@Sendable (URL) -> Bool)?
+
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
     /// half-written item under its real name.
@@ -142,15 +146,23 @@ public struct FileEngine: Sendable {
     }
 
     /// Moves an item to the Trash and returns where it ended up. Scope never
-    /// deletes outright.
+    /// deletes outright, except on a disk with no Trash after the user
+    /// confirmed it for the items named (`PermanentDelete.swift`).
     @discardableResult
     public func trashItem(at url: URL) async throws -> URL? {
         return try await onIOThreads {
-            let target = try pathGuard.checkModifiable(url)
-            var resulting: NSURL?
-            try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
-            return resulting as URL?
+            try moveToTrash(try pathGuard.checkModifiable(url))
         }
+    }
+
+    /// The one place items go to the Trash; `target` has passed the guard.
+    func moveToTrash(_ target: URL) throws -> URL? {
+        if let trashRefusal, trashRefusal(target) {
+            throw CocoaError(.featureUnsupported, userInfo: [NSFilePathErrorKey: target.path])
+        }
+        var resulting: NSURL?
+        try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
+        return resulting as URL?
     }
 
     /// Removes partial items a crashed or killed copy left in `directory`.
