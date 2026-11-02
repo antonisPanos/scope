@@ -11,6 +11,13 @@ import Testing
 @Suite struct PerformanceTests {
     static let fileCount = 100_000
 
+    /// The Thread Sanitizer slows everything about four times (CI runs these
+    /// tests under it too), so the limits stretch to match there. The counts
+    /// are checked the same either way.
+    static let slack: Int64 = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "__tsan_init") == nil ? 1 : 4
+
+    static func limit(_ duration: Duration) -> Duration { duration * slack }
+
     @Test func bigFolderListsSortsUpdatesAndSearches() async throws {
         let volume = try TestVolume(name: "ScopePerf", sizeMB: 1024)
         let many = volume.url("many")
@@ -34,8 +41,8 @@ import Testing
         print("Listed \(items.count) items in \(listing), sorted by name in \(sorting)")
         #expect(items.count == Self.fileCount)
         // 100,000 items is ten times the target folder size, so allow ten times the time, plus slack.
-        #expect(listing < .seconds(10))
-        #expect(sorting < .seconds(5))
+        #expect(listing < Self.limit(.seconds(10)))
+        #expect(sorting < Self.limit(.seconds(5)))
         return items
     }
 
@@ -61,7 +68,7 @@ import Testing
         #expect(changes.removed.count == 10)
         #expect(changes.inserted.count == arriving.count)
         // A tab redraws within a frame or two at 10,000 items; allow slack at 100,000.
-        #expect(elapsed < (count > 10_000 ? .seconds(3) : .milliseconds(500)))
+        #expect(elapsed < Self.limit(count > 10_000 ? .seconds(3) : .milliseconds(500)))
     }
 
     private func searchesTheWholeVolume(_ root: URL, engine: FileEngine) async throws {
@@ -77,7 +84,7 @@ import Testing
         print("Searched the volume in \(total), first result after \(firstResult ?? .zero), \(found) found")
         // file-099900.txt to file-099999.txt
         #expect(found == 100)
-        #expect(total < .seconds(15))
+        #expect(total < Self.limit(.seconds(15)))
     }
 
     /// Empty files named file-000000.txt and up: no data blocks, so the image
