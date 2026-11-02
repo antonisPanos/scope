@@ -3,7 +3,8 @@
 <plist version="1.0">
 <dict>
 	<!-- The archive service runs sandboxed with nothing granted: no files,
-	     no network. It reads only the archive the app hands it, already open.
+	     no network. Extraction receives an already-open read-only archive;
+	     compression receives entry descriptions and bounded byte chunks.
 	     Keep it this way in every build, release included. -->
 	<key>com.apple.security.app-sandbox</key>
 	<true/>

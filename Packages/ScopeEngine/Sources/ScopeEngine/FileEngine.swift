@@ -22,6 +22,9 @@ public struct FileEngine: Sendable {
     /// app can run the parsing in a sandboxed service of its own; the engine
     /// opens the file, checks every entry's name and writes every file.
     public var archiveReaders: any ArchiveReaderOpening = LibArchiveReaders()
+    /// Compression is isolated in the same sandboxed service in the app.
+    /// The default keeps standalone engine clients/tests self-contained.
+    public var archiveWriters: any ArchiveWriterOpening = LibArchiveWriters()
     /// Tests only: simulate slow path resolution at the I/O boundary.
     var readValidationHook: (@Sendable () -> Void)?
 

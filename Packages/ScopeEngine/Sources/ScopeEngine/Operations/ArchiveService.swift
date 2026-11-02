@@ -3,9 +3,9 @@ import Synchronization
 
 // Reading archives in a separate, sandboxed process (an XPC service of the
 // app). Archives come from anywhere, and a flaw in a parser then can't reach
-// the user's files: the service has no file access at all and only ever sees
-// the one open archive the engine hands it. It sends back plain entries and
-// data, which the engine checks and writes itself as with any reader.
+// the user's files: this connection sees only the read-only archive the
+// engine hands it. It sends back plain entries and data, which the engine
+// checks and writes itself. The compression protocol is in ArchiveWriterService.
 
 /// The messages between the app and the archive service. One connection
 /// reads one archive. Replies carry `ServiceReply` values encoded as JSON,
@@ -34,34 +34,43 @@ public enum ArchiveService {
 
 // MARK: - The service's side
 
-/// Accepts connections in the service, each with its own reader.
+/// Accepts connections in the service, each with its own codec state.
 public final class ArchiveServiceListener: NSObject, NSXPCListenerDelegate, Sendable {
     private let readers: any ArchiveReaderOpening
+    private let writers: any ArchiveWriterOpening
 
-    public init(readers: any ArchiveReaderOpening = LibArchiveReaders()) {
+    public init(
+        readers: any ArchiveReaderOpening = LibArchiveReaders(), writers: any ArchiveWriterOpening = LibArchiveWriters()
+    ) {
         self.readers = readers
+        self.writers = writers
     }
 
     public func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
-        connection.exportedInterface = ArchiveService.interface
-        connection.exportedObject = ArchiveServiceHandler(readers: readers)
+        connection.exportedInterface = ArchiveService.codecInterface
+        let handler = ArchiveServiceHandler(readers: readers, writers: writers)
+        connection.exportedObject = handler
+        let writing = handler.writing
+        connection.invalidationHandler = { writing.cancel() }
         connection.resume()
         return true
     }
 }
 
-/// Reads one archive for one connection.
-final class ArchiveServiceHandler: NSObject, ArchiveServiceProtocol, @unchecked Sendable {
+/// Owns archive codec state for one connection.
+final class ArchiveServiceHandler: NSObject, ArchiveCodecServiceProtocol, @unchecked Sendable {
     private let readers: any ArchiveReaderOpening
     /// Messages on a connection arrive one at a time, but the lock keeps that
     /// from being something to rely on.
     private let lock = NSLock()
     private var reader: (any ArchiveReading)?
+    let writing: ArchiveWriterService
 
-    init(readers: any ArchiveReaderOpening) {
+    init(readers: any ArchiveReaderOpening, writers: any ArchiveWriterOpening) {
         self.readers = readers
+        writing = ArchiveWriterService(factory: writers)
     }
 
     func open(_ archive: FileHandle, singleFile: Bool, reply: @escaping @Sendable (Data?) -> Void) {
@@ -116,12 +125,18 @@ final class ArchiveServiceHandler: NSObject, ArchiveServiceProtocol, @unchecked 
 public struct XPCArchiveReaders: ArchiveReaderOpening {
     private let connect: @Sendable () -> NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
 
     /// `connect` makes a new, not yet resumed connection to the service.
     /// A call that takes longer than `timeout` stops the reading.
-    public init(timeout: Duration = .seconds(60), connect: @escaping @Sendable () -> NSXPCConnection) {
+    /// `chunkSize` bounds each data reply, from 1 byte to 4 MB.
+    public init(
+        timeout: Duration = .seconds(60), chunkSize: Int = FileEngine.chunkSize,
+        connect: @escaping @Sendable () -> NSXPCConnection
+    ) {
         self.connect = connect
         self.timeout = timeout
+        self.chunkSize = min(FileEngine.chunkSize, max(1, chunkSize))
     }
 
     /// The archive service embedded in the app, by its bundle identifier.
@@ -133,7 +148,7 @@ public struct XPCArchiveReaders: ArchiveReaderOpening {
         let connection = connect()
         connection.remoteObjectInterface = ArchiveService.interface
         connection.resume()
-        let reader = XPCArchiveReader(connection: connection, timeout: timeout)
+        let reader = XPCArchiveReader(connection: connection, timeout: timeout, chunkSize: chunkSize)
         let failure: Data? = try reader.call { service, reply in
             service.open(archive, singleFile: singleFile, reply: reply)
         }
@@ -145,12 +160,14 @@ public struct XPCArchiveReaders: ArchiveReaderOpening {
 final class XPCArchiveReader: ArchiveReading {
     private let connection: NSXPCConnection
     private let timeout: Duration
+    private let chunkSize: Int
 
     static let lost = "The archive couldn't be read: the reader stopped unexpectedly."
 
-    init(connection: NSXPCConnection, timeout: Duration) {
+    init(connection: NSXPCConnection, timeout: Duration, chunkSize: Int) {
         self.connection = connection
         self.timeout = timeout
+        self.chunkSize = chunkSize
     }
 
     deinit {
@@ -168,11 +185,12 @@ final class XPCArchiveReader: ArchiveReading {
     }
 
     func readData(upTo limit: Int) throws(ArchiveReadError) -> Data {
+        let requested = min(limit, chunkSize)
         let chunk: Chunk = try call { service, reply in
-            service.readData(upTo: limit) { reply(Chunk(data: $0, failure: $1)) }
+            service.readData(upTo: requested) { reply(Chunk(data: $0, failure: $1)) }
         }
         if let failure = chunk.failure { throw Self.decodeError(failure) }
-        guard let data = chunk.data, data.count <= limit else { throw .damaged(Self.lost) }
+        guard let data = chunk.data, data.count <= requested else { throw .damaged(Self.lost) }
         return data
     }
 
@@ -207,7 +225,7 @@ final class XPCArchiveReader: ArchiveReading {
 }
 
 /// The reply to one message, from whichever thread it arrives on.
-private final class Outcome<Value: Sendable>: Sendable {
+final class Outcome<Value: Sendable>: Sendable {
     private enum State {
         case waiting
         case replied(Value)
@@ -230,16 +248,24 @@ private final class Outcome<Value: Sendable>: Sendable {
     }
 
     /// The reply, or nil if the connection failed or no reply came in time.
-    func wait(for timeout: Duration) -> Value? {
+    func wait(for timeout: Duration, isPaused: @Sendable () -> Bool = { false }) -> Value? {
         let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-        let deadline = DispatchTime.now() + seconds
+        var remaining = seconds
+        var previous = ContinuousClock.now
         while true {
             if Task.isCancelled {
                 finish(nil)
                 return nil
             }
-            if done.wait(timeout: min(deadline, .now() + .milliseconds(25))) == .success { break }
-            guard DispatchTime.now() < deadline else {
+            let slice = isPaused() ? 0.025 : min(0.025, max(0, remaining))
+            if done.wait(timeout: .now() + slice) == .success { break }
+            let now = ContinuousClock.now
+            let elapsed = now - previous
+            if !isPaused() {
+                remaining -= Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            }
+            previous = now
+            guard remaining > 0 else {
                 state.withLock { state in
                     if case .waiting = state { state = .timedOut }
                 }
