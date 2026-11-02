@@ -59,6 +59,8 @@ public actor OperationCenter {
         var started: Date?
         var finished: Date?
         var undone = false
+        /// For an undo: the operation it reverses.
+        var reverses: UUID?
 
         var isActive: Bool { state.isActive }
 
@@ -134,17 +136,30 @@ public actor OperationCenter {
         return entry.id
     }
 
-    /// Queues the undo of a finished operation.
+    /// Queues the undo of a finished operation. `includingChanged` says the
+    /// user agreed to trash files edited since the operation made them
+    /// (`changedSinceMade(_:)`); otherwise an undo that finds one changes
+    /// nothing and the operation stays undoable.
     @discardableResult
-    public func undo(_ id: UUID) throws -> UUID? {
+    public func undo(_ id: UUID, includingChanged: Bool = false) throws -> UUID? {
         guard let entry = entries.first(where: { $0.id == id }), !entry.isActive, !entry.undone else { return nil }
         let steps = entry.undo.recorded
         guard !steps.isEmpty else { return nil }
+        let record = UndoRecord(
+            title: entry.operation.title, steps: steps, includesChangedItems: includingChanged)
         // Marked as undone only once the undo is queued: when its items are
         // busy, enqueue throws and the user can try again later.
-        let id = try enqueue(FileOperation(.undo(UndoRecord(title: entry.operation.title, steps: steps))))
+        let undoID = try enqueue(FileOperation(.undo(record)))
         entry.undone = true
-        return id
+        entries.first { $0.id == undoID }?.reverses = id
+        return undoID
+    }
+
+    /// Items an undo of the operation would move to the Trash that were
+    /// edited since it made them, so the app can ask first.
+    public func changedSinceMade(_ id: UUID) async -> [URL] {
+        guard let entry = entries.first(where: { $0.id == id }) else { return [] }
+        return await engine.changedSinceMade(UndoRecord(title: "", steps: entry.undo.recorded))
     }
 
     /// The most recent finished operation that can still be undone.
@@ -279,6 +294,7 @@ public actor OperationCenter {
         let id = entry.id
         entry.task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) { [weak self] in
             let result: State
+            var changedNothing = false
             do {
                 try await engine.run(operation, control: control, undo: undo, resolveConflict: resolver)
                 result = .done
@@ -286,15 +302,23 @@ public actor OperationCenter {
                 result = .cancelled
             } catch OperationError.stoppedByUser {
                 result = .cancelled
+            } catch OperationError.changedSince(let names) {
+                result = .failed(OperationError.changedSince(names).localizedDescription)
+                changedNothing = true
             } catch {
                 result = .failed(error.localizedDescription)
             }
-            await self?.finish(id, result)
+            await self?.finish(id, result, changedNothing: changedNothing)
         }
     }
 
-    private func finish(_ id: UUID, _ result: State) {
+    private func finish(_ id: UUID, _ result: State, changedNothing: Bool = false) {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
+        // An undo that stopped before changing anything leaves its operation
+        // undoable, so the user can try again and agree this time.
+        if changedNothing, let reversed = entry.reverses {
+            entries.first { $0.id == reversed }?.undone = false
+        }
         entry.state = (entry.state == .cancelling && result == .done) ? .cancelled : result
         entry.finished = Date()
         entry.task = nil
