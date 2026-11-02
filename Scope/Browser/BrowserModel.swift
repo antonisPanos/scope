@@ -59,13 +59,19 @@ final class BrowserModel {
     var sort: FileSort {
         didSet {
             guard sort != oldValue else { return }
+            sortRevision += 1
             AppSettings.shared.lastSort = sort
             Task { await applyFilterAndSort() }
             onChange?(.sort)
         }
     }
 
-    private var allItems: [FileItem] = []
+    private var allItems: [FileItem] = [] {
+        didSet { sortRevision += 1 }
+    }
+    /// Every input change and sort request invalidates older work, even
+    /// when navigation has not changed.
+    private var sortRevision = 0
     /// The shared listing's version `allItems` was taken from, for its
     /// sorted copy; nil for searches, Recents and Tags.
     private var allItemsVersion: Int?
@@ -99,6 +105,7 @@ final class BrowserModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.sortRevision += 1
                 Task { await self.applyFilterAndSort() }
             }
         }
@@ -107,6 +114,7 @@ final class BrowserModel {
 
     /// Stops watching and querying; call when the tab closes so it releases everything it held.
     func close() {
+        sortRevision += 1
         loadTask?.cancel()
         unsubscribe()
         spotlight?.stop()
@@ -410,6 +418,8 @@ final class BrowserModel {
     /// thread. With `inPlace` (a change on disk), the views are told which
     /// rows changed instead of reloading, and nothing if no row did.
     private func applyFilterAndSort(inPlace: Bool = false) async {
+        sortRevision += 1
+        let revision = sortRevision
         let source = allItems
         let sort = sort
         // Search results already follow the query's own hidden-files switch.
@@ -424,7 +434,7 @@ final class BrowserModel {
             let result = known ?? sort.sorted(showHidden ? source : source.filter { !$0.isHidden })
             return (result, inPlace ? FolderListing.rowChanges(from: old, to: result) : nil)
         }.value
-        guard generation == self.generation else { return }
+        guard generation == self.generation, revision == sortRevision, !Task.isCancelled else { return }
         if let shared, let version, known == nil {
             shared.keepSorted(result, of: version, by: sort, showHidden: showHidden)
         }
