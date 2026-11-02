@@ -77,6 +77,9 @@ app="$DERIVED/Build/Products/Release/Scope.app"
 
 step "Checking the app"
 codesign --verify --deep --strict --verbose=1 "$app"
+# Inspect signed code, not just the source entitlements: Xcode can inject
+# debugging entitlements during a normal build, including into XPC services.
+scripts/check-release-entitlements.sh "$app"
 plist="$app/Contents/Info.plist"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$plist")" = "$version" ] || fail "wrong version in Info.plist"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$plist")" = "$build_number" ] || fail "wrong build number in Info.plist"
