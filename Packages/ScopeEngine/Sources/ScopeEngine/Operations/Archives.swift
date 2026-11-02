@@ -62,11 +62,14 @@ extension FileEngine {
             return nil
         }
         var total: Int64 = 0
-        while true {
-            guard let next = try? reader.nextEntry() else { return nil }
-            guard let entry = next else { return total }
-            guard let size = entry.size else { return nil }
-            total += max(0, size)
+        do {
+            while let entry = try reader.nextEntry() {
+                guard let size = entry.size else { return nil }
+                total += max(0, size)
+            }
+            return total
+        } catch {
+            return nil
         }
     }
 
