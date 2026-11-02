@@ -56,7 +56,7 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     func modelDidChange(_ change: BrowserModel.Change) {
         if change.contains(.location) { root.children = nil }
-        if change.contains(.items) { reloadItems() }
+        if !change.isDisjoint(with: .anyItems) { reloadItems() }
     }
 
     var selectedItems: [FileItem] {

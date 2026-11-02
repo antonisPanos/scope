@@ -97,7 +97,11 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     // MARK: - FileBrowsingView
 
     func modelDidChange(_ change: BrowserModel.Change) {
-        if change.contains(.items) { reloadItems() }
+        if change.contains(.items) {
+            reloadItems()
+        } else if change.contains(.itemsUpdated) {
+            applyRowChanges()
+        }
     }
 
     var selectedItems: [FileItem] {
@@ -158,6 +162,31 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         } else if !selected.isEmpty {
             select(selected, scroll: false)
         }
+    }
+
+    /// Updates only the icons that changed on disk, keeping the selection
+    /// and scroll. Anything that doesn't add up falls back to a full reload.
+    private func applyRowChanges() {
+        let fresh = model.items
+        guard let changes = model.rowChanges, collectionView.numberOfSections == 1,
+            collectionView.numberOfItems(inSection: 0) == items.count,
+            let updated = changes.applied(to: items, newCount: fresh.count, makeRow: { fresh[$0] }),
+            updated.map(\.url) == fresh.map(\.url)
+        else {
+            reloadItems()
+            return
+        }
+        func paths(_ indexes: IndexSet) -> Set<IndexPath> { Set(indexes.map { IndexPath(item: $0, section: 0) }) }
+        items = fresh
+        collectionView.performBatchUpdates {
+            collectionView.deleteItems(at: paths(changes.removed))
+            collectionView.insertItems(at: paths(changes.inserted))
+        }
+        // Reloading an item deselects it; keep what was selected.
+        let selected = collectionView.selectionIndexPaths
+        collectionView.reloadItems(at: paths(changes.reloaded))
+        if collectionView.selectionIndexPaths != selected { collectionView.selectionIndexPaths = selected }
+        if let pending = model.pendingSelection, select([pending], scroll: true) { model.pendingSelection = nil }
     }
 
     var iconSize: CGFloat {
