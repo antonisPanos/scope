@@ -12,7 +12,9 @@ public struct FolderItemsChanged: Sendable, Equatable {
     public internal(set) var operation: UUID?
 
     public init(folder: URL, added: Set<String> = [], removed: Set<String> = [], operation: UUID? = nil) {
-        self.folder = folder
+        // One spelling per folder, with or without a trailing slash, so
+        // changes to the same folder compare equal.
+        self.folder = URL(fileURLWithPath: folder.standardizedFileURL.path, isDirectory: true)
         self.added = added
         self.removed = removed
         self.operation = operation
@@ -29,7 +31,9 @@ public struct FolderItemsChanged: Sendable, Equatable {
     /// folder; a move left the source folder for the target one; a trashed
     /// item left its folder.
     static func changes(for step: UndoStep) -> [FolderItemsChanged] {
-        func parent(_ url: URL) -> URL { url.deletingLastPathComponent().standardizedFileURL }
+        func parent(_ url: URL) -> URL {
+            URL(fileURLWithPath: url.deletingLastPathComponent().standardizedFileURL.path, isDirectory: true)
+        }
         switch step {
         case .trashCreated(let url, _):
             return [FolderItemsChanged(folder: parent(url), added: [url.lastPathComponent])]
