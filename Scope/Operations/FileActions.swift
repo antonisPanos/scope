@@ -10,10 +10,21 @@ extension BrowserWindowController {
 
     func startOperation(_ kind: FileOperation.Kind) {
         let window = window
+        let model = model
         Task {
             // The drawer stays closed: the footer and the toolbar button show progress.
-            await OperationsController.shared.start(kind, from: window)
+            guard let id = await OperationsController.shared.start(kind, from: window) else { return }
+            // What it makes or renames gets selected as it shows up, as in Finder.
+            if BrowserWindowController.selectsResult(kind) { model.selectItems(addedBy: id) }
         }
+    }
+
+    /// Whether the items an operation makes are selected when they show up:
+    /// new, copied, moved, renamed, compressed and extracted ones are.
+    static func selectsResult(_ kind: FileOperation.Kind) -> Bool {
+        if case .rename = kind { return true }
+        if case .undo = kind { return false }
+        return FileOperation(kind).destinationFolder != nil
     }
 
     // MARK: - Pasteboard

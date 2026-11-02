@@ -157,8 +157,8 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let selected = selectedItems.map(\.url)
         items = model.items
         collectionView.reloadData()
-        if let pending = model.pendingSelection {
-            if select([pending], scroll: true) { model.pendingSelection = nil }
+        if !model.pendingSelection.isEmpty {
+            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
         } else if !selected.isEmpty {
             select(selected, scroll: false)
         }
@@ -186,7 +186,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let selected = collectionView.selectionIndexPaths
         collectionView.reloadItems(at: paths(changes.reloaded))
         if collectionView.selectionIndexPaths != selected { collectionView.selectionIndexPaths = selected }
-        if let pending = model.pendingSelection, select([pending], scroll: true) { model.pendingSelection = nil }
+        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
     }
 
     var iconSize: CGFloat {

@@ -95,8 +95,8 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
             return kept
         }
         browser.loadColumnZero()
-        if let pending = model.pendingSelection {
-            if select([pending], scroll: true) { model.pendingSelection = nil }
+        if !model.pendingSelection.isEmpty {
+            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
         } else if !selected.isEmpty {
             select(selected, scroll: false)
         }
