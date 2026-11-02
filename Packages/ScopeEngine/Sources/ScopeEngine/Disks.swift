@@ -13,15 +13,26 @@ import Foundation
 public struct MountTable: Sendable {
     /// Mount points, longest first, so the first match is the innermost one.
     let mountPoints: [String]
+    /// The mount points of file systems that aren't local, such as SMB and
+    /// NFS shares.
+    let networkMounts: Set<String>
 
     public init() {
-        self.init(mountPoints: Self.read())
+        let volumes = Self.read()
+        self.init(
+            mountPoints: volumes.map(\.path), networkMounts: Set(volumes.filter { !$0.isLocal }.map(\.path)))
     }
 
     /// A table of known mount points, for tests and for callers that have
     /// them already. "/" is always included.
-    public init(mountPoints: [String]) {
+    public init(mountPoints: [String], networkMounts: Set<String> = []) {
         self.mountPoints = Set(mountPoints + ["/"]).sorted { $0.count > $1.count }
+        self.networkMounts = networkMounts
+    }
+
+    /// Whether `path` seems to be on a network share.
+    public func isNetwork(_ path: String) -> Bool {
+        networkMounts.contains(mountPoint(of: path))
     }
 
     /// The mount point of the disk `path` is on.
@@ -35,7 +46,7 @@ public struct MountTable: Sendable {
         return urls.allSatisfy { mountPoint(of: $0.path) == disk }
     }
 
-    private static func read() -> [String] {
+    private static func read() -> [(path: String, isLocal: Bool)] {
         let count = getfsstat(nil, 0, MNT_NOWAIT)
         guard count > 0 else { return [] }
         // Room for a few mounts that appear between the two calls.
@@ -47,9 +58,10 @@ public struct MountTable: Sendable {
         }
         guard filled > 0 else { return [] }
         return buffer.prefix(Int(filled)).map { volume in
-            withUnsafeBytes(of: volume.f_mntonname) { bytes in
+            let path = withUnsafeBytes(of: volume.f_mntonname) { bytes in
                 String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
             }
+            return (path, volume.f_flags & UInt32(MNT_LOCAL) != 0)
         }
     }
 }

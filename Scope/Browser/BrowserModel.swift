@@ -78,6 +78,11 @@ final class BrowserModel {
     private var addedBy: [(operation: UUID, urls: [URL])] = []
     /// The operation whose new items get selected as they show up.
     private var selectingOperation: UUID?
+    /// True while a folder's listing is still arriving in batches.
+    private var isListing = false
+    /// Set when the watcher changed the items before the listing finished,
+    /// so later batches merge by name instead of adding duplicates.
+    private var changedWhileListing = false
 
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Browser")
 
@@ -175,6 +180,8 @@ final class BrowserModel {
         state = .loading
         addedBy = []
         selectingOperation = nil
+        isListing = false
+        changedWhileListing = false
         allItems = []
         items = []
         availableCapacity = nil
@@ -201,15 +208,41 @@ final class BrowserModel {
         }
     }
 
+    /// Shows a folder's items as they are read: the first batch at once,
+    /// then the rest re-sorted at most every quarter second, so a big folder
+    /// or a slow disk shows something straight away.
     private func loadFolder(_ url: URL, generation: Int) async {
+        isListing = true
+        defer { if generation == self.generation { isListing = false } }
         do {
-            let listed = try await engine.contentsOfDirectory(at: url)
+            var lastSort: ContinuousClock.Instant?
+            for try await batch in try engine.listing(of: url) {
+                guard generation == self.generation else { return }
+                if changedWhileListing {
+                    let names = Set(batch.map(\.url.lastPathComponent))
+                    allItems = FolderListing.updating(allItems, names: names, with: batch)
+                } else {
+                    allItems += batch
+                }
+                if lastSort.map({ ContinuousClock.now - $0 > .milliseconds(250) }) ?? true {
+                    lastSort = .now
+                    await applyFilterAndSort()
+                    guard generation == self.generation else { return }
+                    // Shown as soon as there is something to show; an empty
+                    // first batch (all hidden) would flash "empty folder".
+                    if state == .loading, !items.isEmpty {
+                        state = .loaded
+                        onChange?(.state)
+                    }
+                }
+            }
             guard generation == self.generation else { return }
-            allItems = listed
             await applyFilterAndSort()
             guard generation == self.generation else { return }
-            state = .loaded
-            onChange?(.state)
+            if state != .loaded {
+                state = .loaded
+                onChange?(.state)
+            }
             await loadCapacity(url, generation: generation)
         } catch is CancellationError {
         } catch {
@@ -332,6 +365,7 @@ final class BrowserModel {
             defer { continuation.finish() }
             for await update in updates {
                 guard let self, generation == self.generation else { return }
+                if self.isListing { self.changedWhileListing = true }
                 do {
                     switch update.change {
                     case .children(let names):

@@ -54,7 +54,8 @@ final class OperationsController {
         center = OperationCenter(
             engine: engine,
             resolveConflict: { conflict in await OperationsController.ask(conflict) },
-            confirmPermanentDeletion: { request in await OperationsController.confirm(request) })
+            confirmPermanentDeletion: { request in await OperationsController.confirm(request) },
+            resolveFailure: { failure in await OperationsController.ask(failure) })
         Task {
             _ = await center.observe { Task { @MainActor in OperationsController.shared.refresh() } }
         }
@@ -285,6 +286,39 @@ final class OperationsController {
         }
         alert.addButton(withTitle: "Undo Anyway")
         alert.addButton(withTitle: "Cancel")
+        return alert
+    }
+
+    // MARK: - Failures
+
+    /// Asks what to do about an item that couldn't be copied or moved.
+    private static func ask(_ failure: ItemFailure) async -> (choice: FailureChoice, applyToAll: Bool) {
+        let alert = failureAlert(failure)
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let response: NSApplication.ModalResponse
+        if let window, window.attachedSheet == nil {
+            response = await alert.beginSheetModal(for: window)
+        } else {
+            response = alert.runModal()
+        }
+        switch response {
+        case .alertFirstButtonReturn: return (.retry, false)
+        case .alertSecondButtonReturn: return (.skip, alert.suppressionButton?.state == .on)
+        default: return (.stop, false)
+        }
+    }
+
+    static func failureAlert(_ failure: ItemFailure) -> NSAlert {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "“\(failure.item.lastPathComponent)” couldn't be copied."
+        alert.informativeText =
+            failure.message + "\n\nNothing of it was left at the destination. Try again, skip it, or stop."
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Skip")
+        alert.addButton(withTitle: "Stop")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Skip all failures"
         return alert
     }
 

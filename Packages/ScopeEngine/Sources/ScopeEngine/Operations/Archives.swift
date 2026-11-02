@@ -106,7 +106,7 @@ extension FileEngine {
                 resultName = Self.archiveBaseName(archivePath)
             }
             let target = try uniqueName(resultName, in: folder, style: .numbered)
-            guard renamex_np(resultSource.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(resultSource.path, to: target.path) else {
                 throw FileEngineError.posix("Extract", target.path)
             }
             Self.syncFolder(target.deletingLastPathComponent().path)
@@ -310,7 +310,7 @@ extension FileEngine {
 
         do {
             try writeArchive(sources, to: partial, format: format, control: control)
-            guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(partial.path, to: target.path) else {
                 throw FileEngineError.posix("Compress", target.path)
             }
             Self.syncFolder(target.deletingLastPathComponent().path)

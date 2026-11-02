@@ -304,6 +304,32 @@ public struct Conflict: Sendable, Equatable {
     }
 }
 
+/// What to do when an item can't be copied or moved, such as after a read error.
+public enum FailureChoice: Sendable, Equatable {
+    /// Try the item again from the start.
+    case retry
+    /// Leave the item out and go on with the rest.
+    case skip
+    /// End the operation with the error.
+    case stop
+}
+
+/// An item that couldn't be copied or moved. Nothing of it was left at the
+/// destination, and an item it was to replace is back in place.
+public struct ItemFailure: Sendable, Equatable {
+    public let item: URL
+    public let message: String
+
+    public init(item: URL, message: String) {
+        self.item = item
+        self.message = message
+    }
+}
+
+/// Answers a failure; `applyToAll` with skip skips every later failure too.
+/// Retry and stop are never remembered.
+public typealias FailureResolver = @Sendable (ItemFailure) async -> (choice: FailureChoice, applyToAll: Bool)
+
 /// Answers a conflict; `applyToAll` reuses the answer for the rest of the operation.
 public typealias ConflictResolver = @Sendable (Conflict) async -> (choice: ConflictChoice, applyToAll: Bool)
 

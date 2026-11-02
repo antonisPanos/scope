@@ -22,6 +22,10 @@ public struct FileEngine: Sendable {
     /// one. Always nil in the app.
     var trashRefusal: (@Sendable (URL) -> Bool)?
 
+    /// Tests only: an error number to fail reading a file's data with, as a
+    /// failing disk would. Always nil in the app.
+    var readFault: (@Sendable (String) -> Int32?)?
+
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
     /// half-written item under its real name.
@@ -113,8 +117,11 @@ public struct FileEngine: Sendable {
                 source.deletingLastPathComponent().appendingPathComponent(newName))
             // A case-only rename on a case-insensitive disk finds the item itself at
             // the destination, so it must not use the exclusive rename.
-            let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
-            guard renamex_np(source.path, destination.path, flags) == 0 else {
+            let renamed =
+                Self.isSameItem(source.path, destination.path)
+                ? renamex_np(source.path, destination.path, 0) == 0
+                : Self.renameExclusively(source.path, to: destination.path)
+            guard renamed else {
                 throw FileEngineError.posix("Rename", source.path)
             }
             return destination
@@ -139,7 +146,7 @@ public struct FileEngine: Sendable {
             guard !Self.isInside(target.path, source.path) else {
                 throw FileEngineError.cannotCopyIntoItself(source.path)
             }
-            guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(source.path, to: target.path) else {
                 throw FileEngineError.posix("Move", source.path)
             }
         }
@@ -224,7 +231,7 @@ public struct FileEngine: Sendable {
         }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
-        var job = CopyJob(progress: progress, control: control)
+        var job = CopyJob(progress: progress, control: control, readFault: readFault)
         try job.measure(source.path)
 
         let partial = target.deletingLastPathComponent()
@@ -237,7 +244,7 @@ public struct FileEngine: Sendable {
             // A move verifies the copy here, while it still has its partial
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
-            guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(partial.path, to: target.path) else {
                 throw FileEngineError.posix("Copy", target.path)
             }
         } catch {
@@ -262,6 +269,28 @@ public struct FileEngine: Sendable {
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
             && name.utf8.count <= 255
+    }
+
+    /// Renames `source` to `target` only if nothing is there; false with
+    /// `errno` set otherwise. FAT and exFAT disks can't rename exclusively
+    /// (ENOTSUP), so there the name is first claimed with an exclusive
+    /// create, and the rename replaces only that empty placeholder.
+    static func renameExclusively(_ source: String, to target: String) -> Bool {
+        if renamex_np(source, target, UInt32(RENAME_EXCL)) == 0 { return true }
+        guard errno == ENOTSUP || errno == EINVAL, let info = lstatInfo(source) else { return false }
+        let isFolder = info.st_mode & S_IFMT == S_IFDIR
+        if isFolder {
+            guard mkdir(target, 0o700) == 0 else { return false }
+        } else {
+            let placeholder = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard placeholder >= 0 else { return false }
+            close(placeholder)
+        }
+        if Darwin.rename(source, target) == 0 { return true }
+        let failure = errno
+        _ = isFolder ? rmdir(target) : unlink(target)
+        errno = failure
+        return false
     }
 
     /// Asks the disk to write out a folder's entries (new names, renames).
@@ -338,10 +367,15 @@ private struct CopyJob {
     var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32, hasACL: Bool)] = []
 
     let control: OperationControl?
+    let readFault: (@Sendable (String) -> Int32?)?
 
-    init(progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?) {
+    init(
+        progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
+        readFault: (@Sendable (String) -> Int32?)? = nil
+    ) {
         self.progressHandler = progress
         self.control = control
+        self.readFault = readFault
     }
 
     mutating func measure(_ path: String) throws {
@@ -400,6 +434,7 @@ private struct CopyJob {
     }
 
     private mutating func copyData(from source: String, to destination: String, info: stat) throws {
+        if let code = readFault?(source) { throw FileEngineError.posix("Read", source, code) }
         let size = off_t(info.st_size)
         // Locked files take the copy path, so the flag can be held back as usual.
         if info.st_flags == 0, clone(from: source, to: destination) {
