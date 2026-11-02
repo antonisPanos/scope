@@ -351,9 +351,8 @@ final class BrowserModel {
             let token = announcements.observe { change in
                 // On the operation's worker thread, so resolving links here
                 // keeps the disk off the main thread.
-                guard change.folder.standardizedFileURL.path == url.standardizedFileURL.path
-                    || change.folder.resolvingSymlinksInPath().path == url.resolvingSymlinksInPath().path
-                else { return }
+                let folder = change.folder.resolvingSymlinksInPath().path
+                guard folder == url.resolvingSymlinksInPath().path else { return }
                 continuation.yield(
                     FolderUpdate(change: .children(change.names), added: change.added, operation: change.operation))
             }
