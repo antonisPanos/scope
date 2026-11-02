@@ -57,7 +57,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     private var tagCache: [URL: [String]] = [:]
     private var tagLoads: Set<URL> = []
     /// Cached tags that may be out of date: still shown, but read again.
-    private var staleTags: Set<URL> = []
+    private(set) var staleTags: Set<URL> = []
     private var tagGeneration = 0
     private let headerView = NSTableHeaderView()
     private var observers: [NSObjectProtocol] = []
@@ -246,12 +246,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         nodesByURL = reused
         outlineView.reloadData()
 
-        if !model.pendingSelection.isEmpty {
-            // Kept until the item shows up: the first update after navigating is empty.
-            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
-        } else {
-            select(selected, scroll: false)
-        }
+        // A pending selection is kept until the item shows up: the first
+        // update after navigating is empty.
+        if !selectPending() { select(selected, scroll: false) }
     }
 
     /// Updates only the top-level rows that changed on disk, so expanded
@@ -281,7 +278,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
         outlineView.endUpdates()
         for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
-        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
+        selectPending()
     }
 
     private func reloadVisibleNames() {
@@ -305,6 +302,13 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     @discardableResult
     func select(_ urls: [URL], scroll: Bool) -> Bool {
+        let rows = rows(for: urls)
+        outlineView.selectRowIndexes(rows, byExtendingSelection: false)
+        if scroll, let first = rows.first { outlineView.scrollRowToVisible(first) }
+        return !rows.isEmpty
+    }
+
+    private func rows(for urls: [URL]) -> IndexSet {
         let wanted = Set(urls.map(\.standardizedFileURL))
         var rows = IndexSet()
         for row in 0..<outlineView.numberOfRows {
@@ -313,9 +317,19 @@ final class FileListViewController: NSViewController, FileBrowsingView {
                 rows.insert(row)
             }
         }
-        outlineView.selectRowIndexes(rows, byExtendingSelection: false)
-        if scroll, let first = rows.first { outlineView.scrollRowToVisible(first) }
-        return !rows.isEmpty
+        return rows
+    }
+
+    /// Selects the items the model is waiting to select, once they're here.
+    /// Until then the user's selection stays: a pending item that never
+    /// shows up (Back to a folder that doesn't hold the one left) must not
+    /// clear it on every change on disk.
+    @discardableResult
+    private func selectPending() -> Bool {
+        guard !model.pendingSelection.isEmpty, !rows(for: model.pendingSelection).isEmpty else { return false }
+        select(model.pendingSelection, scroll: true)
+        model.pendingSelection = []
+        return true
     }
 
     func focus() {

@@ -49,8 +49,15 @@ import Testing
             if controller.tags(for: item) != nil { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(controller.tags(for: item) != nil)
+        let cached = try #require(controller.tags(for: item))
         controller.modelDidChange(.metadata)
-        #expect(controller.tags(for: item) == nil)
+        // The cached tags stay on screen (no flicker) but are read again.
+        #expect(controller.staleTags.contains(item.url))
+        #expect(controller.tags(for: item) == cached)
+        for _ in 0..<500 {
+            if !controller.staleTags.contains(item.url) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!controller.staleTags.contains(item.url))
     }
 }

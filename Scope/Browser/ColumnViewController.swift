@@ -98,8 +98,9 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         let selected = selectedItems.map(\.url)
         root.children = ColumnNode.updating(model.items, from: root.children ?? [])
         browser.loadColumnZero()
-        if !model.pendingSelection.isEmpty {
-            if select(model.pendingSelection, scroll: true) { model.pendingSelection = [] }
+        // A pending item that isn't here (yet) leaves the user's selection alone.
+        if !model.pendingSelection.isEmpty, select(model.pendingSelection, scroll: true) {
+            model.pendingSelection = []
         } else if !selected.isEmpty {
             if !select(selected, scroll: false) { browser.selectionIndexPaths = [] }
         }
