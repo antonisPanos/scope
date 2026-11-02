@@ -69,8 +69,12 @@ You need the paid [Apple Developer Program](https://developer.apple.com/programs
 
 The credentials stay in your keychain. Nothing goes into the repo, and CI doesn't need them yet.
 
-## Read-only until the MVP gate
+## Production file operations
 
-The release build refuses to change files until `SCOPE_ALLOW_WRITES` is added to
-`Config/Scope.xcconfig`. The script prints which kind of build it made. Only Antonis
-turns writes on, after the gate in the test plan.
+Production releases enable `SCOPE_ALLOW_WRITES` in `Config/Scope.xcconfig` by
+default and support full file operations with normal macOS permissions. The
+release script prints whether the resulting build allows changes.
+
+Use Scope Dev for file-changing QA, inside `~/ScopeScratch`, and disposable
+fixtures for engine tests. Build production for release validation without
+using personal files as test data.

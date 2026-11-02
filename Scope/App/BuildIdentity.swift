@@ -6,9 +6,9 @@ import ScopeEngine
 /// Neither build runs in the App Sandbox. Development builds ("Scope Dev")
 /// compile with SCOPE_DEV: they read anywhere but change files only inside
 /// the scratch folder, which the path guard enforces on every operation.
-/// Release builds ("Scope") may read anything but change nothing until
-/// SCOPE_ALLOW_WRITES is added to Config/Scope.xcconfig, a step only the
-/// owner takes.
+/// Production builds ("Scope") enable SCOPE_ALLOW_WRITES by default and
+/// use normal macOS permissions. A local configuration may omit that flag
+/// for a read-only build; Scope Dev always keeps its scratch restriction.
 struct BuildIdentity {
     let appName: String
     let isDevelopment: Bool

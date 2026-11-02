@@ -44,7 +44,7 @@ The engine targets macOS 15 so its tests run on GitHub's hosted runners; the app
 | Scheme | App | Sandbox | Path guard | Use it for |
 | --- | --- | --- | --- | --- |
 | Scope Dev | Scope Dev (amber squares) | Off | Reads anywhere, changes only `~/ScopeScratch` | All testing |
-| Scope | Scope (white squares) | Off | Read-only until `SCOPE_ALLOW_WRITES` | The real app |
+| Scope | Scope (white squares) | Off | Full file operations with normal macOS permissions | Production |
 
 Neither build runs in the App Sandbox: a file manager has to reach every
 folder, and mounting disk images (hdiutil) can't run sandboxed. The engine's
@@ -55,9 +55,10 @@ Scope Dev may read anything, but it changes files only inside `~/ScopeScratch`
 (`PathGuard.writesOnlyUnder`). The folder itself can't be renamed, moved or
 trashed; Go > Scratch Folder creates it.
 
-The real Scope build can read anything but changes nothing: its engine
-refuses every write until `SCOPE_ALLOW_WRITES` is added to
-`Config/Scope.xcconfig`, a step only the owner takes.
+Production Scope enables `SCOPE_ALLOW_WRITES` in `Config/Scope.xcconfig` by
+default. File operations still go through the engine's path guard and macOS
+permissions. File-changing development and QA use Scope Dev or disposable
+engine fixtures.
 
 ## Tests
 

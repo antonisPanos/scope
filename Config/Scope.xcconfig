@@ -1,6 +1,5 @@
-// "Scope": the real app. No sandbox. Until the MVP gate in the test plan is
-// met it is read-only: the engine refuses every change. To allow changes, add
-// SCOPE_ALLOW_WRITES to SWIFT_ACTIVE_COMPILATION_CONDITIONS below.
+// "Scope": the production app, with full file operations and normal macOS
+// permissions. Use the "Scope Dev" build for scratch-only development.
 #include "Base.xcconfig"
 
 PRODUCT_NAME = Scope
@@ -9,7 +8,7 @@ ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 CODE_SIGN_ENTITLEMENTS = Config/Scope.entitlements
 // Distribution builds must not allow a debugger to attach.
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO
-SWIFT_ACTIVE_COMPILATION_CONDITIONS =
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = SCOPE_ALLOW_WRITES
 SWIFT_COMPILATION_MODE = wholemodule
 SWIFT_OPTIMIZATION_LEVEL = -O
 DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
