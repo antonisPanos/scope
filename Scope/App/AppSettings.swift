@@ -9,7 +9,13 @@ final class AppSettings {
     static let didChange = Notification.Name("ScopeSettingsDidChange")
     static let iconSizeDidChange = Notification.Name("ScopeIconSizeDidChange")
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    /// `defaults` is the app's own; tests pass a throwaway suite, so they
+    /// never change the settings Scope Dev runs with.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     var showHiddenFiles: Bool {
         get { defaults.bool(forKey: "showHiddenFiles") }
