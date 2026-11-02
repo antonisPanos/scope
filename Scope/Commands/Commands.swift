@@ -244,15 +244,7 @@ enum Commands {
         place("Applications", "goApplications", "a", [.shift, .command]) { _ in URL(fileURLWithPath: "/Applications") },
         Command(
             id: "goScratch", title: "Scratch Folder", menu: .go, key: "", modifiers: [],
-            run: { controller in
-                // Made on first use, off the main thread; it may already exist.
-                let scratch = BuildIdentity.scratchFolder
-                let engine = controller.model.engine
-                Task {
-                    try? await engine.createFolder(at: scratch)
-                    controller.model.navigate(to: .folder(scratch))
-                }
-            },
+            run: { openScratchFolder($0) },
             isEnabled: { _ in BuildIdentity.current.isDevelopment }),
         Command(
             id: "goToFolder", title: "Go to Folder…", menu: .go, key: "g", modifiers: [.shift, .command],
@@ -267,6 +259,17 @@ enum Commands {
             id: "palette", title: "Command Palette…", menu: .go, key: "k", modifiers: .command,
             run: { $0.showCommandPalette() }, startsGroup: true),
     ]
+
+    /// Opens Scope Dev's scratch folder, made on first use off the main
+    /// thread (it may already exist).
+    private static func openScratchFolder(_ controller: BrowserWindowController) {
+        let scratch = BuildIdentity.scratchFolder
+        let engine = controller.model.engine
+        Task {
+            try? await engine.createFolder(at: scratch)
+            controller.model.navigate(to: .folder(scratch))
+        }
+    }
 
     /// A standard place; disabled when the path guard refuses it.
     private static func place(
