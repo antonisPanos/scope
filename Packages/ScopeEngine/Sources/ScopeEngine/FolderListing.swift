@@ -13,7 +13,11 @@ extension FileEngine {
                 if index % 256 == 0 { try Task.checkCancellation() }
                 guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else { continue }
                 let url = directory.appendingPathComponent(name)
-                guard pathGuard.permits(url), let item = try? FileItem(url: url) else { continue }
+                // A listing describes the link itself, even if its target
+                // is missing, loops, or lives outside the readable roots.
+                guard let location = try? pathGuard.checkLocation(url), let item = try? FileItem(url: location) else {
+                    continue
+                }
                 items.append(item)
             }
             return items
