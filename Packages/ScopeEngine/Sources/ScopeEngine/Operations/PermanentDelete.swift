@@ -37,7 +37,7 @@ extension FileEngine {
                 if let trashed = try await trashItem(at: original) {
                     undo.add(.putBack(trashed: trashed, original: original))
                 }
-            } catch where Self.isTrashUnavailable(error) {
+            } catch let error where Self.isTrashUnavailable(error) {
                 if !approved.contains(original.path) {
                     let request = permanentDeletion(of: items[index...], like: original)
                     let yes = await confirm(request)
