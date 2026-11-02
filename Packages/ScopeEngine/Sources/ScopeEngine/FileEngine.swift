@@ -263,35 +263,49 @@ public struct FileEngine: Sendable {
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
         var job = CopyJob(progress: progress, control: control, readFault: readFault, writeFault: writeFault)
-        try job.measure(source.path)
+        let input = try CopyLocation(checked: source)
+        let output = try CopyLocation(checked: target)
+        try job.measure(input)
 
         let partial = target.deletingLastPathComponent()
             .appendingPathComponent(Self.partialPrefix + UUID().uuidString + "-" + target.lastPathComponent)
         // The partial name must pass the guard like any other path we write.
         try pathGuard.checkWriteLocation(partial)
 
+        let staged = CopyLocation(parent: output.parent, name: partial.lastPathComponent, path: partial.path)
         do {
-            try job.copy(from: source.path, to: partial.path, relative: "")
+            try job.copy(from: input, to: staged, relative: "")
+            try Task.checkCancellation()
+            try control?.waitWhilePaused()
+            try output.validateParent(pathGuard: pathGuard)
             // A move verifies the copy here, while it still has its partial
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
-            guard Self.renameExclusively(partial.path, to: target.path) else {
+            try output.validateParent(pathGuard: pathGuard)
+            guard let identity = job.partialIdentity,
+                CopyLocation.same(try staged.info(), identity),
+                staged.renameExclusively(to: output.name, isDirectory: identity.st_mode & S_IFMT == S_IFDIR)
+            else {
                 throw FileEngineError.posix("Copy", target.path)
             }
         } catch {
-            Self.removeQuietly(partial.path)
+            do {
+                try staged.removePartial(matching: job.partialIdentity)
+            } catch {
+                Self.logger.fault("Could not remove pinned partial: \(error.localizedDescription)")
+            }
             throw error
         }
         // The files are synced as they're written; this makes the rename
         // itself survive a power cut, before a move trashes the original.
-        Self.syncFolder(target.deletingLastPathComponent().path)
-        job.finish(at: target.path)
+        output.syncParent()
+        job.finish(source: input, destination: output)
     }
 
     /// Total bytes and items under `urls`, as a copy would count them.
     public func measure(_ urls: [URL]) throws -> (bytes: Int64, items: Int) {
         var job = CopyJob(progress: nil, control: nil)
-        for url in urls { try job.measure(try pathGuard.checkLocation(url).path) }
+        for url in urls { try job.measure(CopyLocation(checked: pathGuard.checkLocation(url))) }
         return (job.state.bytesTotal, job.state.itemsTotal)
     }
 
@@ -391,227 +405,4 @@ public struct FileEngine: Sendable {
     }
 
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "FileEngine")
-}
-
-/// State of one copy: totals, progress, and the metadata that may only be
-/// applied once the copy is in place.
-private struct CopyJob {
-    let progressHandler: (@Sendable (CopyProgress) -> Void)?
-    var state = CopyProgress(bytesDone: 0, bytesTotal: 0, itemsDone: 0, itemsTotal: 0, currentItem: "")
-
-    /// Folder metadata and file flags, applied after the final rename, deepest
-    /// first. Applying them earlier would make a cancelled copy impossible to
-    /// clean up (a locked file or a read-only folder can't be removed).
-    var deferred: [(relative: String, source: String, isDirectory: Bool, flags: UInt32, hasACL: Bool)] = []
-
-    let control: OperationControl?
-    let readFault: (@Sendable (String) -> Int32?)?
-    let writeFault: (@Sendable (String, Int64) -> Int32?)?
-
-    init(
-        progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
-        readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil
-    ) {
-        self.progressHandler = progress
-        self.control = control
-        self.readFault = readFault
-        self.writeFault = writeFault
-    }
-
-    mutating func measure(_ path: String) throws {
-        try Task.checkCancellation()
-        guard let info = FileEngine.lstatInfo(path) else { throw FileEngineError.posix("Read", path) }
-        state.itemsTotal += 1
-        switch info.st_mode & S_IFMT {
-        case S_IFDIR:
-            for name in try FileManager.default.contentsOfDirectory(atPath: path) {
-                try measure(path + "/" + name)
-            }
-        case S_IFREG:
-            state.bytesTotal += Int64(info.st_size)
-        default:
-            break
-        }
-    }
-
-    mutating func copy(from source: String, to destination: String, relative: String) throws {
-        try Task.checkCancellation()
-        guard let info = FileEngine.lstatInfo(source) else { throw FileEngineError.posix("Read", source) }
-        state.currentItem = relative
-        report()
-
-        switch info.st_mode & S_IFMT {
-        case S_IFDIR:
-            guard mkdir(destination, 0o700) == 0 else { throw FileEngineError.posix("Create folder", destination) }
-            let children = try FileManager.default.contentsOfDirectory(atPath: source).sorted()
-            for name in children {
-                let childRelative = relative.isEmpty ? name : relative + "/" + name
-                try copy(from: source + "/" + name, to: destination + "/" + name, relative: childRelative)
-            }
-            FileEngine.syncFolder(destination)
-            deferred.append((relative, source, true, FileEngine.settableFlags(info.st_flags), false))
-        case S_IFLNK:
-            var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-            let length = readlink(source, &buffer, buffer.count - 1)
-            guard length >= 0 else { throw FileEngineError.posix("Read link", source) }
-            buffer[length] = 0
-            guard symlink(buffer, destination) == 0 else { throw FileEngineError.posix("Create link", destination) }
-            _ = copyfile(source, destination, nil, copyfile_flags_t(COPYFILE_METADATA | COPYFILE_NOFOLLOW))
-        case S_IFREG:
-            try copyData(from: source, to: destination, info: info)
-            try copyMetadata(from: source, to: destination, info: info)
-            // An ACL can forbid deleting the file, so like flags it is applied
-            // only once the copy is in place (otherwise a cancelled copy
-            // couldn't be cleaned up).
-            let hasACL = FileEngine.hasACL(source)
-            let flags = FileEngine.settableFlags(info.st_flags)
-            if flags != 0 || hasACL { deferred.append((relative, source, false, flags, hasACL)) }
-        default:
-            // Sockets, pipes and device nodes are not copied.
-            break
-        }
-        state.itemsDone += 1
-        report()
-    }
-
-    private mutating func copyData(from source: String, to destination: String, info: stat) throws {
-        if let code = readFault?(source) { throw FileEngineError.posix("Read", source, code) }
-        let size = off_t(info.st_size)
-        // Locked files take the copy path, so the flag can be held back as usual.
-        if info.st_flags == 0, clone(from: source, to: destination) {
-            state.bytesDone += Int64(size)
-            report()
-            return
-        }
-
-        let input = open(source, O_RDONLY)
-        guard input >= 0 else { throw FileEngineError.posix("Open", source) }
-        defer { close(input) }
-        let output = open(destination, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-        guard output >= 0 else { throw FileEngineError.posix("Create", destination) }
-        defer { close(output) }
-
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
-        defer { buffer.deallocate() }
-        // A sparse file (VM disks, databases, disk image bands) has holes that
-        // read as zeros. Only its data is copied, so the copy stays as small.
-        // A compressed file (much of /System and /Applications) also takes
-        // fewer blocks than its size, but its data lives in an attribute the
-        // kernel decompresses on read, and SEEK_DATA would see only holes: it
-        // is read straight through, and the copy is written uncompressed.
-        let isCompressed = info.st_flags & UInt32(UF_COMPRESSED) != 0
-        if !isCompressed, Int64(info.st_blocks) * 512 < Int64(size) {
-            var offset: off_t = 0
-            while offset < size {
-                let start = lseek(input, offset, SEEK_DATA)
-                if start < 0 {
-                    // ENXIO: nothing but a hole from here to the end.
-                    guard errno == ENXIO else { throw FileEngineError.posix("Read", source) }
-                    break
-                }
-                var end = lseek(input, start, SEEK_HOLE)
-                if end < 0 || end > size { end = size }
-                state.bytesDone += Int64(start - offset)
-                try copyRange(
-                    input, output, from: start, to: end, buffer: buffer, source: source, destination: destination)
-                offset = end
-            }
-            state.bytesDone += Int64(max(0, size - offset))
-            // The file ends at its full size even when it ends in a hole.
-            guard ftruncate(output, size) == 0 else { throw FileEngineError.posix("Write", destination) }
-        } else {
-            try copyRange(input, output, from: 0, to: nil, buffer: buffer, source: source, destination: destination)
-        }
-        guard fsync(output) == 0 else { throw FileEngineError.posix("Write", destination) }
-    }
-
-    /// Clones a file on the same APFS volume: instant, and the clone shares
-    /// the original's storage until either changes. False when the disk
-    /// can't (another volume, or not APFS); nothing is created then.
-    private func clone(from source: String, to destination: String) -> Bool {
-        guard clonefile(source, destination, UInt32(CLONE_NOFOLLOW | CLONE_NOOWNERCOPY)) == 0 else { return false }
-        // A clone carries the original's ACL. Like any copy's, it is set again
-        // by the metadata steps, at the point where a cancel can still clean up.
-        if let empty = acl_init(0) {
-            _ = acl_set_link_np(destination, ACL_TYPE_EXTENDED, empty)
-            acl_free(UnsafeMutableRawPointer(empty))
-        }
-        return true
-    }
-
-    /// Copies bytes `start..<end` (to the end of the file when `end` is nil),
-    /// checking for cancel and pause between chunks.
-    private mutating func copyRange(
-        _ input: Int32, _ output: Int32, from start: off_t, to end: off_t?,
-        buffer: UnsafeMutableRawPointer, source: String, destination: String
-    ) throws {
-        var offset = start
-        while end.map({ offset < $0 }) ?? true {
-            try Task.checkCancellation()
-            try control?.waitWhilePaused()
-            let wanted = end.map { min(FileEngine.chunkSize, Int($0 - offset)) } ?? FileEngine.chunkSize
-            let read = pread(input, buffer, wanted, offset)
-            if read < 0 {
-                if errno == EINTR { continue }
-                throw FileEngineError.posix("Read", source)
-            }
-            if read == 0 { break }
-            if let code = writeFault?(destination, Int64(offset)) {
-                throw FileEngineError.posix("Write", destination, code)
-            }
-            var written = 0
-            while written < read {
-                let result = pwrite(output, buffer + written, read - written, offset + off_t(written))
-                if result < 0 {
-                    if errno == EINTR { continue }
-                    throw FileEngineError.posix("Write", destination)
-                }
-                written += result
-            }
-            offset += off_t(read)
-            state.bytesDone += Int64(read)
-            report()
-        }
-    }
-
-    /// Permissions, extended attributes and dates for a file. Its ACL comes
-    /// later, in `finish`.
-    private func copyMetadata(from source: String, to destination: String, info: stat) throws {
-        guard copyfile(source, destination, nil, copyfile_flags_t(COPYFILE_STAT | COPYFILE_XATTR)) == 0 else {
-            throw FileEngineError.posix("Copy attributes", destination)
-        }
-        // copyfile(3) can carry file flags along with the security info. Flags
-        // such as "locked" are applied only once the copy is in place.
-        if info.st_flags != 0 { _ = lchflags(destination, 0) }
-        try Self.copyTimes(info, to: destination)
-    }
-
-    private static func copyTimes(_ info: stat, to destination: String) throws {
-        var times = [info.st_atimespec, info.st_mtimespec]
-        guard utimensat(AT_FDCWD, destination, &times, AT_SYMLINK_NOFOLLOW) == 0 else {
-            throw FileEngineError.posix("Set dates", destination)
-        }
-    }
-
-    /// Applies the deferred folder metadata and file flags under the final path.
-    /// The copy is complete at this point, so a failure here is not an error
-    /// worth undoing it for.
-    func finish(at root: String) {
-        // `deferred` is in post-order (children before their folder), which is
-        // the order folder dates need: setting them last keeps them intact.
-        for entry in deferred {
-            let path = entry.relative.isEmpty ? root : root + "/" + entry.relative
-            if entry.isDirectory {
-                _ = copyfile(entry.source, path, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR))
-                if let info = FileEngine.lstatInfo(entry.source) { try? Self.copyTimes(info, to: path) }
-            } else if entry.hasACL {
-                _ = copyfile(entry.source, path, nil, copyfile_flags_t(COPYFILE_ACL))
-            }
-            if entry.flags != 0 { _ = lchflags(path, entry.flags) }
-        }
-    }
-
-    private func report() {
-        progressHandler?(state)
-    }
 }

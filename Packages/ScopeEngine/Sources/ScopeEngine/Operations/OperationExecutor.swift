@@ -249,47 +249,58 @@ extension FileEngine {
     /// Confirms a copy matches its original: same structure, sizes, link
     /// targets and SHA-256 of every file's contents.
     func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws {
+        try verifyCopy(
+            CopyLocation(checked: pathGuard.checkLocation(original)),
+            CopyLocation(checked: pathGuard.checkWriteLocation(copy)), control: control)
+    }
+
+    private func verifyCopy(_ original: CopyLocation, _ copy: CopyLocation, control: OperationControl?) throws {
         try Task.checkCancellation()
-        guard let a = Self.lstatInfo(original.path), let b = Self.lstatInfo(copy.path),
-            a.st_mode & S_IFMT == b.st_mode & S_IFMT
-        else {
+        let a = try original.info()
+        let b = try copy.info()
+        guard a.st_mode & S_IFMT == b.st_mode & S_IFMT else {
             throw OperationError.verificationFailed(original.path)
         }
         switch a.st_mode & S_IFMT {
         case S_IFDIR:
-            let left = try FileManager.default.contentsOfDirectory(atPath: original.path).sorted()
-            let right = try FileManager.default.contentsOfDirectory(atPath: copy.path).sorted()
+            let source = try original.open(O_RDONLY | O_DIRECTORY, matching: a)
+            let destination = try copy.open(O_RDONLY | O_DIRECTORY, matching: b)
+            let left = try CopyLocation.names(in: source, path: original.path).sorted()
+            let right = try CopyLocation.names(in: destination, path: copy.path).sorted()
             guard left == right else { throw OperationError.verificationFailed(original.path) }
             for name in left {
-                try verifyCopy(
-                    original.appendingPathComponent(name), copy.appendingPathComponent(name), control: control)
+                try verifyCopy(original.child(name, in: source), copy.child(name, in: destination), control: control)
             }
         case S_IFLNK:
-            let left = try FileManager.default.destinationOfSymbolicLink(atPath: original.path)
-            let right = try FileManager.default.destinationOfSymbolicLink(atPath: copy.path)
-            guard left == right else { throw OperationError.verificationFailed(original.path) }
-        case S_IFREG:
-            guard a.st_size == b.st_size,
-                try Self.sha256(original, control: control) == Self.sha256(copy, control: control)
-            else {
+            guard try original.linkTarget() == copy.linkTarget() else {
                 throw OperationError.verificationFailed(original.path)
             }
-        default:
-            break
+        case S_IFREG:
+            let source = try original.open(O_RDONLY, matching: a)
+            let destination = try copy.open(O_RDONLY, matching: b)
+            guard a.st_size == b.st_size,
+                try Self.sha256(source, control: control) == Self.sha256(destination, control: control)
+            else { throw OperationError.verificationFailed(original.path) }
+        default: break
         }
     }
 
-    static func sha256(_ url: URL, control: OperationControl?) throws -> SHA256.Digest {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
+    private static func sha256(_ descriptor: CopyDescriptor, control: OperationControl?) throws -> SHA256.Digest {
         var hasher = SHA256()
+        var buffer = [UInt8](repeating: 0, count: chunkSize)
+        var offset: off_t = 0
         while true {
             try Task.checkCancellation()
             try control?.waitWhilePaused()
-            guard let data = try handle.read(upToCount: chunkSize), !data.isEmpty else { break }
-            hasher.update(data: data)
+            let count = pread(descriptor.raw, &buffer, buffer.count, offset)
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw FileEngineError.posix("Verify open file", "descriptor")
+            }
+            guard count > 0 else { return hasher.finalize() }
+            hasher.update(data: Data(buffer.prefix(count)))
+            offset += off_t(count)
         }
-        return hasher.finalize()
     }
 
     // MARK: - Undo
