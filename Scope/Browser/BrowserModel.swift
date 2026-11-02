@@ -66,6 +66,9 @@ final class BrowserModel {
     }
 
     private var allItems: [FileItem] = []
+    /// The shared listing's version `allItems` was taken from, for its
+    /// sorted copy; nil for searches, Recents and Tags.
+    private var allItemsVersion: Int?
     private var backStack: [Location] = []
     private var forwardStack: [Location] = []
     private var loadTask: Task<Void, Never>?
@@ -187,6 +190,7 @@ final class BrowserModel {
         selectingOperation = nil
         lastListingSort = nil
         allItems = []
+        allItemsVersion = nil
         items = []
         availableCapacity = nil
         onChange?([.location, .items, .state, .status])
@@ -221,11 +225,23 @@ final class BrowserModel {
         }
         self.subscription = subscription
         let folder = subscription.folder
-        if folder.isLoaded {
+        if folder.isLoaded, let sorted = folder.sorted(by: sort, showHidden: AppSettings.shared.showHiddenFiles) {
+            // Already sorted this way by another tab or an earlier visit: no wait at all.
+            takeItems(of: folder)
+            items = sorted
+            state = .loaded
+            onChange?([.items, .state, .status])
+            loadTask = Task { await loadCapacity(url, generation: generation) }
+        } else if folder.isLoaded {
             folderChanged(.loaded, in: url, generation: generation)
         } else if !folder.items.isEmpty {
             showListing(generation: generation)
         }
+    }
+
+    private func takeItems(of folder: FolderStore.Folder) {
+        allItems = folder.items
+        allItemsVersion = folder.version
     }
 
     private func unsubscribe() {
@@ -242,7 +258,7 @@ final class BrowserModel {
             showListing(generation: generation)
         case .loaded:
             loadTask = Task {
-                allItems = folder.items
+                takeItems(of: folder)
                 await applyFilterAndSort()
                 guard generation == self.generation else { return }
                 if state != .loaded {
@@ -252,18 +268,20 @@ final class BrowserModel {
                 await loadCapacity(url, generation: generation)
             }
         case .updated(let added, let operation):
-            allItems = folder.items
+            takeItems(of: folder)
             if let operation, !added.isEmpty {
                 noteAdded(added.map { url.appendingPathComponent($0) }, by: operation)
             }
             Task { await applyFilterAndSort(inPlace: true) }
         case .failed(let message):
             allItems = []
+            allItemsVersion = nil
             items = []
             state = .failed(message)
             onChange?([.items, .state, .status])
         case .reset:
             allItems = []
+            allItemsVersion = nil
             items = []
             state = .loading
             lastListingSort = nil
@@ -281,7 +299,7 @@ final class BrowserModel {
             listingSort = nil
             guard let folder = subscription?.folder, !folder.isLoaded else { return }
             lastListingSort = .now
-            allItems = folder.items
+            takeItems(of: folder)
             await applyFilterAndSort()
             guard generation == self.generation else { return }
             // Shown as soon as there is something to show; an empty first
@@ -396,11 +414,18 @@ final class BrowserModel {
         let showHidden = AppSettings.shared.showHiddenFiles || location.isSearch
         let generation = generation
         let old = items
+        // A folder's items another tab (or an earlier visit) already sorted this way.
+        let version = allItemsVersion
+        let shared = version == nil ? nil : subscription?.folder
+        let known = shared.flatMap { $0.version == version ? $0.sorted(by: sort, showHidden: showHidden) : nil }
         let (result, changes) = await Task.detached(priority: .userInitiated) {
-            let result = sort.sorted(showHidden ? source : source.filter { !$0.isHidden })
+            let result = known ?? sort.sorted(showHidden ? source : source.filter { !$0.isHidden })
             return (result, inPlace ? FolderListing.rowChanges(from: old, to: result) : nil)
         }.value
         guard generation == self.generation else { return }
+        if let shared, let version, known == nil {
+            shared.keepSorted(result, of: version, by: sort, showHidden: showHidden)
+        }
         // Another update may have landed meanwhile; the row changes are only
         // right against the rows they were worked out from.
         guard let changes, items == old else {
@@ -428,9 +453,10 @@ final class BrowserModel {
             return violation.description
         }
         if !FileManager.default.fileExists(atPath: url.path) {
+            // Only when the disk itself is gone; a missing folder on a mounted disk was deleted.
             if let disk = BuildIdentity.testDiskRoots.first(where: {
                 url.path == $0.path || url.path.hasPrefix($0.path + "/")
-            }) {
+            }), !FileManager.default.fileExists(atPath: disk.path) {
                 return "\(disk.lastPathComponent) isn't mounted. Run scripts/testdisk.sh mount, then reload with Cmd+R."
             }
             return "\(url.path) doesn't exist anymore."

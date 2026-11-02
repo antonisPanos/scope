@@ -32,7 +32,15 @@ final class FolderStore {
         let url: URL
         fileprivate let engine: FileEngine
         fileprivate let announcements: OperationAnnouncements?
-        fileprivate(set) var items: [FileItem] = []
+        fileprivate(set) var items: [FileItem] = [] {
+            didSet { version += 1 }
+        }
+        /// Bumped whenever `items` changes.
+        private(set) var version = 0
+        /// The last filtered and sorted copy a tab made of `items`, so
+        /// another tab, or Back, with the same settings shows it at once
+        /// instead of sorting a big folder again.
+        private var sortedCopy: (version: Int, sort: FileSort, showHidden: Bool, items: [FileItem])?
         fileprivate(set) var isLoaded = false
         fileprivate(set) var failure: String?
         fileprivate var observers: [UUID: (Event) -> Void] = [:]
@@ -50,6 +58,21 @@ final class FolderStore {
             self.url = url
             self.engine = engine
             self.announcements = announcements
+        }
+
+        /// The items as a tab with these settings shows them, if a tab has
+        /// sorted the current items that way.
+        func sorted(by sort: FileSort, showHidden: Bool) -> [FileItem]? {
+            guard let sortedCopy, sortedCopy.version == version, sortedCopy.sort == sort,
+                sortedCopy.showHidden == showHidden
+            else { return nil }
+            return sortedCopy.items
+        }
+
+        /// Keeps a tab's sorted copy of the items as they were at `version`.
+        func keepSorted(_ items: [FileItem], of version: Int, by sort: FileSort, showHidden: Bool) {
+            guard version == self.version else { return }
+            sortedCopy = (version, sort, showHidden, items)
         }
 
         fileprivate func send(_ event: Event) {
