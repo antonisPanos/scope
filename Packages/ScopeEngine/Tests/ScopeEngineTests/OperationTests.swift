@@ -34,6 +34,42 @@ import Testing
         #expect(try disk.read("a.txt") == "a")
     }
 
+    /// A file macOS stores compressed (much of /System and /Applications):
+    /// its data lives in a hidden attribute, so it takes fewer blocks than its
+    /// size, like a sparse file. Copies must carry its real contents, on the
+    /// same disk and to another one, and must not be marked compressed.
+    @Test func copiesCompressedFilesWithTheirContents() async throws {
+        let text = String(repeating: "Scope keeps every byte of a compressed file. ", count: 20_000)
+        let plain = try disk.write("plain.txt", text)
+        try FileManager.default.createDirectory(at: disk.url("source"), withIntermediateDirectories: true)
+        try TestVolume.run("/usr/bin/ditto", ["--hfsCompression", plain.path, disk.url("source/packed.txt").path])
+        let packed = try #require(FileEngine.lstatInfo(disk.url("source/packed.txt").path))
+        try #require(packed.st_flags & UInt32(UF_COMPRESSED) != 0, "ditto didn't compress the file")
+        try #require(Int64(packed.st_blocks) * 512 < Int64(packed.st_size))
+
+        try FileManager.default.createDirectory(at: disk.url("dest"), withIntermediateDirectories: true)
+        try await ops.run(.copy([disk.url("source")], into: disk.url("dest")))
+        try await ops.run(.copy([disk.url("source")], into: other.work))
+
+        for copy in [disk.url("dest/source/packed.txt"), other.url("source/packed.txt")] {
+            #expect(try String(contentsOf: copy, encoding: .utf8) == text, "\(copy.path)")
+            let info = try #require(FileEngine.lstatInfo(copy.path))
+            #expect(info.st_flags & UInt32(UF_COMPRESSED) == 0, "\(copy.path)")
+            #expect(info.st_size == packed.st_size)
+            let names = Self.xattrNames(copy.path)
+            #expect(!names.contains("com.apple.ResourceFork"), "\(copy.path)")
+            #expect(!names.contains("com.apple.decmpfs"), "\(copy.path)")
+        }
+    }
+
+    private static func xattrNames(_ path: String) -> [String] {
+        let size = listxattr(path, nil, 0, XATTR_NOFOLLOW)
+        guard size > 0 else { return [] }
+        var buffer = [CChar](repeating: 0, count: size)
+        listxattr(path, &buffer, size, XATTR_NOFOLLOW)
+        return buffer.map { UInt8(bitPattern: $0) }.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+    }
+
     @Test func pastingIntoTheSameFolderMakesACopy() async throws {
         try disk.write("photo.jpg", "x")
         try await ops.run(.copy([disk.url("photo.jpg")], into: disk.work))
