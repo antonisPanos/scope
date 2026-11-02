@@ -6,17 +6,14 @@ import Testing
 /// Which folders no tab shows are kept: recent ones, up to a limit, while
 /// they can still be read.
 struct FolderStoreTests {
+    private typealias Idle = (key: String, since: ContinuousClock.Instant, failed: Bool)
     private let now = ContinuousClock.now
 
-    private func idle(_ key: String, secondsAgo: Int, failed: Bool = false) -> (
-        key: String, since: ContinuousClock.Instant, failed: Bool
-    ) {
+    private func idle(_ key: String, secondsAgo: Int, failed: Bool = false) -> Idle {
         (key, now - .seconds(secondsAgo), failed)
     }
 
-    private func evicted(_ idle: [(key: String, since: ContinuousClock.Instant, failed: Bool)], limit: Int = 3)
-        -> Set<String>
-    {
+    private func evicted(_ idle: [Idle], limit: Int = 3) -> Set<String> {
         Set(FolderStore.evictable(idle, now: now, limit: limit, after: .seconds(120)))
     }
 
