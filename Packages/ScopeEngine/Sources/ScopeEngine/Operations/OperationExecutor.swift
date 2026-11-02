@@ -46,7 +46,7 @@ extension FileEngine {
             case .ejectVolume(let volume):
                 try await Volumes.eject(volume, pathGuard: pathGuard)
             case .undo(let record):
-                try await applyUndo(record, control: control)
+                try await applyUndo(record, control: control, undo: undo)
             }
         }
     }
@@ -294,7 +294,7 @@ extension FileEngine {
 
     // MARK: - Undo
 
-    private func applyUndo(_ record: UndoRecord, control: OperationControl) async throws {
+    private func applyUndo(_ record: UndoRecord, control: OperationControl, undo: UndoRecorder) async throws {
         // Checked for every step before any is applied, so a no leaves the
         // whole operation as it is.
         let changed = Self.changedSinceMade(record)
@@ -328,6 +328,8 @@ extension FileEngine {
                 }
                 try await moveItem(at: trashed, to: original)
             }
+            // Undoing a step reverses the change it recorded.
+            undo.announce(FolderItemsChanged.changes(for: step).map(\.reversed))
             control.update { $0.itemsDone += 1 }
         }
     }
