@@ -244,16 +244,7 @@ final class OperationsController {
     /// the disk and the items, and Cancel is the default: Return and Escape
     /// both keep the items. There is no "apply to all".
     private static func confirm(_ request: PermanentDeletion) async -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "“\(request.volume)” has no Trash. Delete \(describe(request.items)) for good?"
-        alert.informativeText =
-            "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
-            + listing(request.items)
-        alert.addButton(withTitle: "Cancel")
-        let delete = alert.addButton(withTitle: "Delete Permanently")
-        delete.hasDestructiveAction = true
-        delete.keyEquivalent = ""
+        let alert = permanentDeletionAlert(request)
         let window = NSApp.keyWindow ?? NSApp.mainWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
@@ -266,6 +257,20 @@ final class OperationsController {
         logger.notice(
             "No Trash on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items")
         return confirmed
+    }
+
+    static func permanentDeletionAlert(_ request: PermanentDeletion) -> NSAlert {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "“\(request.volume)” has no Trash. Delete \(describe(request.items)) for good?"
+        alert.informativeText =
+            "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
+            + listing(request.items)
+        alert.addButton(withTitle: "Cancel")
+        let delete = alert.addButton(withTitle: "Delete Permanently")
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        return alert
     }
 
     private static func describe(_ items: [URL]) -> String {
