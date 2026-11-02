@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import ScopeEngine
@@ -91,16 +92,40 @@ final class TestVolume {
 struct OperationHarness {
     let engine: FileEngine
     var conflictAnswer: ConflictChoice = .stop
+    /// The answer to "delete for good?" on a disk with no Trash.
+    var deleteForGood = false
+    /// Every "delete for good?" question asked, in order.
+    let deletionQuestions = Recorded<PermanentDeletion>()
 
     @discardableResult
     func run(_ kind: FileOperation.Kind, control: OperationControl = OperationControl()) async throws -> UndoRecord {
         let undo = UndoRecorder()
         let answer = conflictAnswer
-        try await engine.run(FileOperation(kind), control: control, undo: undo) { _ in (answer, false) }
+        let deleteForGood = deleteForGood
+        let questions = deletionQuestions
+        try await engine.run(
+            FileOperation(kind), control: control, undo: undo, resolveConflict: { _ in (answer, false) },
+            confirmPermanentDeletion: { request in
+                questions.append(request)
+                return deleteForGood
+            })
         return UndoRecord(title: "test", steps: undo.recorded)
     }
 
     func undo(_ record: UndoRecord) async throws {
         try await run(.undo(record))
+    }
+}
+
+/// Values collected from callbacks on any thread.
+final class Recorded<Value: Sendable>: Sendable {
+    private let values = Mutex<[Value]>([])
+
+    func append(_ value: Value) {
+        values.withLock { $0.append(value) }
+    }
+
+    var all: [Value] {
+        values.withLock { $0 }
     }
 }

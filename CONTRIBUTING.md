@@ -26,7 +26,8 @@ Scope moves and deletes files, so development never touches real ones.
   (`/Volumes/ScopeTest`, `ScopeTest2`, `ScopeTestCS`). Everything else is dimmed.
 - Don't launch the release `Scope` build while developing: it reads your real home folder.
 - All file access goes through `FileEngine` in `Packages/ScopeEngine`, and every
-  path passes `PathGuard` first. Deletes always go to the Trash.
+  path passes `PathGuard` first. Deletes always go to the Trash (on a disk with
+  no Trash, only after the user confirms the items by name).
 
 `CLAUDE.md` lists the full set of rules; they apply to everyone, not only Claude.
 

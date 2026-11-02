@@ -28,7 +28,9 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - Never run Scope Dev, tests or scripts against real user files. Engine tests use temp
   folders with a restricted guard; manual testing uses `/Volumes/ScopeTest*` only.
 - The main thread never touches disk. Copies write under `.scope-partial-` names and
-  rename into place; never overwrite; delete always means Trash.
+  rename into place; never overwrite; delete always means Trash. The one exception
+  (owner's decision on #45): on a disk with no Trash, after the user confirms a dialog
+  that names the disk and every item, with Cancel as the default and no "apply to all".
 - Keep the test disk list in sync in three places: `BuildIdentity.testDiskRoots`,
   `Config/ScopeDev.entitlements`, `scripts/testdisk.sh`.
 

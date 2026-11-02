@@ -51,9 +51,10 @@ final class OperationsController {
     private init() {
         let engine = BuildIdentity.current.makeEngine()
         self.engine = engine
-        center = OperationCenter(engine: engine) { conflict in
-            await OperationsController.ask(conflict)
-        }
+        center = OperationCenter(
+            engine: engine,
+            resolveConflict: { conflict in await OperationsController.ask(conflict) },
+            confirmPermanentDeletion: { request in await OperationsController.confirm(request) })
         Task {
             _ = await center.observe { Task { @MainActor in OperationsController.shared.refresh() } }
         }
@@ -235,6 +236,47 @@ final class OperationsController {
         case .alertThirdButtonReturn: return (.skip, all)
         default: return (.stop, false)
         }
+    }
+
+    // MARK: - Disks without a Trash
+
+    /// Asks before deleting items for good on a disk with no Trash. It names
+    /// the disk and the items, and Cancel is the default: Return and Escape
+    /// both keep the items. There is no "apply to all".
+    private static func confirm(_ request: PermanentDeletion) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "“\(request.volume)” has no Trash. Delete \(describe(request.items)) for good?"
+        alert.informativeText =
+            "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
+            + listing(request.items)
+        alert.addButton(withTitle: "Cancel")
+        let delete = alert.addButton(withTitle: "Delete Permanently")
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let response: NSApplication.ModalResponse
+        if let window, window.attachedSheet == nil {
+            response = await alert.beginSheetModal(for: window)
+        } else {
+            response = alert.runModal()
+        }
+        let confirmed = response == .alertSecondButtonReturn
+        let outcome = confirmed ? "deleting" : "keeping"
+        logger.notice(
+            "No Trash on \(request.volume, privacy: .public): \(outcome, privacy: .public) \(request.items.count) items")
+        return confirmed
+    }
+
+    private static func describe(_ items: [URL]) -> String {
+        items.count == 1 ? "“\(items[0].lastPathComponent)”" : "these \(items.count) items"
+    }
+
+    /// The items' names, one per line, up to ten.
+    static func listing(_ items: [URL], limit: Int = 10) -> String {
+        var lines = items.prefix(limit).map { "• " + $0.lastPathComponent }
+        if items.count > limit { lines.append("…and \(items.count - limit) more") }
+        return lines.joined(separator: "\n")
     }
 
     static func showAlert(_ title: String, _ text: String, on window: NSWindow?) {
