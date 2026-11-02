@@ -23,6 +23,11 @@ final class BrowserModel {
         static let state = Change(rawValue: 1 << 3)
         static let sort = Change(rawValue: 1 << 4)
         static let status = Change(rawValue: 1 << 5)
+        /// The folder changed on disk and `items` was updated in place;
+        /// `rowChanges` says which rows to remove, insert and redraw.
+        static let itemsUpdated = Change(rawValue: 1 << 6)
+        /// Either kind of items change.
+        static let anyItems: Change = [.items, .itemsUpdated]
     }
 
     let engine: FileEngine
@@ -37,6 +42,8 @@ final class BrowserModel {
     var pendingSelection: URL?
     /// True while a search is still crawling.
     private(set) var isSearching = false
+    /// How `items` changed, set only while `.itemsUpdated` is announced.
+    private(set) var rowChanges: FolderListing.RowChanges?
 
     var viewMode: ViewMode {
         didSet {
@@ -274,18 +281,26 @@ final class BrowserModel {
         onChange?(.status)
     }
 
-    /// Reloads the listing when the folder changes on disk, without clearing
-    /// what is on screen in between.
+    /// Follows the folder as it changes on disk, without clearing what is on
+    /// screen in between: only the children that changed are read again,
+    /// and the views update just those rows.
     private func startWatching(_ url: URL, generation: Int) {
-        guard let changes = try? FolderWatcher.changes(in: url, pathGuard: engine.pathGuard) else { return }
+        guard let events = try? FolderWatcher.events(in: url, pathGuard: engine.pathGuard) else { return }
         watchTask = Task { [weak self] in
-            for await _ in changes {
+            for await change in events {
                 guard let self, generation == self.generation else { return }
                 do {
-                    let listed = try await self.engine.contentsOfDirectory(at: url)
-                    guard generation == self.generation else { return }
-                    self.allItems = listed
-                    await self.applyFilterAndSort()
+                    switch change {
+                    case .children(let names):
+                        let fresh = try await self.engine.children(named: names, in: url)
+                        guard generation == self.generation else { return }
+                        self.allItems = FolderListing.updating(self.allItems, names: names, with: fresh)
+                    case .everything:
+                        let listed = try await self.engine.contentsOfDirectory(at: url)
+                        guard generation == self.generation else { return }
+                        self.allItems = listed
+                    }
+                    await self.applyFilterAndSort(inPlace: true)
                 } catch {
                     // The folder went away: deleted, or its disk was ejected.
                     let message = await Task.detached { Self.describe(error, at: url) }.value
@@ -299,19 +314,36 @@ final class BrowserModel {
         }
     }
 
-    /// Hides hidden items unless they're switched on, then sorts, off the main thread.
-    private func applyFilterAndSort() async {
+    /// Hides hidden items unless they're switched on, then sorts, off the main
+    /// thread. With `inPlace` (a change on disk), the views are told which
+    /// rows changed instead of reloading, and nothing if no row did.
+    private func applyFilterAndSort(inPlace: Bool = false) async {
         let source = allItems
         let sort = sort
         // Search results already follow the query's own hidden-files switch.
         let showHidden = AppSettings.shared.showHiddenFiles || location.isSearch
         let generation = generation
-        let result = await Task.detached(priority: .userInitiated) {
-            sort.sorted(showHidden ? source : source.filter { !$0.isHidden })
+        let old = items
+        let (result, changes) = await Task.detached(priority: .userInitiated) {
+            let result = sort.sorted(showHidden ? source : source.filter { !$0.isHidden })
+            return (result, inPlace ? FolderListing.rowChanges(from: old, to: result) : nil)
         }.value
         guard generation == self.generation else { return }
+        // Another update may have landed meanwhile; the row changes are only
+        // right against the rows they were worked out from.
+        guard let changes, items == old else {
+            items = result
+            onChange?([.items, .status])
+            return
+        }
+        guard !changes.isEmpty else { return }
+        Self.logger.debug(
+            "Rows changed: \(changes.removed.count) removed, \(changes.inserted.count) added, \(changes.reloaded.count) redrawn"
+        )
         items = result
-        onChange?([.items, .status])
+        rowChanges = changes
+        onChange?([.itemsUpdated, .status])
+        rowChanges = nil
     }
 
     /// Runs off the main thread: it may check whether the folder still exists.

@@ -132,7 +132,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         }
         if change.contains(.viewMode) || change.contains(.location) { applyViewMode() }
         if change.contains(.sort) { applySortIndicator() }
-        if change.contains(.items) { reloadItems() }
+        if change.contains(.items) {
+            reloadItems()
+        } else if change.contains(.itemsUpdated) {
+            applyRowChanges()
+        }
     }
 
     private func applyViewMode() {
@@ -206,6 +210,37 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         } else {
             select(selected, scroll: false)
         }
+    }
+
+    /// Updates only the top-level rows that changed on disk, so expanded
+    /// folders keep their children and the selection and scroll stay put.
+    /// Anything that doesn't add up falls back to a full reload.
+    private func applyRowChanges() {
+        let items = model.items
+        guard let changes = model.rowChanges, outlineView.numberOfChildren(ofItem: nil) == roots.count,
+            let updated = changes.applied(
+                to: roots, newCount: items.count, makeRow: { FileNode(item: items[$0]) }),
+            zip(updated, items).allSatisfy({ $0.item.url == $1.url })
+        else {
+            reloadItems()
+            return
+        }
+        var redrawn: [FileNode] = []
+        for index in changes.reloaded where updated[index].item != items[index] {
+            let node = updated[index]
+            node.item = items[index]
+            node.children = nil
+            tagCache[node.item.url] = nil
+            redrawn.append(node)
+        }
+        roots = updated
+        nodesByURL = Dictionary(updated.map { ($0.item.url, $0) }, uniquingKeysWith: { _, last in last })
+        outlineView.beginUpdates()
+        outlineView.removeItems(at: changes.removed, inParent: nil, withAnimation: [])
+        outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
+        outlineView.endUpdates()
+        for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
+        if let pending = model.pendingSelection, select([pending], scroll: true) { model.pendingSelection = nil }
     }
 
     private func reloadVisibleNames() {
