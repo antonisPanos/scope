@@ -26,6 +26,9 @@ final class BrowserModel {
         /// The folder changed on disk and `items` was updated in place;
         /// `rowChanges` says which rows to remove, insert and redraw.
         static let itemsUpdated = Change(rawValue: 1 << 6)
+        /// A watcher reported a disk change, including tags and xattrs that
+        /// do not change the lightweight FileItem value.
+        static let metadata = Change(rawValue: 1 << 7)
         /// Either kind of items change.
         static let anyItems: Change = [.items, .itemsUpdated]
     }
@@ -278,6 +281,7 @@ final class BrowserModel {
             }
         case .updated(let added, let operation):
             takeItems(of: folder)
+            onChange?(.metadata)
             if let operation, !added.isEmpty {
                 noteAdded(added.map { url.appendingPathComponent($0) }, by: operation)
             }

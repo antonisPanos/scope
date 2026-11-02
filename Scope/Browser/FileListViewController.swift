@@ -38,6 +38,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     var nodesByURL: [URL: FileNode] = [:]
     private var tagCache: [URL: [String]] = [:]
     private var tagLoads: Set<URL> = []
+    private var tagGeneration = 0
     private let headerView = NSTableHeaderView()
     private var observers: [NSObjectProtocol] = []
 
@@ -126,6 +127,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     // MARK: - Updates from the model
 
     func modelDidChange(_ change: BrowserModel.Change) {
+        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
+            tagGeneration += 1
+            tagCache = [:]
+            tagLoads = []
+        }
         if change.contains(.location) {
             nodesByURL = [:]
             tagCache = [:]
@@ -136,6 +142,16 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             reloadItems()
         } else if change.contains(.itemsUpdated) {
             applyRowChanges()
+        }
+        if change.contains(.metadata),
+            let column = outlineView.tableColumns.firstIndex(where: { $0.identifier == Column.tags.identifier })
+        {
+            let visible = outlineView.rows(in: outlineView.visibleRect)
+            if visible.length > 0 {
+                outlineView.reloadData(
+                    forRowIndexes: IndexSet(integersIn: visible.location..<NSMaxRange(visible)),
+                    columnIndexes: [column])
+            }
         }
     }
 
@@ -313,9 +329,10 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         tagLoads.insert(item.url)
         let engine = model.engine
         let url = item.url
+        let generation = tagGeneration
         Task { [weak self] in
             let tags = (try? await engine.tags(for: url)) ?? []
-            guard let self else { return }
+            guard let self, self.tagGeneration == generation else { return }
             self.tagLoads.remove(url)
             self.tagCache[url] = tags
             guard let node = self.nodesByURL[url] ?? self.findNode(url) else { return }
