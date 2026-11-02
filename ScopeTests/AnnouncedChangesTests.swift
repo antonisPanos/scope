@@ -7,7 +7,7 @@ import Testing
 /// The window that started an operation selects what it made or renamed.
 /// Following announced changes in a tab is checked by hand on the test disk:
 /// app tests don't write files of their own.
-struct AnnouncedChangesTests {
+@MainActor struct AnnouncedChangesTests {
     @Test func whichOperationsSelectTheirResult() {
         let file = URL(fileURLWithPath: "/Volumes/ScopeTest/a.txt")
         let folder = URL(fileURLWithPath: "/Volumes/ScopeTest/b")
