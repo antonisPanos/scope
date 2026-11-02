@@ -38,7 +38,7 @@ extension FileEngine {
         _ items: [URL], control: OperationControl, undo: UndoRecorder, confirm: PermanentDeletionConfirmer
     ) async throws {
         control.update { $0.itemsTotal = items.count }
-        var approved: Set<String> = []
+        var approved: [String: stat] = [:]
         for (index, item) in items.enumerated() {
             try Task.checkCancellation()
             let original = try pathGuard.checkWriteLocation(item)
@@ -48,15 +48,20 @@ extension FileEngine {
                     undo.add(.putBack(trashed: trashed, original: original))
                 }
             } catch let error where Self.isTrashUnavailable(error) {
-                if !approved.contains(original.path) {
+                if approved[original.path] == nil {
                     let request = permanentDeletion(of: items[index...], like: original)
+                    let targets = try deletionTargets(request.items)
                     let yes = await confirm(request)
                     // A cancel while the question was open wins over the answer.
                     try Task.checkCancellation()
                     guard yes else { throw OperationError.noTrash(request.volume) }
-                    approved.formUnion(request.items.map(\.path))
+                    try validateDeletions(targets)
+                    for target in targets { approved[target.url.path] = target.info }
                 }
-                try deletePermanently(original)
+                guard let expected = approved[original.path] else {
+                    throw FileEngineError.posix("Item changed before deletion", original.path, EBUSY)
+                }
+                try deletePermanently(original, matching: expected)
                 undo.announce([
                     FolderItemsChanged(
                         folder: original.deletingLastPathComponent().standardizedFileURL,
@@ -74,15 +79,15 @@ extension FileEngine {
     func deleteForGood(
         _ items: [URL], control: OperationControl, undo: UndoRecorder, confirm: PermanentDeletionConfirmer
     ) async throws {
-        let targets = try items.map { try pathGuard.checkWriteLocation($0) }
+        let targets = try deletionTargets(items)
         control.update { $0.itemsTotal = targets.count }
-        var disks: [(device: dev_t?, items: [URL])] = []
+        var disks: [(device: dev_t, items: [URL])] = []
         for target in targets {
-            let device = Self.lstatInfo(target.path)?.st_dev
-            if let index = disks.firstIndex(where: { $0.device != nil && $0.device == device }) {
-                disks[index].items.append(target)
+            let device = target.info.st_dev
+            if let index = disks.firstIndex(where: { $0.device == device }) {
+                disks[index].items.append(target.url)
             } else {
-                disks.append((device, [target]))
+                disks.append((device, [target.url]))
             }
         }
         for disk in disks {
@@ -93,17 +98,48 @@ extension FileEngine {
             try Task.checkCancellation()
             guard yes else { throw OperationError.stoppedByUser }
         }
+        // A change during any disk's question stops the batch before the
+        // first deletion. Check again at each actual removal as well.
+        try validateDeletions(targets)
         for target in targets {
             try Task.checkCancellation()
-            control.update { $0.currentItem = target.lastPathComponent }
-            try deletePermanently(target)
+            control.update { $0.currentItem = target.url.lastPathComponent }
+            try deletePermanently(target.url, matching: target.info)
             undo.announce([
                 FolderItemsChanged(
-                    folder: target.deletingLastPathComponent().standardizedFileURL,
-                    removed: [target.lastPathComponent])
+                    folder: target.url.deletingLastPathComponent().standardizedFileURL,
+                    removed: [target.url.lastPathComponent])
             ])
             control.update { $0.itemsDone += 1 }
         }
+    }
+
+    /// Keep identities rather than open descriptors across dialogs: a large
+    /// selection must not exhaust the process's descriptor limit.
+    private func deletionTargets(_ items: [URL]) throws -> [(url: URL, info: stat)] {
+        try items.map {
+            try Task.checkCancellation()
+            let url = try pathGuard.checkModifiable($0)
+            guard let info = Self.lstatInfo(url.path) else { throw FileEngineError.posix("Delete", url.path) }
+            return (url, info)
+        }
+    }
+
+    private func validateDeletions(_ targets: [(url: URL, info: stat)]) throws {
+        for target in targets {
+            try Task.checkCancellation()
+            let checked = try pathGuard.checkModifiable(target.url)
+            let location = try CopyLocation(checked: checked)
+            guard checked.path == target.url.path, Self.sameDeletionItem(try location.info(), target.info) else {
+                throw FileEngineError.posix("Item changed before deletion", target.url.path, EBUSY)
+            }
+        }
+    }
+
+    private static func sameDeletionItem(_ now: stat, _ expected: stat) -> Bool {
+        CopyLocation.same(now, expected) && now.st_gen == expected.st_gen
+            && now.st_birthtimespec.tv_sec == expected.st_birthtimespec.tv_sec
+            && now.st_birthtimespec.tv_nsec == expected.st_birthtimespec.tv_nsec
     }
 
     /// Whether an error from `trashItem` means the disk has no Trash, rather
@@ -151,22 +187,30 @@ extension FileEngine {
     /// a link, so a folder swapped for a link while it runs can't redirect it
     /// elsewhere. It stops at another disk mounted inside, and between items
     /// when cancelled.
-    func deletePermanently(_ url: URL) throws {
+    func deletePermanently(_ url: URL, matching expected: stat? = nil) throws {
         let target = try pathGuard.checkModifiable(url)
-        let parentPath = target.deletingLastPathComponent().path
-        let parent = open(parentPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard parent >= 0 else { throw FileEngineError.posix("Delete", parentPath) }
-        defer { close(parent) }
-        guard let device = Self.lstatInfo(target.path)?.st_dev else { return }
-        try Self.removeTree(Array(target.lastPathComponent.utf8CString), in: parent, device: device, path: target.path)
+        guard target.path == url.path else {
+            throw FileEngineError.posix("Item changed before deletion", url.path, EBUSY)
+        }
+        let location = try CopyLocation(checked: target)
+        let info = try location.info()
+        try location.validateParent(pathGuard: pathGuard)
+        try Self.removeTree(
+            Array(location.name.utf8CString), in: location.parent.raw, device: info.st_dev, path: target.path,
+            matching: expected ?? info)
     }
 
-    private static func removeTree(_ name: [CChar], in parent: Int32, device: dev_t, path: String) throws {
+    private static func removeTree(
+        _ name: [CChar], in parent: Int32, device: dev_t, path: String, matching expected: stat? = nil
+    ) throws {
         try Task.checkCancellation()
         var info = stat()
         guard fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else {
-            if errno == ENOENT { return }
+            if errno == ENOENT, expected == nil { return }
             throw FileEngineError.posix("Delete", path)
+        }
+        if let expected, !sameDeletionItem(info, expected) {
+            throw FileEngineError.posix("Item changed before deletion", path, EBUSY)
         }
         guard info.st_mode & S_IFMT == S_IFDIR else {
             guard unlinkat(parent, name, 0) == 0 else { throw FileEngineError.posix("Delete", path) }
@@ -184,6 +228,10 @@ extension FileEngine {
         for child in try entries(of: folder, path: path) {
             let childName = String(decoding: child.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self)
             try removeTree(child, in: folder, device: device, path: path + "/" + childName)
+        }
+        var current = stat()
+        guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0, sameDeletionItem(current, opened) else {
+            throw FileEngineError.posix("Folder changed during deletion", path, EBUSY)
         }
         guard unlinkat(parent, name, AT_REMOVEDIR) == 0 else { throw FileEngineError.posix("Delete", path) }
     }
