@@ -46,6 +46,8 @@ final class OperationsController {
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private let dockProgress = DockProgress()
     @ObservationIgnored private let keepAlive = KeepAlive()
+    /// Each operation's state at the last refresh, to notice the ones that just failed.
+    @ObservationIgnored private var lastStates: [UUID: OperationCenter.State] = [:]
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Operations")
 
     private init() {
@@ -203,7 +205,18 @@ final class OperationsController {
     /// Everything that follows the queue: the Dock bar, staying awake,
     /// system notifications, and a quit the user asked to wait for.
     private func apply(_ new: [OperationCenter.Snapshot]) {
+        let failures = Self.newlyFailed(new.map { ($0.id, $0.title, $0.state) }, previous: lastStates)
+        lastStates = Dictionary(new.map { ($0.id, $0.state) }, uniquingKeysWith: { first, _ in first })
         snapshots = new
+        for failure in failures {
+            Self.logger.error("Failed: \(failure.title, privacy: .public): \(failure.message, privacy: .public)")
+            // In the background, a system notification says it; with the
+            // activity drawer open, the drawer does. Otherwise a quick failure
+            // would only flash in the footer.
+            if NSApp.isActive, !drawerVisible {
+                Self.showAlert("\(failure.title) didn't finish.", failure.message, on: NSApp.keyWindow)
+            }
+        }
         dockProgress.show(overallFraction)
         keepAlive.update(busy: !active.isEmpty)
         SystemNotifier.shared.track(new, drawerVisible: drawerVisible)
@@ -211,6 +224,20 @@ final class OperationsController {
             quitWhenIdle = false
             Self.logger.notice("Queue empty; quitting as asked")
             NSApp.terminate(nil)
+        }
+    }
+
+    /// Operations that have failed since the last refresh, with their error:
+    /// ones that were waiting or running then, and ones too quick to be seen.
+    nonisolated static func newlyFailed(
+        _ current: [(id: UUID, title: String, state: OperationCenter.State)], previous: [UUID: OperationCenter.State]
+    ) -> [(title: String, message: String)] {
+        current.compactMap { operation in
+            guard case .failed(let message) = operation.state else { return nil }
+            switch previous[operation.id] {
+            case nil, .queued, .running, .paused, .cancelling: return (operation.title, message)
+            default: return nil
+            }
         }
     }
 

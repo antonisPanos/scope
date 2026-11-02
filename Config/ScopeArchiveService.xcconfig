@@ -16,6 +16,7 @@ GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_FILE = Config/ScopeArchiveService-Info.plist
 INFOPLIST_KEY_CFBundleDisplayName = Scope Archive Service
 SKIP_INSTALL = YES
+ALWAYS_SEARCH_USER_PATHS = NO
 
 CODE_SIGN_ENTITLEMENTS = Config/ScopeArchiveService.entitlements
 ENABLE_HARDENED_RUNTIME = YES
