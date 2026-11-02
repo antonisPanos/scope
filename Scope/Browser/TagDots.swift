@@ -69,6 +69,8 @@ final class TagMenuView: NSView {
             let button = TagButton(tag: name, color: Palette.tagColor(name) ?? .gray)
             button.target = self
             button.action = #selector(clicked(_:))
+            // A removal decision needs the state of the whole selection.
+            button.isEnabled = false
             buttons.append(button)
             stack.addArrangedSubview(button)
         }
@@ -85,7 +87,10 @@ final class TagMenuView: NSView {
 
     /// Ticks the tags every selected item already has.
     func showApplied(_ tags: Set<String>) {
-        for button in buttons { button.isApplied = tags.contains(button.tagName) }
+        for button in buttons {
+            button.isApplied = tags.contains(button.tagName)
+            button.isEnabled = true
+        }
     }
 
     @objc private func clicked(_ sender: TagButton) {

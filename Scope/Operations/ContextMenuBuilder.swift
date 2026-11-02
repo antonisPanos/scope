@@ -8,10 +8,12 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
     weak var controller: BrowserWindowController?
     /// Counts menu builds, so a late tag or app lookup can't land in a newer menu.
     private var generation = 0
+    private var tagTask: Task<Void, Never>?
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         generation += 1
+        tagTask?.cancel()
         guard let controller else { return }
         controller.prepareForContextMenu()
         let selection = controller.selectedItems
@@ -137,16 +139,16 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
         menu.addItem(item)
         let build = generation
         let engine = controller.model.engine
-        Task {
-            var common: Set<String>?
-            for url in urls.prefix(200) {
-                let tags = Set((try? await engine.tags(for: url)) ?? [])
-                common = common.map { $0.intersection(tags) } ?? tags
-                if common?.isEmpty == true { break }
-            }
-            guard build == generation else { return }
-            row.showApplied(common ?? [])
+        tagTask = Task { [weak self] in
+            guard let common = try? await TagSelection.commonTags(in: urls, readTags: engine.tags),
+                !Task.isCancelled, self?.generation == build
+            else { return }
+            row.showApplied(common)
         }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        tagTask?.cancel()
     }
 
     private func separator(in menu: NSMenu) {
