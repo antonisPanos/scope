@@ -26,6 +26,11 @@ public struct FileEngine: Sendable {
     /// failing disk would. Always nil in the app.
     var readFault: (@Sendable (String) -> Int32?)?
 
+    /// Tests only: an error number to fail a copy's write with, given the
+    /// file being written and the offset of the write, as a full disk
+    /// (ENOSPC) or a failing one (EIO) would. Always nil in the app.
+    var writeFault: (@Sendable (String, Int64) -> Int32?)?
+
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
     /// half-written item under its real name.
@@ -228,7 +233,7 @@ public struct FileEngine: Sendable {
         }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
-        var job = CopyJob(progress: progress, control: control, readFault: readFault)
+        var job = CopyJob(progress: progress, control: control, readFault: readFault, writeFault: writeFault)
         try job.measure(source.path)
 
         let partial = target.deletingLastPathComponent()
@@ -343,14 +348,16 @@ private struct CopyJob {
 
     let control: OperationControl?
     let readFault: (@Sendable (String) -> Int32?)?
+    let writeFault: (@Sendable (String, Int64) -> Int32?)?
 
     init(
         progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
-        readFault: (@Sendable (String) -> Int32?)? = nil
+        readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil
     ) {
         self.progressHandler = progress
         self.control = control
         self.readFault = readFault
+        self.writeFault = writeFault
     }
 
     mutating func measure(_ path: String) throws {
@@ -485,6 +492,9 @@ private struct CopyJob {
                 throw FileEngineError.posix("Read", source)
             }
             if read == 0 { break }
+            if let code = writeFault?(destination, Int64(offset)) {
+                throw FileEngineError.posix("Write", destination, code)
+            }
             var written = 0
             while written < read {
                 let result = pwrite(output, buffer + written, read - written, offset + off_t(written))
