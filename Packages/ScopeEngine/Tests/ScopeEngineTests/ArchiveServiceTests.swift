@@ -110,6 +110,10 @@ final class ServiceHarness: @unchecked Sendable {
     func readers(timeout: Duration = .seconds(60)) -> XPCArchiveReaders {
         XPCArchiveReaders(timeout: timeout) { [self] in NSXPCConnection(listenerEndpoint: listener.endpoint) }
     }
+
+    func writers(timeout: Duration = .seconds(60)) -> XPCArchiveWriters {
+        XPCArchiveWriters(timeout: timeout) { [self] in NSXPCConnection(listenerEndpoint: listener.endpoint) }
+    }
 }
 
 final class RogueListener: NSObject, NSXPCListenerDelegate, Sendable {

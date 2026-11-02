@@ -61,6 +61,7 @@ struct BuildIdentity {
         var engine = FileEngine(pathGuard: pathGuard)
         // Archives are parsed in the sandboxed archive service, never in the app.
         engine.archiveReaders = XPCArchiveReaders.embedded(Self.archiveServiceName)
+        engine.archiveWriters = XPCArchiveWriters.embedded(Self.archiveServiceName)
         return engine
     }
 }

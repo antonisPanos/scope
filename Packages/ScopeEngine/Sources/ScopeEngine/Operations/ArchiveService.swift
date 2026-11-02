@@ -3,9 +3,9 @@ import Synchronization
 
 // Reading archives in a separate, sandboxed process (an XPC service of the
 // app). Archives come from anywhere, and a flaw in a parser then can't reach
-// the user's files: the service has no file access at all and only ever sees
-// the one open archive the engine hands it. It sends back plain entries and
-// data, which the engine checks and writes itself as with any reader.
+// the user's files: this connection sees only the read-only archive the
+// engine hands it. It sends back plain entries and data, which the engine
+// checks and writes itself. The compression protocol is in ArchiveWriterService.
 
 /// The messages between the app and the archive service. One connection
 /// reads one archive. Replies carry `ServiceReply` values encoded as JSON,
@@ -34,34 +34,43 @@ public enum ArchiveService {
 
 // MARK: - The service's side
 
-/// Accepts connections in the service, each with its own reader.
+/// Accepts connections in the service, each with its own codec state.
 public final class ArchiveServiceListener: NSObject, NSXPCListenerDelegate, Sendable {
     private let readers: any ArchiveReaderOpening
+    private let writers: any ArchiveWriterOpening
 
-    public init(readers: any ArchiveReaderOpening = LibArchiveReaders()) {
+    public init(
+        readers: any ArchiveReaderOpening = LibArchiveReaders(), writers: any ArchiveWriterOpening = LibArchiveWriters()
+    ) {
         self.readers = readers
+        self.writers = writers
     }
 
     public func listener(
         _ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection
     ) -> Bool {
-        connection.exportedInterface = ArchiveService.interface
-        connection.exportedObject = ArchiveServiceHandler(readers: readers)
+        connection.exportedInterface = ArchiveService.codecInterface
+        let handler = ArchiveServiceHandler(readers: readers, writers: writers)
+        connection.exportedObject = handler
+        let writing = handler.writing
+        connection.invalidationHandler = { writing.cancel() }
         connection.resume()
         return true
     }
 }
 
-/// Reads one archive for one connection.
-final class ArchiveServiceHandler: NSObject, ArchiveServiceProtocol, @unchecked Sendable {
+/// Owns archive codec state for one connection.
+final class ArchiveServiceHandler: NSObject, ArchiveCodecServiceProtocol, @unchecked Sendable {
     private let readers: any ArchiveReaderOpening
     /// Messages on a connection arrive one at a time, but the lock keeps that
     /// from being something to rely on.
     private let lock = NSLock()
     private var reader: (any ArchiveReading)?
+    let writing: ArchiveWriterService
 
-    init(readers: any ArchiveReaderOpening) {
+    init(readers: any ArchiveReaderOpening, writers: any ArchiveWriterOpening) {
         self.readers = readers
+        writing = ArchiveWriterService(factory: writers)
     }
 
     func open(_ archive: FileHandle, singleFile: Bool, reply: @escaping @Sendable (Data?) -> Void) {
@@ -207,7 +216,7 @@ final class XPCArchiveReader: ArchiveReading {
 }
 
 /// The reply to one message, from whichever thread it arrives on.
-private final class Outcome<Value: Sendable>: Sendable {
+final class Outcome<Value: Sendable>: Sendable {
     private enum State {
         case waiting
         case replied(Value)
@@ -230,16 +239,24 @@ private final class Outcome<Value: Sendable>: Sendable {
     }
 
     /// The reply, or nil if the connection failed or no reply came in time.
-    func wait(for timeout: Duration) -> Value? {
+    func wait(for timeout: Duration, isPaused: @Sendable () -> Bool = { false }) -> Value? {
         let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-        let deadline = DispatchTime.now() + seconds
+        var remaining = seconds
+        var previous = ContinuousClock.now
         while true {
             if Task.isCancelled {
                 finish(nil)
                 return nil
             }
-            if done.wait(timeout: min(deadline, .now() + .milliseconds(25))) == .success { break }
-            guard DispatchTime.now() < deadline else {
+            let slice = isPaused() ? 0.025 : min(0.025, max(0, remaining))
+            if done.wait(timeout: .now() + slice) == .success { break }
+            let now = ContinuousClock.now
+            let elapsed = now - previous
+            if !isPaused() {
+                remaining -= Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            }
+            previous = now
+            guard remaining > 0 else {
                 state.withLock { state in
                     if case .waiting = state { state = .timedOut }
                 }

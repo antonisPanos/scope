@@ -29,7 +29,11 @@ struct ArchiveMetadataTests {
         let original = try fixture(sandbox)
         let before = try TreeSnapshot(original)
         var engine = sandbox.engine
-        if service { engine.archiveReaders = ServiceHarness(ArchiveServiceListener()).readers() }
+        if service {
+            let service = ServiceHarness(ArchiveServiceListener())
+            engine.archiveReaders = service.readers()
+            engine.archiveWriters = service.writers()
+        }
         let ops = OperationHarness(engine: engine)
         try await ops.run(.compress([original], format: format))
         try await ops.run(.extract(sandbox.url("original." + format.fileExtension)))
@@ -41,11 +45,16 @@ struct ArchiveMetadataTests {
         let sandbox = try Sandbox()
         let original = try fixture(sandbox)
         let before = try TreeSnapshot(original)
+        let service = ServiceHarness(ArchiveServiceListener())
+        var engine = sandbox.engine
+        engine.archiveReaders = service.readers()
+        engine.archiveWriters = service.writers()
+        let ops = OperationHarness(engine: engine)
         try ditto(["-c", "-k", "--sequesterRsrc", "--keepParent", original.path, sandbox.url("ditto.zip").path])
-        try await OperationHarness(engine: sandbox.engine).run(.extract(sandbox.url("ditto.zip")))
+        try await ops.run(.extract(sandbox.url("ditto.zip")))
         #expect(try TreeSnapshot(sandbox.url("original 2")) == before)
 
-        try await OperationHarness(engine: sandbox.engine).run(.compress([original], format: .zip))
+        try await ops.run(.compress([original], format: .zip))
         try sandbox.mkdir("ditto-output")
         try ditto(["-x", "-k", sandbox.url("original.zip").path, sandbox.url("ditto-output").path])
         #expect(try TreeSnapshot(sandbox.url("ditto-output/original")) == before)
@@ -126,7 +135,9 @@ struct ArchiveMetadataTests {
         try source.setResourceValues(values)
         let input = folder ? sandbox.url("original") : file
         var engine = sandbox.engine
-        engine.archiveReaders = ServiceHarness(ArchiveServiceListener()).readers()
+        let service = ServiceHarness(ArchiveServiceListener())
+        engine.archiveReaders = service.readers()
+        engine.archiveWriters = service.writers()
         let ops = OperationHarness(engine: engine)
         try await ops.run(.compress([input], format: .zip))
         let archive = input.appendingPathExtension("zip")

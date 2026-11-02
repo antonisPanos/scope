@@ -49,11 +49,19 @@ int archive_write_set_format_zip(struct archive *);
 int archive_write_set_format_pax_restricted(struct archive *);
 int archive_write_set_format_7zip(struct archive *);
 int archive_write_add_filter_gzip(struct archive *);
-int archive_write_open_filename(struct archive *, const char *file);
+typedef int scope_archive_open_callback(struct archive *, void *);
+typedef ssize_t scope_archive_write_callback(struct archive *, void *, const void *, size_t);
+typedef int scope_archive_close_callback(struct archive *, void *);
+typedef int scope_archive_free_callback(struct archive *, void *);
+int archive_write_open2(struct archive *, void *, scope_archive_open_callback *,
+    scope_archive_write_callback *, scope_archive_close_callback *, scope_archive_free_callback *);
+int archive_write_set_bytes_per_block(struct archive *, int);
+int archive_write_set_bytes_in_last_block(struct archive *, int);
 int archive_write_header(struct archive *, struct archive_entry *);
 ssize_t archive_write_data(struct archive *, const void *, size_t);
 int archive_write_finish_entry(struct archive *);
 int archive_write_close(struct archive *);
+int archive_write_fail(struct archive *);
 int archive_write_free(struct archive *);
 
 // Errors

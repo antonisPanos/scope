@@ -56,9 +56,13 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
   Snapshots don't render the sidebar (vibrancy); check it through `state`.
 - App layout: `Scope/Browser` (window, model, list, path bar), `Scope/Sidebar`,
   `Scope/Commands` (one command list feeds the menus and the Cmd+K palette), `Scope/Theme`.
-- Extract parses archives in `ScopeArchiveService/`, an XPC service embedded in the app and
-  sandboxed with no file access (`Config/ScopeArchiveService.entitlements`; keep it empty). The
-  engine opens the archive, hands over only the open file, and checks and writes every entry.
+- Archive decoding and encoding run in `ScopeArchiveService/`, an embedded XPC service with
+  no user-file or network entitlements (`Config/ScopeArchiveService.entitlements`; keep it empty).
+  Extraction receives only an open read-only archive; the engine checks and writes every entry.
+  Compression receives bounded entry descriptions and source bytes, and returns bounded encoded
+  bytes with backpressure. The engine owns source traversal, metadata, output size/space limits,
+  staging and final publication. Never pass compression source paths or writable output handles
+  to the service, or fall back to the in-process codec when an XPC connection fails.
 - Every file operation goes through `OperationCenter` (engine) via `OperationsController` (app).
   Operation tests mount throwaway sparse bundles with hdiutil (`TestVolume`); never run them
   against the startup disk, whose Trash is the user's.

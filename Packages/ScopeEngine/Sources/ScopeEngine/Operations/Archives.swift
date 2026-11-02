@@ -1,10 +1,11 @@
-import CArchive
 import Foundation
+import os
 
 /// Compress and extract through libarchive, the library macOS's own tar and
 /// ditto use. Both write under a hidden partial name and move the result into
 /// place only at the end, so cancelling leaves nothing behind.
 extension FileEngine {
+    private static let archiveLogger = Logger(subsystem: "com.antonispanos.scope", category: "Archives")
     /// Extensions Scope offers to extract.
     public static let archiveExtensions: Set<String> = [
         "zip", "tar", "tgz", "tbz", "tbz2", "txz", "gz", "bz2", "xz", "7z", "rar",
@@ -387,10 +388,6 @@ extension FileEngine {
         return true
     }
 
-    private static func errorText(_ archive: OpaquePointer, fallback: String) -> String {
-        archive_error_string(archive).map { String(cString: $0) } ?? fallback
-    }
-
     // MARK: - Compress
 
     func compress(_ items: [URL], format: ArchiveFormat, control: OperationControl, undo: UndoRecorder) async throws {
@@ -407,141 +404,68 @@ extension FileEngine {
             $0.itemsTotal = totals.items
         }
 
+        let destination = try CopyLocation(checked: pathGuard.checkWriteLocation(target))
+        let staged = CopyLocation(parent: destination.parent, name: partial.lastPathComponent, path: partial.path)
+        let descriptor = openat(
+            staged.parent.raw, staged.name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw FileEngineError.posix("Create archive", partial.path) }
+        let output = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? output.close() }
+        var identity = stat()
+        guard fstat(descriptor, &identity) == 0 else {
+            throw FileEngineError.posix("Read archive descriptor", partial.path)
+        }
+        let budget = ArchiveWriteBudget()
+        let fault = writeFault
         do {
-            try writeArchive(sources, to: partial, format: format, control: control)
-            guard Self.renameExclusively(partial.path, to: target.path) else {
-                throw FileEngineError.posix("Compress", target.path)
-            }
-            Self.syncFolder(target.deletingLastPathComponent().path)
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
-        } catch {
-            Self.removeQuietly(partial.path)
-            throw error
-        }
-    }
-
-    private func writeArchive(
-        _ sources: [URL], to destination: URL, format: ArchiveFormat, control: OperationControl
-    ) throws {
-        guard let writer = archive_write_new() else {
-            throw OperationError.archive("Couldn't start writing the archive.")
-        }
-        defer { archive_write_free(writer) }
-        switch format {
-        case .zip: archive_write_set_format_zip(writer)
-        case .tarGz:
-            archive_write_set_format_pax_restricted(writer)
-            archive_write_add_filter_gzip(writer)
-        case .sevenZip: archive_write_set_format_7zip(writer)
-        }
-        guard archive_write_open_filename(writer, destination.path) == ARCHIVE_OK else {
-            throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't create the archive."))
-        }
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
-        defer { buffer.deallocate() }
-        var sourceQuarantine: [String: Any]?
-
-        func addMetadata(_ url: URL, name: String, info: stat) throws {
-            guard info.st_mode & S_IFMT == S_IFDIR || info.st_mode & S_IFMT == S_IFREG else { return }
-            let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
-            guard descriptor >= 0 else { throw FileEngineError.posix("Read archive metadata", url.path) }
-            defer { close(descriptor) }
-            var opened = stat()
-            guard fstat(descriptor, &opened) == 0, opened.st_dev == info.st_dev, opened.st_ino == info.st_ino,
-                opened.st_mode & S_IFMT == info.st_mode & S_IFMT
-            else { throw AppleDouble.invalid() }
-            var hasACL = false
-            if let acl = acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED) {
-                defer { acl_free(UnsafeMutableRawPointer(acl)) }
-                var first: acl_entry_t?
-                hasACL = acl_get_entry(acl, Int32(ACL_FIRST_ENTRY.rawValue), &first) == 0
-            }
-            guard !hasACL, Self.settableFlags(info.st_flags) == 0 else {
-                throw OperationError.archive(
-                    "“\(name)” has access rules or file flags this archive cannot preserve. No archive was kept.")
-            }
-            if sourceQuarantine == nil, fgetxattr(descriptor, "com.apple.quarantine", nil, 0, 0, 0) > 0 {
-                sourceQuarantine = try url.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
-            }
-            let attributes = try ArchiveAttributes.read(descriptor)
-            guard !attributes.isEmpty else { return }
-            let data = try AppleDouble.encode(attributes)
-            let path = name as NSString
-            let parent = path.deletingLastPathComponent
-            let sidecar = (parent.isEmpty ? "" : parent + "/") + "._" + path.lastPathComponent
-            guard let entry = archive_entry_new() else { throw AppleDouble.invalid() }
-            defer { archive_entry_free(entry) }
-            archive_entry_set_pathname(entry, format == .tarGz ? sidecar : "__MACOSX/" + sidecar)
-            archive_entry_set_filetype(entry, AE_IFREG)
-            archive_entry_set_perm(entry, 0o600)
-            archive_entry_set_size(entry, Int64(data.count))
-            guard archive_write_header(writer, entry) == ARCHIVE_OK else { throw AppleDouble.invalid() }
-            let written = data.withUnsafeBytes { archive_write_data(writer, $0.baseAddress, data.count) }
-            guard written == data.count, archive_write_finish_entry(writer) == ARCHIVE_OK else {
-                throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't preserve macOS metadata."))
-            }
-        }
-
-        func add(_ url: URL, as name: String) throws {
-            try Task.checkCancellation()
-            try control.waitWhilePaused()
-            guard let info = Self.lstatInfo(url.path), let entry = archive_entry_new() else { return }
-            defer { archive_entry_free(entry) }
-            try addMetadata(url, name: name, info: info)
-            archive_entry_set_pathname(entry, name)
-            archive_entry_set_perm(entry, info.st_mode & 0o7777)
-            archive_entry_set_mtime(entry, info.st_mtimespec.tv_sec, 0)
-            control.update { $0.currentItem = name }
-            switch info.st_mode & S_IFMT {
-            case S_IFDIR:
-                archive_entry_set_filetype(entry, AE_IFDIR)
-                guard archive_write_header(writer, entry) == ARCHIVE_OK else {
-                    throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't add \(name)."))
-                }
-                for child in try FileManager.default.contentsOfDirectory(atPath: url.path).sorted()
-                where child != ".DS_Store" {
-                    try add(url.appendingPathComponent(child), as: name + "/" + child)
-                }
-            case S_IFLNK:
-                archive_entry_set_filetype(entry, AE_IFLNK)
-                let link = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
-                archive_entry_set_symlink(entry, link)
-                archive_write_header(writer, entry)
-            case S_IFREG:
-                archive_entry_set_filetype(entry, AE_IFREG)
-                archive_entry_set_size(entry, Int64(info.st_size))
-                guard archive_write_header(writer, entry) == ARCHIVE_OK else {
-                    throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't add \(name)."))
-                }
-                let input = open(url.path, O_RDONLY | O_NOFOLLOW_ANY | O_NONBLOCK | O_CLOEXEC)
-                guard input >= 0 else { throw FileEngineError.posix("Open", url.path) }
-                defer { close(input) }
-                while true {
+            let writer = try archiveWriters.open(format: format, control: control) {
+                (data: Data) throws(ArchiveWriteError) in
+                do {
                     try Task.checkCancellation()
                     try control.waitWhilePaused()
-                    let count = read(input, buffer, FileEngine.chunkSize)
-                    if count == 0 { break }
-                    guard count > 0 else { throw FileEngineError.posix("Read", url.path) }
-                    guard archive_write_data(writer, buffer, count) == count else {
-                        throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't write \(name)."))
+                    guard data.count <= Self.chunkSize else {
+                        throw ArchiveWriteError.failed("Archive output chunk is too large.")
                     }
-                    control.update { $0.bytesDone += Int64(count) }
+                    let offset = budget.written
+                    if let code = fault?(partial.path, offset) {
+                        throw FileEngineError.posix("Write archive", partial.path, code)
+                    }
+                    try budget.accept(data.count, descriptor: output.fileDescriptor)
+                    try output.write(contentsOf: data)
+                } catch {
+                    throw .failed(error.localizedDescription)
                 }
-            default:
-                return
             }
-            control.update { $0.itemsDone += 1 }
+            defer { writer.cancel() }
+            var job = CompressionJob(writer: writer, format: format, control: control, budget: budget)
+            for source in sources { try job.add(CopyLocation(checked: source), as: source.lastPathComponent) }
+            try writer.finish()
+            try Task.checkCancellation()
+            try control.waitWhilePaused()
+            guard budget.written > 0 else {
+                throw OperationError.archive("The archive writer returned no data.")
+            }
+            try destination.validateParent(pathGuard: pathGuard)
+            guard CopyLocation.same(try staged.info(), identity) else {
+                throw FileEngineError.posix("Archive partial changed", partial.path, EBUSY)
+            }
+            try applyQuarantine(job.quarantine, to: partial)
+            try output.synchronize()
+            try destination.validateParent(pathGuard: pathGuard)
+            guard CopyLocation.same(try staged.info(), identity),
+                staged.renameExclusively(to: destination.name, isDirectory: false)
+            else {
+                throw FileEngineError.posix("Compress", target.path)
+            }
+            destination.syncParent()
+            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+        } catch {
+            do { try staged.removePartial(matching: identity) } catch {
+                Self.archiveLogger.fault("Could not remove archive partial: \(error.localizedDescription)")
+            }
+            try Task.checkCancellation()
+            if let error = error as? ArchiveWriteError { throw OperationError.archive(error.localizedDescription) }
+            throw error
         }
-
-        for source in sources {
-            try add(source, as: source.lastPathComponent)
-        }
-        guard archive_write_close(writer) == ARCHIVE_OK else {
-            throw OperationError.archive(Self.errorText(writer, fallback: "Couldn't finish the archive."))
-        }
-        // Repacking a download must not remove its first-open protection.
-        // Use fresh public-API quarantine on the archive, rather than flags
-        // supplied by entries inside a future untrusted archive.
-        try applyQuarantine(sourceQuarantine, to: destination)
     }
 }
