@@ -54,7 +54,7 @@ extension BrowserWindowController {
             }
             guard pathGuard.permits(target) else {
                 showProblem(
-                    "“\(url.lastPathComponent)” points to \(target.path), outside the test disks. Scope Dev won't follow it."
+                    "“\(url.lastPathComponent)” points to \(target.path), which \(BuildIdentity.current.appName) can't open."
                 )
                 return
             }
@@ -68,7 +68,7 @@ extension BrowserWindowController {
 
     private func openFile(_ url: URL) {
         guard model.engine.pathGuard.permits(url) else {
-            showProblem("\(url.path) is outside the test disks, so Scope Dev won't open it.")
+            showProblem("\(BuildIdentity.current.appName) can't open \(url.path).")
             return
         }
         NSWorkspace.shared.open(url)
@@ -83,7 +83,7 @@ extension BrowserWindowController {
         }
         let pathGuard = model.engine.pathGuard
         guard pathGuard.permits(url) else {
-            showProblem("\(url.path) is outside the test disks, so Scope Dev won't open it.")
+            showProblem("\(BuildIdentity.current.appName) can't open \(url.path).")
             return
         }
         Task {

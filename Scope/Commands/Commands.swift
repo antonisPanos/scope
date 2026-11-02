@@ -243,8 +243,8 @@ enum Commands {
         place("Computer", "goComputer", "c", [.shift, .command]) { _ in URL(fileURLWithPath: "/") },
         place("Applications", "goApplications", "a", [.shift, .command]) { _ in URL(fileURLWithPath: "/Applications") },
         Command(
-            id: "goTestDisk", title: "Test Disk", menu: .go, key: "", modifiers: [],
-            run: { $0.model.navigate(to: .folder(BuildIdentity.testDiskRoots[0])) },
+            id: "goScratch", title: "Scratch Folder", menu: .go, key: "", modifiers: [],
+            run: { openScratchFolder($0) },
             isEnabled: { _ in BuildIdentity.current.isDevelopment }),
         Command(
             id: "goToFolder", title: "Go to Folder…", menu: .go, key: "g", modifiers: [.shift, .command],
@@ -260,8 +260,18 @@ enum Commands {
             run: { $0.showCommandPalette() }, startsGroup: true),
     ]
 
-    /// A standard place; disabled when the path guard refuses it (outside
-    /// the test disks in development builds).
+    /// Opens Scope Dev's scratch folder, made on first use off the main
+    /// thread (it may already exist).
+    private static func openScratchFolder(_ controller: BrowserWindowController) {
+        let scratch = BuildIdentity.scratchFolder
+        let engine = controller.model.engine
+        Task {
+            try? await engine.createFolder(at: scratch)
+            controller.model.navigate(to: .folder(scratch))
+        }
+    }
+
+    /// A standard place; disabled when the path guard refuses it.
     private static func place(
         _ title: String, _ id: String, _ key: String, _ modifiers: NSEvent.ModifierFlags,
         _ url: @escaping @Sendable (URL) -> URL

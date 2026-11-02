@@ -1,3 +1,4 @@
+import DiskArbitration
 import Foundation
 import Testing
 
@@ -139,12 +140,14 @@ import Testing
         #expect(volumes.first?.isEjectable == false)
     }
 
-    @Test(.enabled(if: Sandbox.testDiskMounted, "needs the test disk"))
-    func recognisesTheTestDiskAsADiskImage() throws {
-        let testDisk = try #require(Volumes.mounted().first { $0.url.path == Sandbox.testDisk.path })
-        #expect(testDisk.name == "ScopeTest")
-        #expect(testDisk.isEjectable)
-        #expect(testDisk.imagePath?.hasSuffix("ScopeTest.sparsebundle") == true)
+    @Test func recognisesADiskImage() throws {
+        // Test volumes are mounted hidden, so the sidebar list skips them; ask
+        // Disk Arbitration about this one directly.
+        let volume = try TestVolume(name: "ScopeImage", sizeMB: 64)
+        let session = try #require(DASessionCreate(kCFAllocatorDefault))
+        let imagePath = Volumes.diskImagePath(for: volume.mountPoint, session: session)
+        #expect(imagePath?.hasSuffix("ScopeImage.sparsebundle") == true)
+        #expect(Volumes.diskImagePath(for: URL(fileURLWithPath: "/"), session: session) == nil)
     }
 
     @Test func ejectRespectsThePathGuard() async throws {

@@ -83,24 +83,17 @@ struct SettingsView: View {
                 }
             }
             Section("Permissions") {
-                if BuildIdentity.current.isDevelopment {
-                    Text(
-                        "\(BuildIdentity.current.appName) only reaches the test disks, so it needs no extra permissions."
-                    )
-                    .foregroundStyle(.secondary)
-                } else {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Full Disk Access")
-                            Text(fullDiskAccessText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if fullDiskAccess != .granted {
-                            Button("Open Privacy Settings") {
-                                NSWorkspace.shared.open(Permissions.fullDiskAccessSettingsURL)
-                            }
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Full Disk Access")
+                        Text(fullDiskAccessText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if fullDiskAccess != .granted {
+                        Button("Open Privacy Settings") {
+                            NSWorkspace.shared.open(Permissions.fullDiskAccessSettingsURL)
                         }
                     }
                 }
@@ -126,7 +119,6 @@ struct SettingsView: View {
     /// Re-read when Scope comes back to the front, e.g. from System Settings.
     private func refreshPermissions() async {
         notificationStatus = await SystemNotifier.shared.authorizationStatus()
-        guard !BuildIdentity.current.isDevelopment else { return }
         // The main thread never touches disk, not even for a probe.
         fullDiskAccess = await Task.detached { Permissions.fullDiskAccess() }.value
     }

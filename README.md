@@ -65,7 +65,7 @@ The [user guide](docs/USER_GUIDE.md) covers every feature and shortcut.
 | <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/search-dark.png">   <img src="docs/images/search.png" alt="Search results for a glob pattern with the filter bar"> </picture> | <picture>   <source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png">   <img src="docs/images/activity.png" alt="The activity drawer showing a finished copy with Undo"> </picture> |
 | **Search**: names, patterns or regular expressions, with filters | **Activity**: every job with progress, speed, pause, cancel and undo |
 
-Screenshots are taken from Scope Dev on its throwaway test disk.
+Screenshots are taken from Scope Dev.
 
 ## Built to never lose a file
 
@@ -92,8 +92,7 @@ You need macOS 27.2 and Xcode 27.
 ```sh
 git clone https://github.com/antonisPanos/scope.git && cd scope
 make setup      # git hooks, and Config/Local.xcconfig for your signing team
-make testdisk   # throwaway test disks; development builds only work there
-make build      # builds "Scope Dev"
+make build      # builds "Scope Dev", which changes files only in ~/ScopeScratch
 make test       # engine tests
 ```
 

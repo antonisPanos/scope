@@ -119,19 +119,19 @@ import Testing
         #expect(sandbox.exists("a.txt"))
     }
 
-    @Test(.enabled(if: Sandbox.testDiskMounted, "needs the test disk, so the user's real Trash is never used"))
-    func trashesASymlinkWithoutTouchingItsTarget() async throws {
-        // Both folders live on the test disk, so the item goes to that disk's
-        // own Trash. The link points outside the guard's root; trashing the
-        // link is allowed, and its target must survive.
-        let disk = try Sandbox(in: Sandbox.testDisk)
-        let outside = try Sandbox(in: Sandbox.testDisk)
+    @Test func trashesASymlinkWithoutTouchingItsTarget() async throws {
+        // Both folders live on a throwaway disk image, so nothing can reach
+        // the user's real Trash. The link points outside the guard's root;
+        // trashing the link is allowed, and its target must survive.
+        let volume = try TestVolume(name: "ScopeLinks", sizeMB: 64)
+        let disk = try Sandbox(in: volume.work)
+        let outside = try Sandbox(in: volume.work)
         let target = try outside.write("target.txt", "keep")
         try disk.symlink("link", to: target.path)
 
         let trashed = try await disk.engine.trashItem(at: disk.url("link"))
         defer { if let trashed { try? FileManager.default.removeItem(at: trashed) } }
-        #expect(trashed?.path.hasPrefix(Sandbox.testDisk.path + "/") == true)
+        #expect(trashed?.path.hasPrefix(volume.mountPoint.path + "/") == true)
         #expect(!disk.exists("link"))
         #expect(try String(contentsOf: target, encoding: .utf8) == "keep")
     }

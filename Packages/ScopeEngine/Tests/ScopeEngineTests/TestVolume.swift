@@ -15,6 +15,9 @@ final class TestVolume {
     let work: URL
     private let image: URL
     private let folder: URL
+    /// The image's whole disk (/dev/diskN). Detaching by it also works after
+    /// a test force-ejected the volume, which leaves the disk attached.
+    private let device: String?
 
     init(name: String = "ScopeOps", sizeMB: Int = 512, fileSystem: String = "APFS") throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("ScopeVolume-" + UUID().uuidString)
@@ -29,7 +32,9 @@ final class TestVolume {
                 "create", "-size", "\(sizeMB)m", "-type", "SPARSEBUNDLE", "-fs", fileSystem, "-volname", name,
                 image.path, "-quiet",
             ])
-        try Self.run("/usr/bin/hdiutil", ["attach", image.path, "-nobrowse", "-mountpoint", mount.path, "-quiet"])
+        let attached = try Self.output(
+            "/usr/bin/hdiutil", ["attach", image.path, "-nobrowse", "-mountpoint", mount.path, "-plist"])
+        device = Self.wholeDisk(fromAttachPlist: attached)
         let resolved = try #require(realpath(mount.path, nil))
         defer { free(resolved) }
         mountPoint = URL(fileURLWithPath: String(cString: resolved))
@@ -38,7 +43,7 @@ final class TestVolume {
     }
 
     deinit {
-        try? Self.run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force", "-quiet"])
+        try? Self.run("/usr/bin/hdiutil", ["detach", device ?? mountPoint.path, "-force", "-quiet"])
         try? FileManager.default.removeItem(at: folder)
     }
 
@@ -73,6 +78,31 @@ final class TestVolume {
 
     func names(_ relative: String = "") throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: url(relative).path).sorted()
+    }
+
+    /// The shortest dev-entry hdiutil reports, which is the whole disk.
+    private static func wholeDisk(fromAttachPlist data: Data) -> String? {
+        let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        let entities = plist?["system-entities"] as? [[String: Any]] ?? []
+        return entities.compactMap { $0["dev-entry"] as? String }.min { $0.count < $1.count }
+    }
+
+    /// Runs a tool and returns what it printed.
+    static func output(_ tool: String, _ arguments: [String]) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw CocoaError(
+                .fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "\(tool) \(arguments.first ?? "") failed"])
+        }
+        return data
     }
 
     static func run(_ tool: String, _ arguments: [String]) throws {

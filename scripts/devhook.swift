@@ -1,5 +1,5 @@
 // Sends a request to a running Scope Dev build (see Scope/App/DevHooks.swift).
-// Usage: swift scripts/devhook.swift command:viewList [go:/Volumes/ScopeTest/names ...]
+// Usage: swift scripts/devhook.swift command:viewList [go:~/ScopeScratch ...]
 // Each argument is sent in order, half a second apart.
 import Foundation
 

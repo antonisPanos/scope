@@ -13,14 +13,6 @@ final class Sandbox {
     let trash: URL
     let engine: FileEngine
 
-    /// The test disk made by scripts/testdisk.sh. Tests that need a disk of
-    /// their own (such as Trash, which otherwise lands in the user's real
-    /// Trash) run only when it is mounted, and skip otherwise, as on CI.
-    static let testDisk = URL(fileURLWithPath: "/Volumes/ScopeTest")
-    static var testDiskMounted: Bool {
-        FileManager.default.fileExists(atPath: testDisk.appendingPathComponent("README.txt").path)
-    }
-
     /// A fresh folder in the system temporary folder, or inside `parent`.
     init(in parent: URL = FileManager.default.temporaryDirectory) throws {
         let base = parent.appendingPathComponent("ScopeEngineTests-" + UUID().uuidString)

@@ -152,4 +152,52 @@ import Testing
             try PathGuard.unrestricted.checkLocation(URL(fileURLWithPath: "/Users/../etc"))
         }
     }
+
+    // MARK: - Writes only under a scratch folder
+
+    @Test func scratchGuardReadsAnywhereButWritesOnlyInside() throws {
+        let scratch = PathGuard.writesOnlyUnder([allowed])
+        try sandbox.write("outside/a.txt", "a")
+        // Reading is allowed everywhere.
+        #expect(try scratch.checkTarget(outside.appendingPathComponent("a.txt")).path == outside.path + "/a.txt")
+        #expect(scratch.permits(URL(fileURLWithPath: "/")))
+        // Writing only inside the scratch folder, also for items not made yet.
+        let created = try scratch.checkWriteLocation(allowed.appendingPathComponent("new/b.txt"))
+        #expect(created.path == allowed.path + "/new/b.txt")
+        for url in [outside, outside.appendingPathComponent("a.txt"), sandbox.root, URL(fileURLWithPath: "/tmp/x")] {
+            #expect(throws: PathGuardViolation.self, "\(url.path)") { try scratch.checkWriteLocation(url) }
+            #expect(throws: PathGuardViolation.self, "\(url.path)") { try scratch.checkModifiable(url) }
+        }
+    }
+
+    @Test func scratchGuardRefusesASiblingThatSharesThePrefix() throws {
+        try sandbox.mkdir("allowed-not")
+        let scratch = PathGuard.writesOnlyUnder([allowed])
+        #expect(throws: PathGuardViolation.self) {
+            try scratch.checkWriteLocation(sandbox.url("allowed-not/x.txt"))
+        }
+    }
+
+    @Test func scratchGuardRefusesASymlinkThatLeadsOut() throws {
+        try sandbox.symlink("allowed/escape", to: outside.path)
+        let scratch = PathGuard.writesOnlyUnder([allowed])
+        // The link itself lives inside and may be trashed; writing through it may not.
+        let link = try scratch.checkModifiable(allowed.appendingPathComponent("escape"))
+        #expect(link.path == allowed.path + "/escape")
+        let violation = #expect(throws: PathGuardViolation.self) {
+            try scratch.checkWriteLocation(allowed.appendingPathComponent("escape/new.txt"))
+        }
+        #expect(violation?.reason == .outsideWritableFolders)
+    }
+
+    @Test func scratchFolderCanBeCreatedButNotMovedOrTrashed() throws {
+        let missing = sandbox.url("scratch")
+        let scratch = PathGuard.writesOnlyUnder([missing])
+        #expect(try scratch.checkWriteLocation(missing).path == missing.path)
+        try sandbox.mkdir("scratch")
+        let violation = #expect(throws: PathGuardViolation.self) { try scratch.checkModifiable(missing) }
+        #expect(violation?.reason == .protectedItem)
+        try sandbox.write("scratch/a.txt", "a")
+        #expect(try scratch.checkModifiable(missing.appendingPathComponent("a.txt")).path == missing.path + "/a.txt")
+    }
 }

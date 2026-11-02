@@ -1,5 +1,6 @@
 // The app's unit tests (ScopeTests/), hosted in Scope Dev: they run inside
-// the sandboxed development build, so its path guard and sandbox apply.
+// the development build, so its path guard applies (writes only in
+// ~/ScopeScratch). The tests themselves never write files.
 // Run them with `make app-test`. They need the macOS 27.2 SDK, so CI can't
 // run them yet.
 

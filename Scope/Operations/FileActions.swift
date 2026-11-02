@@ -104,16 +104,7 @@ extension BrowserWindowController {
 
     func mountSelection(readOnly: Bool = false) {
         guard let image = imageToMount else { return }
-        // Development builds mount inside the test disk the image is on, so the
-        // path guard lets Scope browse the mounted volume.
-        var mountPoint: URL?
-        if BuildIdentity.current.isDevelopment,
-            let disk = BuildIdentity.testDiskRoots.first(where: { image.path.hasPrefix($0.path + "/") })
-        {
-            let name = (image.lastPathComponent as NSString).deletingPathExtension
-            mountPoint = disk.appendingPathComponent("Mounted").appendingPathComponent(name)
-        }
-        startOperation(.mountImage(image, readOnly: readOnly, mountPoint: mountPoint))
+        startOperation(.mountImage(image, readOnly: readOnly, mountPoint: nil))
     }
 
     func undoLastOperation() {

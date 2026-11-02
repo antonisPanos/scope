@@ -58,8 +58,7 @@ public enum Volumes {
     }
 
     /// Ejects a volume and, for a disk image, detaches the image. The volume
-    /// must pass the path guard, so development builds can only eject the
-    /// test disks.
+    /// must pass the path guard.
     public static func eject(_ url: URL, pathGuard: PathGuard) async throws {
         let volume = try pathGuard.checkLocation(url)
         try await FileManager.default.unmountVolume(at: volume, options: [.allPartitionsAndEjectDisk, .withoutUI])
@@ -146,7 +145,7 @@ public enum Volumes {
     /// the volume's disk to the disk image device. For APFS this passes through
     /// the container to the image's physical disk. Current macOS records the
     /// image as "DiskImageURL"; older drivers used "image-path".
-    private static func diskImagePath(for url: URL, session: DASession) -> String? {
+    static func diskImagePath(for url: URL, session: DASession) -> String? {
         guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL) else { return nil }
         let media = DADiskCopyIOMedia(disk)
         guard media != 0 else { return nil }

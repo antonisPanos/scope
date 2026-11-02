@@ -11,9 +11,8 @@ extension FileEngine {
         diskImageExtensions.contains(url.pathExtension.lowercased())
     }
 
-    /// Mounts an image and returns where it appeared. `mountPoint` lets
-    /// development builds mount inside the test disk, where the path guard
-    /// lets them browse it.
+    /// Mounts an image and returns where it appeared: under /Volumes, or at
+    /// `mountPoint` when one is given (which must pass the write check).
     @discardableResult
     func mountImage(_ image: URL, readOnly: Bool, mountPoint: URL?, passphrase: String? = nil) async throws -> URL? {
         let imagePath = try pathGuard.checkLocation(image)

@@ -1,6 +1,6 @@
 # One entry point for everyday tasks. Run `make` or `make help` to list them.
 .DEFAULT_GOAL := help
-.PHONY: help setup hooks build build-all test app-test format lint testdisk install-dev devhook dmg release
+.PHONY: help setup hooks build build-all test app-test format lint install-dev devhook dmg release
 
 DERIVED := build/DerivedData
 XCB := xcodebuild -project Scope.xcodeproj -derivedDataPath $(DERIVED)
@@ -16,11 +16,11 @@ hooks: ## Install the git hooks from scripts/hooks
 	git config blame.ignoreRevsFile .git-blame-ignore-revs
 	@echo "Git hooks installed (scripts/hooks)."
 
-build: ## Build Scope Dev (sandboxed, test disks only)
+build: ## Build Scope Dev (changes files only in ~/ScopeScratch)
 	$(XCB) -scheme "Scope Dev" build -quiet
 
-build-all: ## Build all three schemes
-	for s in "Scope Dev" "Scope Dev (No Sandbox)" "Scope"; do $(XCB) -scheme "$$s" build -quiet || exit 1; done
+build-all: ## Build both schemes
+	for s in "Scope Dev" "Scope"; do $(XCB) -scheme "$$s" build -quiet || exit 1; done
 
 test: ## Run the engine tests
 	cd Packages/ScopeEngine && swift test --no-parallel
@@ -36,9 +36,6 @@ lint: ## Lint Swift files changed from main, like CI (needs: brew install swiftl
 	@files="$${FILES:-$$(git diff --name-only --diff-filter=ACMR origin/main -- '*.swift'; git ls-files --others --exclude-standard '*.swift')}"; \
 	if [ -z "$$files" ]; then echo "No Swift files to lint."; else \
 	  xcrun swift-format lint --strict --configuration .swift-format $$files && swiftlint lint --quiet $$files; fi
-
-testdisk: ## Create and mount the test disks (scripts/testdisk.sh create)
-	scripts/testdisk.sh create
 
 install-dev: ## Build Scope Dev and install it in ~/Applications
 	scripts/install-dev.sh

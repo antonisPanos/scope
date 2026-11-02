@@ -13,8 +13,8 @@ final class SidebarSelection {
 }
 
 /// The sidebar: Favorites (Recents, standard folders, your own), Locations,
-/// Disk Images with the file each came from, and Tags. Places outside the
-/// test disks show dimmed in development builds.
+/// Disk Images with the file each came from, and Tags. Places the path guard
+/// refuses show dimmed.
 struct SidebarView: View {
     let store: SidebarStore
     @Bindable var selection: SidebarSelection
@@ -81,7 +81,8 @@ struct SidebarView: View {
         .opacity(item.isEnabled ? 1 : 0.4)
         .help(
             item.isEnabled
-                ? (item.location.folderURL?.path ?? item.title) : "Outside the test disks, so Scope Dev won't open it"
+                ? (item.location.folderURL?.path ?? item.title)
+                : "\(BuildIdentity.current.appName) can't open this place"
         )
         .tag(item.id)
         .contextMenu {
