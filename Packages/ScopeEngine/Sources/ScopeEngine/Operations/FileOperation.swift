@@ -169,14 +169,27 @@ public enum UndoStep: Sendable, Hashable {
 }
 
 /// Collects undo steps while an operation runs, so even a cancelled or failed
-/// operation can undo the part it finished.
+/// operation can undo the part it finished. It also hears about every change
+/// the operation makes to a folder, undoable or not, for `onChange`.
 public final class UndoRecorder: Sendable {
     private let steps = Mutex<[UndoStep]>([])
+    private let onChange: (@Sendable (FolderItemsChanged) -> Void)?
 
-    public init() {}
+    /// `onChange` hears each change as it is made, on the worker's thread.
+    public init(onChange: (@Sendable (FolderItemsChanged) -> Void)? = nil) {
+        self.onChange = onChange
+    }
 
+    /// Records a step and announces the change it reverses.
     func add(_ step: UndoStep) {
         steps.withLock { $0.append(step) }
+        announce(FolderItemsChanged.changes(for: step))
+    }
+
+    /// Announces changes that have no undo step: undoing, deleting for good.
+    func announce(_ changes: [FolderItemsChanged]) {
+        guard let onChange else { return }
+        changes.forEach(onChange)
     }
 
     public var recorded: [UndoStep] {

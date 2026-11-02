@@ -47,6 +47,11 @@ extension FileEngine {
                     approved.formUnion(request.items.map(\.path))
                 }
                 try deletePermanently(original)
+                undo.announce([
+                    FolderItemsChanged(
+                        folder: original.deletingLastPathComponent().standardizedFileURL,
+                        removed: [original.lastPathComponent])
+                ])
             }
             control.update { $0.itemsDone += 1 }
         }

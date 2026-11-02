@@ -122,8 +122,11 @@ public struct FileEngine: Sendable {
                 source.deletingLastPathComponent().appendingPathComponent(newName))
             // A case-only rename on a case-insensitive disk finds the item itself at
             // the destination, so it must not use the exclusive rename.
-            let flags: UInt32 = Self.isSameItem(source.path, destination.path) ? 0 : UInt32(RENAME_EXCL)
-            guard renamex_np(source.path, destination.path, flags) == 0 else {
+            let renamed =
+                Self.isSameItem(source.path, destination.path)
+                ? renamex_np(source.path, destination.path, 0) == 0
+                : Self.renameExclusively(source.path, to: destination.path)
+            guard renamed else {
                 throw FileEngineError.posix("Rename", source.path)
             }
             return destination
@@ -148,7 +151,7 @@ public struct FileEngine: Sendable {
             guard !Self.isInside(target.path, source.path) else {
                 throw FileEngineError.cannotCopyIntoItself(source.path)
             }
-            guard renamex_np(source.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(source.path, to: target.path) else {
                 throw FileEngineError.posix("Move", source.path)
             }
         }
@@ -246,7 +249,7 @@ public struct FileEngine: Sendable {
             // A move verifies the copy here, while it still has its partial
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
-            guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
+            guard Self.renameExclusively(partial.path, to: target.path) else {
                 throw FileEngineError.posix("Copy", target.path)
             }
         } catch {
@@ -271,6 +274,28 @@ public struct FileEngine: Sendable {
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
             && name.utf8.count <= 255
+    }
+
+    /// Renames `source` to `target` only if nothing is there; false with
+    /// `errno` set otherwise. FAT and exFAT disks can't rename exclusively
+    /// (ENOTSUP), so there the name is first claimed with an exclusive
+    /// create, and the rename replaces only that empty placeholder.
+    static func renameExclusively(_ source: String, to target: String) -> Bool {
+        if renamex_np(source, target, UInt32(RENAME_EXCL)) == 0 { return true }
+        guard errno == ENOTSUP || errno == EINVAL, let info = lstatInfo(source) else { return false }
+        let isFolder = info.st_mode & S_IFMT == S_IFDIR
+        if isFolder {
+            guard mkdir(target, 0o700) == 0 else { return false }
+        } else {
+            let placeholder = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard placeholder >= 0 else { return false }
+            close(placeholder)
+        }
+        if Darwin.rename(source, target) == 0 { return true }
+        let failure = errno
+        _ = isFolder ? rmdir(target) : unlink(target)
+        errno = failure
+        return false
     }
 
     /// Asks the disk to write out a folder's entries (new names, renames).
