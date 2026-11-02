@@ -375,6 +375,13 @@ public struct FileEngine: Sendable {
         }
     }
 
+    /// The file flags a copy takes over. UF_COMPRESSED describes how the
+    /// original is stored, not the item: a copy is written uncompressed, and
+    /// marking it compressed would make its contents unreadable.
+    static func settableFlags(_ flags: UInt32) -> UInt32 {
+        flags & ~UInt32(UF_COMPRESSED)
+    }
+
     /// Whether an item carries an access control list.
     static func hasACL(_ path: String) -> Bool {
         guard let acl = acl_get_link_np(path, ACL_TYPE_EXTENDED) else { return false }
@@ -441,7 +448,7 @@ private struct CopyJob {
                 try copy(from: source + "/" + name, to: destination + "/" + name, relative: childRelative)
             }
             FileEngine.syncFolder(destination)
-            deferred.append((relative, source, true, info.st_flags, false))
+            deferred.append((relative, source, true, FileEngine.settableFlags(info.st_flags), false))
         case S_IFLNK:
             var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
             let length = readlink(source, &buffer, buffer.count - 1)
@@ -456,7 +463,8 @@ private struct CopyJob {
             // only once the copy is in place (otherwise a cancelled copy
             // couldn't be cleaned up).
             let hasACL = FileEngine.hasACL(source)
-            if info.st_flags != 0 || hasACL { deferred.append((relative, source, false, info.st_flags, hasACL)) }
+            let flags = FileEngine.settableFlags(info.st_flags)
+            if flags != 0 || hasACL { deferred.append((relative, source, false, flags, hasACL)) }
         default:
             // Sockets, pipes and device nodes are not copied.
             break
@@ -486,7 +494,12 @@ private struct CopyJob {
         defer { buffer.deallocate() }
         // A sparse file (VM disks, databases, disk image bands) has holes that
         // read as zeros. Only its data is copied, so the copy stays as small.
-        if Int64(info.st_blocks) * 512 < Int64(size) {
+        // A compressed file (much of /System and /Applications) also takes
+        // fewer blocks than its size, but its data lives in an attribute the
+        // kernel decompresses on read, and SEEK_DATA would see only holes: it
+        // is read straight through, and the copy is written uncompressed.
+        let isCompressed = info.st_flags & UInt32(UF_COMPRESSED) != 0
+        if !isCompressed, Int64(info.st_blocks) * 512 < Int64(size) {
             var offset: off_t = 0
             while offset < size {
                 let start = lseek(input, offset, SEEK_DATA)
