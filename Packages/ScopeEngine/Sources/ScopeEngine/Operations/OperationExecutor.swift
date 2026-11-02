@@ -72,8 +72,15 @@ extension FileEngine {
                     // Pasting a copy into its own folder makes "name copy", like Finder.
                     target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
                 } else {
-                    switch try await conflicts.resolve(Conflict(incoming: source, existing: target)) {
-                    case .skip:
+                    let conflict = Conflict(
+                        incoming: source, existing: target, incomingModified: Self.modified(source),
+                        existingModified: Self.modified(target))
+                    var choice = try await conflicts.resolve(conflict)
+                    if choice == .replaceIfOlder {
+                        choice = Self.isOlderFile(target, than: source) ? .replace : .skip
+                    }
+                    switch choice {
+                    case .skip, .replaceIfOlder:
                         control.update { $0.itemsDone += 1 }
                         continue
                     case .keepBoth:
@@ -302,6 +309,26 @@ extension FileEngine {
             }
             control.update { $0.itemsDone += 1 }
         }
+    }
+
+    // MARK: - Dates
+
+    /// When an item was last modified, without following a link.
+    static func modified(_ url: URL) -> Date? {
+        guard let info = lstatInfo(url.path) else { return nil }
+        let time = info.st_mtimespec
+        return Date(timeIntervalSince1970: TimeInterval(time.tv_sec) + TimeInterval(time.tv_nsec) / 1e9)
+    }
+
+    /// Whether `existing` and `incoming` are both files (not folders) and
+    /// `existing` was modified first, for "Replace if older".
+    static func isOlderFile(_ existing: URL, than incoming: URL) -> Bool {
+        guard let old = lstatInfo(existing.path), let new = lstatInfo(incoming.path),
+            old.st_mode & S_IFMT != S_IFDIR, new.st_mode & S_IFMT != S_IFDIR
+        else { return false }
+        let oldTime = (old.st_mtimespec.tv_sec, old.st_mtimespec.tv_nsec)
+        let newTime = (new.st_mtimespec.tv_sec, new.st_mtimespec.tv_nsec)
+        return oldTime < newTime
     }
 
     // MARK: - Names
