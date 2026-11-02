@@ -57,7 +57,12 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     func modelDidChange(_ change: BrowserModel.Change) {
         if change.contains(.location) { root.children = nil }
         if !change.isDisjoint(with: .anyItems) { reloadItems() }
+        if !change.isDisjoint(with: [.anyItems, .sort]) {
+            root.refreshNestedSettings(sort: model.sort, showHidden: AppSettings.shared.showHiddenFiles)
+        }
     }
+
+    func close() { root.children = nil }
 
     var selectedItems: [FileItem] {
         guard let paths = browser.selectionIndexPaths as [IndexPath]? else { return [] }
@@ -103,25 +108,34 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     }
 
     private func loadChildren(of node: ColumnNode) {
-        guard !node.isLoadingChildren, let item = node.item else { return }
+        guard node.childrenListing == nil, let item = node.item else { return }
         node.isLoadingChildren = true
-        let engine = model.engine
-        let sort = model.sort
-        let showHidden = AppSettings.shared.showHiddenFiles
-        Task { [weak self] in
-            let listed = (try? await engine.contentsOfDirectory(at: item.url)) ?? []
-            let sorted = await Task.detached { sort.sorted(showHidden ? listed : listed.filter { !$0.isHidden }) }.value
-            node.children = sorted.map { ColumnNode(item: $0) }
+        node.childrenListing = NestedFolderListing(url: item.url, model: model) { [weak self, weak node] sorted in
+            guard let self, let node else { return }
+            let selected = Set(self.selectedItems.map(\.url))
+            let old = Dictionary(
+                (node.children ?? []).compactMap { child in child.item.map { ($0.url, child) } },
+                uniquingKeysWith: { a, _ in a })
+            node.children = sorted.map { item in
+                if let kept = old[item.url], kept.item == item { return kept }
+                return ColumnNode(item: item)
+            }
             node.isLoadingChildren = false
-            self?.reloadColumn(showing: node)
+            self.model.metadataDidChange()
+            self.reloadColumn(showing: node, selecting: selected)
+            self.onSelectionChange?()
         }
     }
 
     /// Reloads the column that lists `node`'s children, if it is on screen.
-    private func reloadColumn(showing node: ColumnNode) {
+    private func reloadColumn(showing node: ColumnNode, selecting selected: Set<URL>) {
         for column in 0...max(0, browser.lastColumn) {
             if (browser.parentForItems(inColumn: column) as? ColumnNode) === node {
                 browser.reloadColumn(column)
+                let rows = (node.children ?? []).indices.filter {
+                    node.children?[$0].item.map { selected.contains($0.url) } ?? false
+                }
+                browser.selectRowIndexes(IndexSet(rows), inColumn: column)
                 return
             }
         }
@@ -129,6 +143,27 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     @objc private func selectionChanged() {
         onSelectionChange?()
+        Task { [weak self] in
+            await Task.yield()
+            self?.releaseHiddenColumns()
+        }
+    }
+
+    private func releaseHiddenColumns() {
+        let visible = Set(
+            (0...max(0, browser.lastColumn)).compactMap {
+                (browser.parentForItems(inColumn: $0) as? ColumnNode).map(ObjectIdentifier.init)
+            })
+        func prune(_ node: ColumnNode) {
+            guard node === root || visible.contains(ObjectIdentifier(node)) else {
+                node.childrenListing = nil
+                node.children = nil
+                node.isLoadingChildren = false
+                return
+            }
+            node.children?.forEach(prune)
+        }
+        prune(root)
     }
 
     @objc private func openClicked() {
@@ -168,6 +203,12 @@ final class ColumnNode {
     let item: FileItem?
     var children: [ColumnNode]?
     var isLoadingChildren = false
+    var childrenListing: NestedFolderListing?
+
+    func refreshNestedSettings(sort: FileSort, showHidden: Bool) {
+        childrenListing?.update(sort: sort, showHidden: showHidden)
+        children?.forEach { $0.refreshNestedSettings(sort: sort, showHidden: showHidden) }
+    }
 
     init(item: FileItem?) {
         self.item = item

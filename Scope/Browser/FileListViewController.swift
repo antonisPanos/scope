@@ -9,6 +9,12 @@ final class FileNode {
     /// Children of an expanded folder in the details view; nil until loaded.
     var children: [FileNode]?
     var isLoadingChildren = false
+    var childrenListing: NestedFolderListing?
+
+    func refreshNestedSettings(sort: FileSort, showHidden: Bool) {
+        childrenListing?.update(sort: sort, showHidden: showHidden)
+        children?.forEach { $0.refreshNestedSettings(sort: sort, showHidden: showHidden) }
+    }
 
     init(item: FileItem) {
         self.item = item
@@ -126,6 +132,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
 
     // MARK: - Updates from the model
 
+    func close() {
+        roots = []
+        nodesByURL = [:]
+    }
+
     func modelDidChange(_ change: BrowserModel.Change) {
         if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
             tagGeneration += 1
@@ -152,6 +163,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
                     forRowIndexes: IndexSet(integersIn: visible.location..<NSMaxRange(visible)),
                     columnIndexes: [column])
             }
+        }
+        if !change.isDisjoint(with: [.anyItems, .sort]) {
+            roots.forEach { $0.refreshNestedSettings(sort: model.sort, showHidden: AppSettings.shared.showHiddenFiles) }
         }
     }
 
@@ -213,6 +227,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             if node.item != item {
                 node.item = item
                 node.children = nil
+                node.childrenListing = nil
             }
             reused[item.url] = node
             return node
@@ -246,6 +261,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             let node = updated[index]
             node.item = items[index]
             node.children = nil
+            node.childrenListing = nil
             tagCache[node.item.url] = nil
             redrawn.append(node)
         }

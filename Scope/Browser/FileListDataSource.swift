@@ -21,19 +21,27 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
     }
 
     private func loadChildren(of node: FileNode) {
-        guard !node.isLoadingChildren else { return }
+        guard node.childrenListing == nil else { return }
         node.isLoadingChildren = true
-        let engine = model.engine
-        let url = node.item.url
-        let sort = model.sort
-        let showHidden = AppSettings.shared.showHiddenFiles
-        Task { [weak self] in
-            let listed = (try? await engine.contentsOfDirectory(at: url)) ?? []
-            let sorted = await Task.detached { sort.sorted(showHidden ? listed : listed.filter { !$0.isHidden }) }.value
-            node.children = sorted.map(FileNode.init)
+        node.childrenListing = NestedFolderListing(url: node.item.url, model: model) { [weak self, weak node] sorted in
+            guard let self, let node else { return }
+            let old = Dictionary((node.children ?? []).map { ($0.item.url, $0) }, uniquingKeysWith: { a, _ in a })
+            node.children = sorted.map { item in
+                if let kept = old[item.url], kept.item == item { return kept }
+                return FileNode(item: item)
+            }
             node.isLoadingChildren = false
-            self?.outlineView.reloadItem(node, reloadChildren: true)
+            self.model.metadataDidChange()
+            self.outlineView.reloadItem(node, reloadChildren: true)
+            self.onSelectionChange?()
         }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? FileNode else { return }
+        node.childrenListing = nil
+        node.children = nil
+        node.isLoadingChildren = false
     }
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
@@ -77,7 +85,6 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         guard let descriptor = outlineView.sortDescriptors.first, let key = descriptor.key,
             let sortKey = FileSort.Key(rawValue: key)
         else { return }
-        for node in nodesByURL.values { node.children = nil }
         model.sort = FileSort(key: sortKey, ascending: descriptor.ascending)
     }
 
