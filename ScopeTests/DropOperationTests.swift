@@ -40,6 +40,14 @@ struct DropOperationTests {
     @Test func refusesTheFolderTheItemsAreAlreadyIn() {
         #expect(operation(["/Volumes/A/target/x.txt", "/Volumes/A/target/y.txt"], into: "/Volumes/A/target") == [])
         #expect(operation([], into: "/Volumes/A/target") == [])
+        // The same folder spelled with a trailing slash, as folder URLs often are.
+        let items = [url("/Volumes/A/target/x.txt")]
+        let slashed = URL(fileURLWithPath: "/Volumes/A/target/", isDirectory: true)
+        let intoSlashed = FileViewKeys.dropOperation(items, into: slashed, optionHeld: false, mounts: mounts)
+        let plain = url("/Volumes/A/target")
+        let onItself = FileViewKeys.dropOperation([slashed], into: plain, optionHeld: false, mounts: mounts)
+        #expect(intoSlashed == [])
+        #expect(onItself == [])
     }
 
     @Test func theRealMountTableTellsDisksApart() {

@@ -89,11 +89,15 @@ enum FileViewKeys {
     static func dropOperation(
         _ urls: [URL], into folder: URL, optionHeld: Bool, mounts: MountTable
     ) -> NSDragOperation {
-        guard !urls.isEmpty, !urls.contains(where: { $0 == folder || folder.path.hasPrefix($0.path + "/") }) else {
+        // Paths, not URLs: a folder URL may or may not end in a slash, and
+        // URLs that differ only in that compare unequal.
+        let target = folder.standardizedFileURL.path
+        let paths = urls.map { $0.standardizedFileURL.path }
+        guard !paths.isEmpty, !paths.contains(where: { $0 == target || target.hasPrefix($0 + "/") }) else {
             return []
         }
         // Dropping items on the folder they're already in does nothing.
-        if urls.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL }) {
+        if paths.allSatisfy({ ($0 as NSString).deletingLastPathComponent == target }) {
             return []
         }
         if optionHeld { return .copy }
