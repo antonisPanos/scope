@@ -15,6 +15,7 @@ final class PreviewPaneController: NSViewController {
     private let placeholder = NSTextField(labelWithString: "")
     private var loadTask: Task<Void, Never>?
     private var shownURL: URL?
+    private var generation = 0
 
     init(engine: FileEngine) {
         self.engine = engine
@@ -87,6 +88,8 @@ final class PreviewPaneController: NSViewController {
 
     /// Shows the single selected item, or a summary when none or several are selected.
     func show(_ item: FileItem?, count: Int) {
+        generation += 1
+        let generation = generation
         guard let item else {
             loadTask?.cancel()
             shownURL = nil
@@ -95,7 +98,6 @@ final class PreviewPaneController: NSViewController {
             placeholder.stringValue = count == 0 ? "No selection" : "\(count) items selected"
             return
         }
-        guard item.url != shownURL else { return }
         shownURL = item.url
         setContentHidden(false)
         nameLabel.stringValue = item.name
@@ -111,12 +113,13 @@ final class PreviewPaneController: NSViewController {
             // Wait a moment so arrowing through a folder doesn't read every file.
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled, let details = try? await engine.details(for: url) else { return }
-            guard let self, self.shownURL == url else { return }
+            guard let self, self.generation == generation, !Task.isCancelled else { return }
             self.fill(rows: self.detailRows(details))
         }
     }
 
     func close() {
+        generation += 1
         loadTask?.cancel()
         preview.close()
     }

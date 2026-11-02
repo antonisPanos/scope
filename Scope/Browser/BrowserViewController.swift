@@ -320,7 +320,7 @@ final class BrowserViewController: NSViewController {
             message.stringValue = Self.emptyText(for: model.location)
         }
         fileView.modelDidChange(change)
-        if !change.isDisjoint(with: [.anyItems, .location]) { selectionDidChange() }
+        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) { selectionDidChange() }
         if !change.isDisjoint(with: [.anyItems, .location, .status]) { updateSearchBar() }
         if change.contains(.status) { updateStatus() }
     }
