@@ -49,7 +49,7 @@ public actor OperationCenter {
         let id = UUID()
         let operation: FileOperation
         let control = OperationControl()
-        let undo = UndoRecorder()
+        let undo: UndoRecorder
         let disk: dev_t
         let changedPaths: [String]
         let itemPaths: [String]
@@ -69,9 +69,10 @@ public actor OperationCenter {
             return false
         }
 
-        init(operation: FileOperation, disk: dev_t) {
+        init(operation: FileOperation, disk: dev_t, announcements: OperationAnnouncements) {
             self.operation = operation
             self.disk = disk
+            undo = UndoRecorder { change in announcements.announce(change) }
             changedPaths = operation.changedItems.map(OperationCenter.lockKey)
             itemPaths = (operation.touchedItems + operation.changedItems).map(OperationCenter.lockKey)
             destinationPaths = [operation.destinationFolder].compactMap { $0 }.map(OperationCenter.lockKey)
@@ -95,6 +96,9 @@ public actor OperationCenter {
     }
 
     private let engine: FileEngine
+    /// Each item an operation creates, moves or trashes, as soon as it does,
+    /// so open views can show it without waiting for the folder watcher.
+    public nonisolated let announcements = OperationAnnouncements()
     private let resolveConflict: ConflictResolver
     private let confirmPermanentDeletion: PermanentDeletionConfirmer
     private var entries: [Entry] = []
@@ -125,7 +129,7 @@ public actor OperationCenter {
         }) {
             return same.id
         }
-        let entry = Entry(operation: operation, disk: Self.disk(for: operation))
+        let entry = Entry(operation: operation, disk: Self.disk(for: operation), announcements: announcements)
         let blockers = entries.filter { $0.isRunningOrStopping && entry.collides(with: $0) }
         if !blockers.isEmpty {
             let names = (entry.operation.usedItems + entry.operation.changedItems).filter { item in
