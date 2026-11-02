@@ -195,6 +195,12 @@ public final class UndoRecorder: Sendable {
     public var recorded: [UndoStep] {
         steps.withLock { $0 }
     }
+
+    /// Undo applies the newest steps first. Retire only steps it completed,
+    /// so retrying a partial undo cannot repeat a successful step.
+    func consumeLast(_ count: Int) {
+        steps.withLock { $0.removeLast(min(count, $0.count)) }
+    }
 }
 
 /// Pause and progress for one running operation, shared between the worker
