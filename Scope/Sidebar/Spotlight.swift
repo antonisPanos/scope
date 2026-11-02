@@ -11,7 +11,7 @@ final class SpotlightQuery {
     private let onResults: ([URL]) -> Void
 
     init(
-        predicate: NSPredicate, scopes: [Any], sortByLastUsed: Bool = false, limit: Int = 500,
+        predicate: NSPredicate, scopes: [Any], sortByLastUsed: Bool = false, limit: Int? = nil,
         onResults: @escaping ([URL]) -> Void
     ) {
         self.onResults = onResults
@@ -36,10 +36,10 @@ final class SpotlightQuery {
         observers = []
     }
 
-    private func publish(limit: Int) {
+    private func publish(limit: Int?) {
         query.disableUpdates()
         defer { query.enableUpdates() }
-        let count = min(query.resultCount, limit)
+        let count = limit.map { min(query.resultCount, $0) } ?? query.resultCount
         var urls: [URL] = []
         urls.reserveCapacity(count)
         for index in 0..<count {
@@ -61,7 +61,8 @@ final class SpotlightQuery {
             format: "%K > %@ AND %K != 'public.folder'",
             NSMetadataItemLastUsedDateKey, cutoff as NSDate,
             NSMetadataItemContentTypeKey)
-        return SpotlightQuery(predicate: predicate, scopes: scopes, sortByLastUsed: true, onResults: onResults)
+        return SpotlightQuery(
+            predicate: predicate, scopes: scopes, sortByLastUsed: true, limit: 500, onResults: onResults)
     }
 
     /// Files whose contents (or name) contain `text`, from the Spotlight index,
@@ -70,13 +71,13 @@ final class SpotlightQuery {
         let predicate = NSPredicate(
             format: "(%K CONTAINS[cd] %@) OR (%K CONTAINS[cd] %@)",
             "kMDItemTextContent", text, NSMetadataItemDisplayNameKey, text)
-        return SpotlightQuery(predicate: predicate, scopes: [folder], limit: 5000, onResults: onResults)
+        return SpotlightQuery(predicate: predicate, scopes: [folder], onResults: onResults)
     }
 
     /// Items carrying one Finder tag.
     static func tagged(_ tag: String, onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {
         let predicate = NSPredicate(format: "kMDItemUserTags == %@", tag)
-        return SpotlightQuery(predicate: predicate, scopes: scopes, limit: 5000, onResults: onResults)
+        return SpotlightQuery(predicate: predicate, scopes: scopes, onResults: onResults)
     }
 }
 
@@ -111,7 +112,7 @@ final class TagCatalog {
         query.disableUpdates()
         defer { query.enableUpdates() }
         var found = Set<String>()
-        for index in 0..<min(query.resultCount, 5000) {
+        for index in 0..<query.resultCount {
             if let item = query.result(at: index) as? NSMetadataItem,
                 let tags = item.value(forAttribute: Self.attribute) as? [String]
             {
