@@ -69,7 +69,11 @@ final class BrowserModel {
     private var backStack: [Location] = []
     private var forwardStack: [Location] = []
     private var loadTask: Task<Void, Never>?
-    private var watchTask: Task<Void, Never>?
+    /// The shared listing of the folder on screen.
+    private var subscription: FolderStore.Subscription?
+    /// A pending re-sort while a listing arrives, and when the last one ran.
+    private var listingSort: Task<Void, Never>?
+    private var lastListingSort: ContinuousClock.Instant?
     private var spotlight: SpotlightQuery?
     private var settingsObserver: NSObjectProtocol?
     private var generation = 0
@@ -78,11 +82,6 @@ final class BrowserModel {
     private var addedBy: [(operation: UUID, urls: [URL])] = []
     /// The operation whose new items get selected as they show up.
     private var selectingOperation: UUID?
-    /// True while a folder's listing is still arriving in batches.
-    private var isListing = false
-    /// Set when the watcher changed the items before the listing finished,
-    /// so later batches merge by name instead of adding duplicates.
-    private var changedWhileListing = false
 
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Browser")
 
@@ -106,7 +105,7 @@ final class BrowserModel {
     /// Stops watching and querying; call when the tab closes so it releases everything it held.
     func close() {
         loadTask?.cancel()
-        watchTask?.cancel()
+        unsubscribe()
         spotlight?.stop()
         spotlight = nil
         if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
@@ -164,8 +163,14 @@ final class BrowserModel {
         navigate(to: .folder(url.deletingLastPathComponent()), select: url)
     }
 
+    /// Reads the location again; a folder is read again from scratch for
+    /// every tab showing it.
     func reload() {
-        load()
+        if case .folder = location, let folder = subscription?.folder {
+            FolderStore.shared.reload(folder)
+        } else {
+            load()
+        }
     }
 
     // MARK: - Loading
@@ -174,14 +179,13 @@ final class BrowserModel {
         generation += 1
         let generation = generation
         loadTask?.cancel()
-        watchTask?.cancel()
+        unsubscribe()
         spotlight?.stop()
         spotlight = nil
         state = .loading
         addedBy = []
         selectingOperation = nil
-        isListing = false
-        changedWhileListing = false
+        lastListingSort = nil
         allItems = []
         items = []
         availableCapacity = nil
@@ -189,8 +193,7 @@ final class BrowserModel {
 
         switch location {
         case .folder(let url):
-            loadTask = Task { await loadFolder(url, generation: generation) }
-            startWatching(url, generation: generation)
+            openFolder(url, generation: generation)
         case .recents:
             spotlight = SpotlightQuery.recents { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
         case .tag(let tag):
@@ -208,51 +211,85 @@ final class BrowserModel {
         }
     }
 
-    /// Shows a folder's items as they are read: the first batch at once,
-    /// then the rest re-sorted at most every quarter second, so a big folder
-    /// or a slow disk shows something straight away.
-    private func loadFolder(_ url: URL, generation: Int) async {
-        isListing = true
-        defer { if generation == self.generation { isListing = false } }
-        do {
-            var lastSort: ContinuousClock.Instant?
-            for try await batch in try engine.listing(of: url) {
+    /// Shows a folder from its shared listing: at once when another tab (or
+    /// a recent visit) already has it, otherwise as it is read, the first
+    /// batch at once and the rest re-sorted at most every quarter second.
+    private func openFolder(_ url: URL, generation: Int) {
+        let store = FolderStore.shared
+        let subscription = store.open(url, engine: engine, announcements: announcements) { [weak self] event in
+            self?.folderChanged(event, in: url, generation: generation)
+        }
+        self.subscription = subscription
+        let folder = subscription.folder
+        if folder.isLoaded {
+            folderChanged(.loaded, in: url, generation: generation)
+        } else if !folder.items.isEmpty {
+            showListing(generation: generation)
+        }
+    }
+
+    private func unsubscribe() {
+        if let subscription { FolderStore.shared.close(subscription) }
+        subscription = nil
+        listingSort?.cancel()
+        listingSort = nil
+    }
+
+    private func folderChanged(_ event: FolderStore.Event, in url: URL, generation: Int) {
+        guard generation == self.generation, let folder = subscription?.folder else { return }
+        switch event {
+        case .listed:
+            showListing(generation: generation)
+        case .loaded:
+            loadTask = Task {
+                allItems = folder.items
+                await applyFilterAndSort()
                 guard generation == self.generation else { return }
-                if changedWhileListing {
-                    let names = Set(batch.map(\.url.lastPathComponent))
-                    allItems = FolderListing.updating(allItems, names: names, with: batch)
-                } else {
-                    allItems += batch
+                if state != .loaded {
+                    state = .loaded
+                    onChange?(.state)
                 }
-                if lastSort.map({ ContinuousClock.now - $0 > .milliseconds(250) }) ?? true {
-                    lastSort = .now
-                    await applyFilterAndSort()
-                    guard generation == self.generation else { return }
-                    // Shown as soon as there is something to show; an empty
-                    // first batch (all hidden) would flash "empty folder".
-                    if state == .loading, !items.isEmpty {
-                        state = .loaded
-                        onChange?(.state)
-                    }
-                }
+                await loadCapacity(url, generation: generation)
             }
+        case .updated(let added, let operation):
+            allItems = folder.items
+            if let operation, !added.isEmpty {
+                noteAdded(added.map { url.appendingPathComponent($0) }, by: operation)
+            }
+            Task { await applyFilterAndSort(inPlace: true) }
+        case .failed(let message):
+            allItems = []
+            items = []
+            state = .failed(message)
+            onChange?([.items, .state, .status])
+        case .reset:
+            allItems = []
+            items = []
+            state = .loading
+            lastListingSort = nil
+            onChange?([.items, .state, .status])
+        }
+    }
+
+    /// Re-sorts the listing so far, at most every quarter second.
+    private func showListing(generation: Int) {
+        guard listingSort == nil else { return }
+        let wait = lastListingSort.map { Duration.milliseconds(250) - (ContinuousClock.now - $0) } ?? .zero
+        listingSort = Task {
+            if wait > .zero { try? await Task.sleep(for: wait) }
             guard generation == self.generation else { return }
+            listingSort = nil
+            guard let folder = subscription?.folder, !folder.isLoaded else { return }
+            lastListingSort = .now
+            allItems = folder.items
             await applyFilterAndSort()
             guard generation == self.generation else { return }
-            if state != .loaded {
+            // Shown as soon as there is something to show; an empty first
+            // batch (all hidden) would flash "empty folder".
+            if state == .loading, !items.isEmpty {
                 state = .loaded
                 onChange?(.state)
             }
-            await loadCapacity(url, generation: generation)
-        } catch is CancellationError {
-        } catch {
-            guard generation == self.generation else { return }
-            Self.logger.error(
-                "Listing \(url.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            let message = await Task.detached { Self.describe(error, at: url) }.value
-            guard generation == self.generation else { return }
-            state = .failed(message)
-            onChange?(.state)
         }
     }
 
@@ -323,74 +360,6 @@ final class BrowserModel {
         guard generation == self.generation else { return }
         availableCapacity = capacity ?? nil
         onChange?(.status)
-    }
-
-    /// One change to the folder on screen: from the watcher, or announced
-    /// by an operation as it made it (with what it added, and which one).
-    private struct FolderUpdate: Sendable {
-        var change: FolderChange
-        var added: Set<String> = []
-        var operation: UUID?
-    }
-
-    /// Follows the folder as it changes, without clearing what is on screen
-    /// in between: only the children that changed are read again, and the
-    /// views update just those rows. Operations announce their changes at
-    /// once; the watcher catches everything else (other apps, other disks),
-    /// and re-reading a change already shown finds nothing new.
-    private func startWatching(_ url: URL, generation: Int) {
-        let (updates, continuation) = AsyncStream.makeStream(of: FolderUpdate.self)
-        var feeds: [@Sendable () -> Void] = []
-        if let events = try? FolderWatcher.events(in: url, pathGuard: engine.pathGuard) {
-            let feed = Task {
-                for await change in events { continuation.yield(FolderUpdate(change: change)) }
-            }
-            feeds.append { feed.cancel() }
-        }
-        if let announcements {
-            let token = announcements.observe { change in
-                // On the operation's worker thread, so resolving links here
-                // keeps the disk off the main thread.
-                let folder = change.folder.resolvingSymlinksInPath().path
-                guard folder == url.resolvingSymlinksInPath().path else { return }
-                continuation.yield(
-                    FolderUpdate(change: .children(change.names), added: change.added, operation: change.operation))
-            }
-            feeds.append { announcements.stop(token) }
-        }
-        guard !feeds.isEmpty else { return }
-        continuation.onTermination = { [feeds] _ in feeds.forEach { $0() } }
-        watchTask = Task { [weak self] in
-            defer { continuation.finish() }
-            for await update in updates {
-                guard let self, generation == self.generation else { return }
-                if self.isListing { self.changedWhileListing = true }
-                do {
-                    switch update.change {
-                    case .children(let names):
-                        let fresh = try await self.engine.children(named: names, in: url)
-                        guard generation == self.generation else { return }
-                        self.allItems = FolderListing.updating(self.allItems, names: names, with: fresh)
-                    case .everything:
-                        let listed = try await self.engine.contentsOfDirectory(at: url)
-                        guard generation == self.generation else { return }
-                        self.allItems = listed
-                    }
-                    if let operation = update.operation, !update.added.isEmpty {
-                        self.noteAdded(update.added.map { url.appendingPathComponent($0) }, by: operation)
-                    }
-                    await self.applyFilterAndSort(inPlace: true)
-                } catch {
-                    // The folder went away: deleted, or its disk was ejected.
-                    let message = await Task.detached { Self.describe(error, at: url) }.value
-                    guard generation == self.generation else { return }
-                    self.allItems = []
-                    self.items = []
-                    self.state = .failed(message)
-                    self.onChange?([.items, .state, .status])
-                }
-            }
-        }
     }
 
     // MARK: - Selecting what an operation added
