@@ -44,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stays in the Dock and quits once they finish (a Dock click brings a
     /// window back and cancels that).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // A UI test may close its last temporary window while other tests run.
+        guard !Self.isHostingTests else { return false }
         let operations = OperationsController.shared
         guard operations.active.isEmpty else {
             operations.quitWhenIdle = true

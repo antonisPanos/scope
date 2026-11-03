@@ -30,18 +30,7 @@ extension BrowserWindowController: NSToolbarDelegate {
     ) -> NSToolbarItem? {
         switch identifier {
         case Self.navigationItem:
-            let group = NSToolbarItemGroup(
-                itemIdentifier: identifier,
-                images: [
-                    NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")!,
-                    NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!,
-                ],
-                selectionMode: .momentary, labels: ["Back", "Forward"], target: self,
-                action: #selector(navigationClicked(_:)))
-            group.label = "Back/Forward"
-            group.subitems[0].toolTip = "Back (⌘[)"
-            group.subitems[1].toolTip = "Forward (⌘])"
-            group.isNavigational = true
+            let group = Self.makeNavigationGroup(target: self, action: #selector(navigationClicked(_:)))
             navigationGroup = group
             updateToolbar()
             return group
@@ -115,6 +104,25 @@ extension BrowserWindowController: NSToolbarDelegate {
         default:
             return nil
         }
+    }
+
+    /// The tab's history controls these segments. AppKit's shared-action
+    /// validation would otherwise re-enable both after each window update.
+    static func makeNavigationGroup(target: AnyObject, action: Selector) -> NSToolbarItemGroup {
+        let group = NSToolbarItemGroup(
+            itemIdentifier: Self.navigationItem,
+            images: [
+                NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")!,
+                NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!,
+            ],
+            selectionMode: .momentary, labels: ["Back", "Forward"], target: target, action: action)
+        group.label = "Back/Forward"
+        group.subitems[0].toolTip = "Back (⌘[)"
+        group.subitems[1].toolTip = "Forward (⌘])"
+        group.isNavigational = true
+        group.autovalidates = false
+        group.subitems.forEach { $0.autovalidates = false }
+        return group
     }
 
     @objc private func navigationClicked(_ sender: NSToolbarItemGroup) {
