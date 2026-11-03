@@ -70,11 +70,15 @@ import Testing
         #expect(FileEngine.fittingName("photo", " copy", extension: ".jpg") == "photo copy.jpg")
     }
 
+    /// One 249-byte character: 36 emoji joined by zero-width joiners. (APFS
+    /// refuses long runs of combining marks, so those can't be used.)
+    static let bigCharacter = Array(repeating: "\u{1F468}", count: 36).joined(separator: "\u{200D}")
+
     /// The base can't shrink enough: the extension, or one large composed
     /// character, takes the budget (#161). Each name is really created.
     @Test(arguments: [
         "a." + String(repeating: "e", count: 253),  // 255 bytes, almost all extension
-        "x" + String(repeating: "\u{301}", count: 124) + ".txt",  // one 249-byte character
+        CopyNameAndTypeTests.bigCharacter + ".txt",  // one 249-byte character
     ])
     func generatedNamesFitWhenTheBaseCantShrink(name: String) throws {
         #expect(storedLength(name) <= FileEngine.maxNameBytes)
@@ -97,7 +101,8 @@ import Testing
         let copy = FileEngine.fittingName("a", " copy", extension: longExtension)
         #expect(copy.utf8.count == FileEngine.maxNameBytes && copy.hasPrefix("a.eee") && copy.hasSuffix("e copy"))
         // An indivisible 249-byte character keeps its place while it fits…
-        let big = "x" + String(repeating: "\u{301}", count: 124)
+        let big = Self.bigCharacter
+        #expect(big.count == 1 && big.utf8.count == 249)
         #expect(FileEngine.fittingName(big, " 2", extension: ".txt") == big + " 2.txt")
         // …drops the extension and the dot next…
         #expect(FileEngine.fittingName(big, " copy", extension: ".txt") == big + " copy")
