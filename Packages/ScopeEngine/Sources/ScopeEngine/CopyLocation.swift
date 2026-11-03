@@ -158,18 +158,25 @@ struct CopyLocation {
     }
 
     func renameExclusively(to name: String, isDirectory: Bool) -> Bool {
-        if renameatx_np(parent.raw, self.name, parent.raw, name, UInt32(RENAME_EXCL)) == 0 { return true }
+        renameExclusively(into: parent, as: name, isDirectory: isDirectory)
+    }
+
+    /// Moves this item into `folder` as `name`, only if nothing has that name.
+    /// FAT and exFAT can't rename exclusively, so there the name is first
+    /// claimed with an exclusive create, and only that placeholder is replaced.
+    func renameExclusively(into folder: CopyDescriptor, as name: String, isDirectory: Bool) -> Bool {
+        if renameatx_np(parent.raw, self.name, folder.raw, name, UInt32(RENAME_EXCL)) == 0 { return true }
         guard errno == ENOTSUP || errno == EINVAL else { return false }
         if isDirectory {
-            guard mkdirat(parent.raw, name, 0o700) == 0 else { return false }
+            guard mkdirat(folder.raw, name, 0o700) == 0 else { return false }
         } else {
-            let placeholder = openat(parent.raw, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            let placeholder = openat(folder.raw, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
             guard placeholder >= 0 else { return false }
             close(placeholder)
         }
-        if renameat(parent.raw, self.name, parent.raw, name) == 0 { return true }
+        if renameat(parent.raw, self.name, folder.raw, name) == 0 { return true }
         let failure = errno
-        _ = unlinkat(parent.raw, name, isDirectory ? AT_REMOVEDIR : 0)
+        _ = unlinkat(folder.raw, name, isDirectory ? AT_REMOVEDIR : 0)
         errno = failure
         return false
     }
