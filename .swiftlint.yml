@@ -69,7 +69,7 @@ nesting:
   type_level: 3
 
 custom_rules:
-  # CLAUDE.md: all file system access goes through FileEngine in the engine package.
+  # AGENTS.md: all file system access goes through FileEngine in the engine package.
   file_manager_writes_outside_engine:
     name: File changes go through FileEngine
     regex: 'FileManager\.default\.(removeItem|moveItem|copyItem|createDirectory|createFile|trashItem|replaceItem|linkItem|createSymbolicLink|setAttributes)'

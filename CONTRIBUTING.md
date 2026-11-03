@@ -5,17 +5,36 @@ This guide covers setting up, the safety rules, and how changes reach `main`.
 
 ## Setup
 
-You need macOS 27.2 and Xcode 27.
+The app requires **macOS 27.2 or later**, **Xcode 27.2** (or a compatible newer
+Xcode), and the **macOS 27.2 SDK or newer**. The standalone engine requires
+macOS 15 or later and a Swift 6 toolchain.
 
 ```sh
 git clone git@github.com:antonisPanos/scope.git
 cd scope
-make setup      # git hooks, and Config/Local.xcconfig for your signing team
-make build      # builds Scope Dev
-make test       # engine tests
+make hooks      # commit-message hook and blame configuration
+make build      # Scope Dev; ad-hoc signed without Config/Local.xcconfig
+make test       # engine suites, one at a time
+make app-test   # app tests hosted in Scope Dev
 ```
 
-Run `make` to see every target.
+Run `make` to see every target. Launch the result with:
+
+```sh
+open "build/DerivedData/Build/Products/Debug/Scope Dev.app"
+```
+
+A paid Apple account is not needed for local ad-hoc builds. For a stable local
+Apple Development identity, run `make setup`, then replace `YOURTEAMID` in the
+created, git-ignored `Config/Local.xcconfig` with your own team ID. Do that before
+building: the placeholder is not a valid signing configuration. Keep credentials
+and local team settings out of commits. To override an existing local signing
+configuration for one build:
+
+```sh
+xcodebuild -project Scope.xcodeproj -scheme "Scope Dev" \
+  -derivedDataPath build/DerivedData CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
+```
 
 ## Safety first
 
@@ -28,16 +47,22 @@ Scope moves and deletes files, so development never changes real ones.
 - Engine tests work in temporary folders and throwaway disk images (`TestVolume`), never
   in your home folder or your Trash.
 - All file access goes through `FileEngine` in `Packages/ScopeEngine`, and every
-  path passes `PathGuard` first. Deletes always go to the Trash (on a disk with
-  no Trash, only after the user confirms the items by name).
+  path passes `PathGuard` first. Writes use `checkWriteLocation`. Move to Trash
+  uses the Trash when available. Both a no-Trash fallback and Delete Immediately
+  require confirmation for each disk, naming every item, with Cancel as default.
+  Permanent deletion cannot be undone.
 
-`CLAUDE.md` lists the full set of rules; they apply to everyone, not only Claude.
+[AGENTS.md](AGENTS.md) is the canonical project instruction file. Its safety
+rules apply to everyone. Do not create a CodeGraph index automatically; consult
+it first for code discovery only when `.codegraph/` already exists.
 
 ## Branches
 
 `main` is always buildable. Every change goes through a short-lived branch and a pull request.
 
-- Branch from the latest `main`: `feat/search-date-filter`, `fix/cancel-hang`, `docs/readme`.
+- Fetch `origin` and branch from the latest `origin/main`. Agent-created branches
+  use `codex/`, for example `codex/search-date-filter` or `codex/docs-refresh`.
+  Never commit directly to `main`.
 - Keep a branch to one change, and open the PR early.
 - PRs are **squash-merged**, so the PR title becomes the one commit on `main`.
 - Releases are tags on `main` (`v0.2.0`); there are no release branches.
@@ -83,5 +108,15 @@ CI checks the PR title.
 ## Pull requests
 
 - Fill in the template: what changed and how you tested it.
-- CI must be green: engine tests, and the app build once GitHub's runners have the macOS 27.2 SDK.
-- Attach screenshots for anything visible. Take them in Scope Dev, in `~/ScopeScratch` or a folder with nothing private in it.
+- CI checks engine tests normally and under Thread Sanitizer, the conventional PR
+  title, and formatting/lint for changed Swift files. The app job builds both
+  schemes and runs app tests only when its runner has the macOS 27.2 SDK; a green
+  skipped build is not app validation. Build and test locally for app changes.
+- Attach screenshots for anything visible. Use Scope Dev and disposable demo
+  content. File-changing UI QA stays under `~/ScopeScratch`. Inspect images for
+  personal paths and files before committing; see [screenshot provenance](docs/images/README.md).
+- Use `make format` and `make lint` for Swift changes (`brew install swiftlint`
+  provides SwiftLint). Documentation-only changes need link and render checks.
+- Push the review branch and open a PR into `main`. Clean up only your own local
+  demo fixtures, builds, services and temporary worktrees/branches once safely
+  pushed; retain documentation assets and the remote PR branch.
