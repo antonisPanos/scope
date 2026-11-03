@@ -188,6 +188,17 @@ public struct PathGuard: Sendable {
         return false
     }
 
+    /// Whether an item at `url` may be changed, as `checkWriteLocation` would
+    /// decide (or for the link's target, with `followFinalSymlink`), without
+    /// logging a refusal. For what the UI offers.
+    public func permitsWrite(_ url: URL, followFinalSymlink: Bool = false) -> Bool {
+        guard allowsWrites, case .success(let resolved) = evaluate(url, followFinalSymlink: followFinalSymlink) else {
+            return false
+        }
+        guard let writeRoots else { return true }
+        return Self.isInside(resolved.path, anyOf: writeRoots)
+    }
+
     private func check(_ url: URL, followFinalSymlink: Bool) throws(PathGuardViolation) -> URL {
         switch evaluate(url, followFinalSymlink: followFinalSymlink) {
         case .success(let resolved): return resolved

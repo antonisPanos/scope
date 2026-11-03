@@ -21,6 +21,8 @@ extension BrowserWindowController {
                 // Finder. Handing them to Archive Utility put them wherever its
                 // settings said (often Downloads).
                 startOperation(.extract(item.url))
+            } else if FileEngine.isDiskImage(item.url) {
+                openDiskImage(item.url)
             } else {
                 openFile(item.url)
             }
@@ -55,6 +57,21 @@ extension BrowserWindowController {
                 openFolder(target, inNewTab: inNewTab)
             } else {
                 openFile(target)
+            }
+        }
+    }
+
+    /// A disk image opens in the system's DiskImageMounter, which mounts it
+    /// writable. Where the path guard doesn't let Scope change the image
+    /// (Scope Dev outside its scratch folder), Scope mounts it read-only itself.
+    private func openDiskImage(_ url: URL) {
+        let pathGuard = model.engine.pathGuard
+        Task { [weak self] in
+            let writable = await Task.detached { pathGuard.permitsWrite(url, followFinalSymlink: true) }.value
+            if writable {
+                self?.openFile(url)
+            } else {
+                self?.startOperation(.mountImage(url, readOnly: true, mountPoint: nil))
             }
         }
     }

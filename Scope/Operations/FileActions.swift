@@ -110,9 +110,18 @@ extension BrowserWindowController {
         selectedItems.count == 1 && FileEngine.isDiskImage(selectedItems[0].url) ? selectedItems[0].url : nil
     }
 
+    /// Mounts the selected image. Where the path guard doesn't let Scope
+    /// change the image (Scope Dev outside its scratch folder), it is mounted
+    /// read-only: a writable mount can change the image itself.
     func mountSelection(readOnly: Bool = false) {
         guard let image = imageToMount else { return }
-        startOperation(.mountImage(image, readOnly: readOnly, mountPoint: nil))
+        let pathGuard = model.engine.pathGuard
+        Task { [weak self] in
+            let writable = await Task.detached {
+                !readOnly && pathGuard.permitsWrite(image, followFinalSymlink: true)
+            }.value
+            self?.startOperation(.mountImage(image, readOnly: !writable, mountPoint: nil))
+        }
     }
 
     func undoLastOperation() {

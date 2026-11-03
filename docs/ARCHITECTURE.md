@@ -73,7 +73,9 @@ An XPC failure does not fall back to in-process decoding or encoding in the app.
 
 Neither **app** uses the App Sandbox; the embedded archive service does. Scope Dev
 uses `PathGuard.writesOnlyUnder`. **Go > Scratch Folder** creates the allowed root,
-which cannot itself be moved, renamed or trashed. Production enables
+which cannot itself be moved, renamed or trashed. A writable disk-image mount can
+change the image, so it needs write permission for the image itself; elsewhere
+Scope Dev mounts images read-only, including when one is opened. Production enables
 `SCOPE_ALLOW_WRITES` in `Config/Scope.xcconfig`. All development file changes still
 use Scope Dev in scratch folders, or disposable engine fixtures.
 

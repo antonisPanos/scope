@@ -25,6 +25,9 @@ public struct FileEngine: Sendable {
     /// Compression is isolated in the same sandboxed service in the app.
     /// The default keeps standalone engine clients/tests self-contained.
     public var archiveWriters: any ArchiveWriterOpening = LibArchiveWriters()
+    /// Tests only: runs `diskutil` in place of `runTool`, so tests can check
+    /// its arguments, and that it never ran, without mounting anything.
+    var toolRunner: ToolRunner?
     /// Tests only: simulate slow path resolution at the I/O boundary.
     var readValidationHook: (@Sendable () -> Void)?
 

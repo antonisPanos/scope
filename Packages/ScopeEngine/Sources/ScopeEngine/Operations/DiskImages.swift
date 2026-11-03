@@ -13,9 +13,16 @@ extension FileEngine {
 
     /// Mounts an image and returns where it appeared: under /Volumes, or at
     /// `mountPoint` when one is given (which must pass the write check).
+    ///
+    /// A writable attachment lets the file system, its journal and background
+    /// services change the image, so it needs write permission for the image
+    /// itself (for a sparse bundle, its whole folder), not just for the mount
+    /// point. A link is checked, and handed to diskutil, as its target.
     @discardableResult
     func mountImage(_ image: URL, readOnly: Bool, mountPoint: URL?, passphrase: String? = nil) async throws -> URL? {
-        let imagePath = try pathGuard.checkLocation(image)
+        try pathGuard.checkLocation(image)
+        let imagePath = try pathGuard.checkTarget(image)
+        if !readOnly { try pathGuard.checkWriteLocation(imagePath) }
         if let mountPoint {
             try pathGuard.checkWriteLocation(mountPoint)
             // diskutil makes the mount point itself, but its folder must exist.
@@ -32,7 +39,13 @@ extension FileEngine {
         if let mountPoint { arguments += ["--mountPoint", mountPoint.path] }
         arguments.append(imagePath.path)
 
-        let output = try await Self.runTool("/usr/sbin/diskutil", arguments, input: passphrase, timeout: 60)
+        try Task.checkCancellation()
+        let run: ToolRunner = toolRunner ?? { try await Self.runTool($0, $1, input: $2, timeout: $3) }
+        let output = try await run("/usr/sbin/diskutil", arguments, passphrase, 60)
+        if output.timedOut {
+            throw OperationError.mountFailed(
+                "“\(image.lastPathComponent)” didn't mount within a minute, so Scope stopped trying.")
+        }
         guard output.status == 0 else {
             let message = output.error.trimmingCharacters(in: .whitespacesAndNewlines)
             throw OperationError.mountFailed(
@@ -66,13 +79,20 @@ extension FileEngine {
         var status: Int32
         var standardOutput: Data
         var error: String
+        /// The timeout stopped the tool; `status` is then its signal.
+        var timedOut = false
     }
+
+    typealias ToolRunner = @Sendable (String, [String], String?, TimeInterval) async throws -> ToolOutput
 
     /// Runs a system tool with a timeout, off the main thread. Cancelling the
     /// task terminates the tool, so a stuck image never hangs the operation.
+    /// A task cancelled before the tool starts never starts it, and a tool
+    /// stopped by cancelling throws `CancellationError` instead of returning.
     static func runTool(
         _ path: String, _ arguments: [String], input: String?, timeout: TimeInterval
     ) async throws -> ToolOutput {
+        try Task.checkCancellation()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
@@ -92,17 +112,33 @@ extension FileEngine {
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ToolOutput, Error>) in
-                process.terminationHandler = { finished in
+                // Weak: the process keeps its handler, and the box keeps the
+                // process. The cancellation handler keeps the box alive until here.
+                process.terminationHandler = { [weak box] finished in
                     let status = finished.terminationStatus
+                    // Only a tool the signal actually stopped counts as
+                    // cancelled or timed out; one that finished first did its work.
+                    let signalled = finished.terminationReason == .uncaughtSignal
+                    let stoppedBy = box?.stopReason
                     reading.notify(queue: .global()) {
+                        if signalled, stoppedBy == .cancelled {
+                            continuation.resume(throwing: CancellationError())
+                            return
+                        }
                         let (output, error) = collected.result
                         continuation.resume(
                             returning: ToolOutput(
-                                status: status, standardOutput: output, error: String(decoding: error, as: UTF8.self)))
+                                status: status, standardOutput: output, error: String(decoding: error, as: UTF8.self),
+                                timedOut: signalled && stoppedBy == .timedOut))
                     }
                 }
                 do {
-                    try process.run()
+                    guard try box.start() else {
+                        reading.leave()
+                        reading.leave()
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
                 } catch {
                     reading.leave()
                     reading.leave()
@@ -119,10 +155,10 @@ extension FileEngine {
                 }
                 if let input { stdin.fileHandleForWriting.write(Data((input + "\n").utf8)) }
                 try? stdin.fileHandleForWriting.close()
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { box.terminate() }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { box.stop(.timedOut) }
             }
         } onCancel: {
-            box.terminate()
+            box.stop(.cancelled)
         }
     }
 }
@@ -138,8 +174,34 @@ private final class ToolOutputCollector: @unchecked Sendable {
     var result: (Data, Data) { lock.withLock { (output, error) } }
 }
 
+/// Starting and stopping a tool share one lock, so a cancel can't fall
+/// between the check and the start: it either prevents the start or
+/// terminates the tool that just started.
 private final class ProcessBox: @unchecked Sendable {
+    enum StopReason { case cancelled, timedOut }
+
     let process: Process
+    private let lock = NSLock()
+    private var reason: StopReason?
+
     init(_ process: Process) { self.process = process }
-    func terminate() { if process.isRunning { process.terminate() } }
+
+    /// Starts the tool; false, without starting it, if it was already cancelled.
+    func start() throws -> Bool {
+        try lock.withLock {
+            guard reason != .cancelled else { return false }
+            try process.run()
+            return true
+        }
+    }
+
+    /// The first reason wins. Before the start, a cancel prevents it.
+    func stop(_ why: StopReason) {
+        lock.withLock {
+            if reason == nil { reason = why }
+            if process.isRunning { process.terminate() }
+        }
+    }
+
+    var stopReason: StopReason? { lock.withLock { reason } }
 }
