@@ -92,10 +92,63 @@ import Testing
         #expect(ContinuousClock.now - started < .seconds(1))
     }
 
-    @Test func refusesFoldersOutsideTheGuard() throws {
-        #expect(throws: PathGuardViolation.self) {
-            _ = try sandbox.engine.search(SearchQuery(text: "x"), in: URL(fileURLWithPath: "/etc"))
+    @Test func refusesFoldersOutsideTheGuard() async throws {
+        // The folder is checked on the I/O threads, so the stream ends with the refusal.
+        let stream = try sandbox.engine.search(SearchQuery(text: "x"), in: URL(fileURLWithPath: "/etc"))
+        await #expect(throws: PathGuardViolation.self) {
+            for try await _ in stream {}
         }
+    }
+
+    @Test func anInvalidPatternIsRefusedAtOnce() {
+        #expect(throws: SearchError.self) {
+            _ = try sandbox.engine.search(SearchQuery(text: "(", mode: .regex), in: sandbox.root)
+        }
+    }
+
+    /// #148: starting a search from the main thread doesn't wait for the
+    /// folder to be resolved, which happens off the main thread.
+    @MainActor @Test func startingASearchDoesNotWaitForTheFolder() async throws {
+        try sandbox.write("found.txt", "x")
+        var engine = sandbox.engine
+        let resolvedOnMain = Recorded<Bool>()
+        engine.readValidationHook = {
+            resolvedOnMain.append(Thread.isMainThread)
+            usleep(300_000)
+        }
+        let start = ContinuousClock.now
+        let stream = try engine.search(SearchQuery(text: "found"), in: sandbox.root)
+        #expect(ContinuousClock.now - start < .milliseconds(150))
+        // The main actor keeps running while the folder is checked.
+        let beats = Recorded<Bool>()
+        let heartbeat = Task { @MainActor in
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .milliseconds(20))
+                beats.append(true)
+            }
+        }
+        var names: [String] = []
+        for try await batch in stream { names += batch.map(\.name) }
+        await heartbeat.value
+        #expect(beats.all.count == 5)
+        #expect(names == ["found.txt"])
+        #expect(resolvedOnMain.all == [false])
+    }
+
+    @Test func stoppingWhileTheFolderIsCheckedEndsQuietly() async throws {
+        try sandbox.write("found.txt", "x")
+        var engine = sandbox.engine
+        engine.readValidationHook = { usleep(200_000) }
+        let stream = try engine.search(SearchQuery(text: "found"), in: sandbox.root)
+        let consumer = Task {
+            var count = 0
+            for try await batch in stream { count += batch.count }
+            return count
+        }
+        consumer.cancel()
+        let started = ContinuousClock.now
+        _ = try? await consumer.value
+        #expect(ContinuousClock.now - started < .seconds(2))
     }
 
     @Test func stopsAtTheResultLimit() async throws {

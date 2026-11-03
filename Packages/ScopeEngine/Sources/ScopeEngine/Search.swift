@@ -154,16 +154,24 @@ extension FileEngine {
     /// are never followed, so a crawl can't loop or leave the folder, and it
     /// stays on the disk it starts on: other mounted disks, shares and images
     /// are never entered. It stops after `searchResultLimit` matches.
+    ///
+    /// Only the query (an invalid pattern) is checked before this returns.
+    /// The folder is checked on the engine's I/O threads, so a sleeping disk
+    /// or a lost share can't stall the caller; a refused or unreadable folder
+    /// ends the stream with that error.
     public func search(
         _ query: SearchQuery, in folder: URL, batchSize: Int = 200
     ) throws -> AsyncThrowingStream<[FileItem], Error> {
-        let root = try pathGuard.checkTarget(folder)
         let matcher = try SearchMatcher(query)
         let engine = self
         let (stream, continuation) = AsyncThrowingStream.makeStream(of: [FileItem].self)
 
         let task = Task.detached(executorPreference: IOExecutor.shared, priority: .userInitiated) {
             do {
+                try Task.checkCancellation()
+                engine.readValidationHook?()
+                let root = try engine.pathGuard.checkTarget(folder)
+                try Task.checkCancellation()
                 try await engine.crawl(root, matcher: matcher, batchSize: batchSize) { batch in
                     continuation.yield(batch)
                 }
