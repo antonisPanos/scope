@@ -145,7 +145,7 @@ jobs:
           ### Install Scope
 
           Download **Scope-${TAG#v}.dmg**, open it, and drag **Scope** to **Applications**.
-          Requires **macOS 27.2 or later**. The matching `.sha256` file verifies the download.
+          Requires **macOS 27.2 or later**. The matching **.sha256** file verifies the download.
 
           **Ad-hoc signed, not notarized:** this build has no Apple-verified publisher identity.
           After macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** for Scope.

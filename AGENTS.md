@@ -1,13 +1,16 @@
-# Scope: notes for Claude
+# Scope: project instructions
 
 The app is called Scope. It was called Pandora while it was being scoped, so the scoping doc
 and early history still use that name.
 
-Personal macOS file manager. The owner doesn't write Swift; Claude writes all the code.
-The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/artifact/AwuXcqF6wVVC3vtkijEZ8K.
+Personal macOS file manager. The owner doesn't write Swift; coding agents implement and maintain the code.
+The historical scoping doc (goals, milestones M0 to M4, test plan) is at
+https://claude.ai/artifact/AwuXcqF6wVVC3vtkijEZ8K (may require the owner's account).
+Use the current source and repository docs for present behavior and requirements.
 
 ## Branches and commits
 
+- Use `codex/` for agent-created branches (for example `codex/docs-refresh`).
 - `main` is the trunk. Branch from the latest `origin/main`, open a PR into `main`, and
   never commit to `main` directly. PRs are squash-merged.
 - Commit messages and PR titles are Conventional Commits (`feat(search): add a date filter`).
@@ -50,17 +53,21 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - Schemes: `Scope Dev` (development, writes only in `~/ScopeScratch`) and `Scope` (release).
 - The Xcode project is hand-written (objectVersion 77, synchronized folder `Scope/`), so new
   files in `Scope/` are picked up automatically. Build settings live in `Config/*.xcconfig`.
-- `Config/Local.xcconfig` (git-ignored) sets the signing team.
+- The app requires macOS 27.2 and Xcode 27.2 with the macOS 27.2 SDK. The standalone engine targets macOS 15 and Swift 6.
+- `Config/Local.xcconfig` (git-ignored) optionally sets a local signing team. Without it, builds use ad-hoc signing; do not leave the `YOURTEAMID` placeholder from `make setup`. See `CONTRIBUTING.md`.
 - Screen capture and accessibility are not granted to the terminal. To check the app,
   run Scope Dev and drive it with `scripts/devhook.swift` (compile it once:
   `swiftc -O -o build/devhook scripts/devhook.swift`): commands, typed paths, sidebar picks,
   `state` (logged) and `snapshot:<name>` (a PNG of the window). Read results with
   `/usr/bin/log show --last 30s --predicate 'subsystem == "com.antonispanos.scope"'`.
-  Snapshots don't render the sidebar (vibrancy); check it through `state`.
+  Snapshots may omit vibrancy and remote Quick Look content; check the actual app too.
+  While remote control shares the window, `snapshot` may select a system sharing child window.
+  Never commit captures containing personal paths or content; use disposable demo fixtures.
+  Retain intentional documentation images, then clean up only owned fixtures, builds and temporary worktrees/branches after pushing.
 - App layout: `Scope/Browser` (window, model, list, path bar), `Scope/Sidebar`,
   `Scope/Commands` (one command list feeds the menus and the Cmd+K palette), `Scope/Theme`.
 - Archive decoding and encoding run in `ScopeArchiveService/`, an embedded XPC service with
-  no user-file or network entitlements (`Config/ScopeArchiveService.entitlements`; keep it empty).
+  no user-file or network entitlements (`Config/ScopeArchiveService.entitlements`; keep its grants empty; retain only `com.apple.security.app-sandbox = true`).
   Extraction receives only an open read-only archive; the engine checks and writes every entry.
   Compression receives bounded entry descriptions and source bytes, and returns bounded encoded
   bytes with backpressure. The engine owns source traversal, metadata, output size/space limits,
@@ -75,3 +82,13 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - Engine CI uses macOS 26 (engine targets macOS 15). The release workflow uses `xcode-27`
   with Xcode 27.2 to build and publish ad-hoc signed DMGs without launching the app.
   The existing app CI job on macOS 26 skips its build when the 27.2 SDK is unavailable.
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+Use CodeGraph before grep/find or reading files to locate or understand code **only if**
+a `.codegraph/` directory exists at the repository root. Use the `codegraph_explore` MCP
+tool, or `codegraph explore "<symbol names or question>"`; name a file or symbol for
+current line-numbered source. If `.codegraph/` is absent, skip CodeGraph entirely.
+Do not create an index automatically; indexing is the owner's decision.
+<!-- CODEGRAPH_END -->

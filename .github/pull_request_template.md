@@ -4,9 +4,9 @@
 
 ## How it was tested
 
-- [ ] `make test` passes
+- [ ] Relevant checks pass (`make test` for engine changes; links/rendering for docs)
 - [ ] Built and tried in Scope Dev, changing files only in `~/ScopeScratch`
-- [ ] Screenshots attached for visible changes
+- [ ] Screenshots attached for visible changes, inspected for personal content
 
 ## Safety
 
