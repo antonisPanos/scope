@@ -189,15 +189,6 @@ extension FileEngine {
         return name.isEmpty ? "Archive" : name
     }
 
-    /// A file or folder whose final permissions and dates are set once every
-    /// entry is in. Only these small fields are kept, never its attributes.
-    private struct Finalize {
-        let relative: String
-        let identity: stat
-        let permissions: UInt16?
-        let modified: Int64
-    }
-
     private func readArchive(
         _ archivePath: URL, file: FileHandle, into tree: ExtractionTree, control: OperationControl
     ) throws {
@@ -215,50 +206,8 @@ extension FileEngine {
             if case .damaged(let message) = error { return .archive(message) }
             return .notAnArchive(archivePath.path)
         }
-        let limits = extractionLimits
-        var compressedEstimate: Int64 = 0
-        // Metadata sidecars whose file or folder hasn't arrived yet; every
-        // other sidecar is applied as it arrives and then dropped (#149).
-        var pending: [String: [String: Data]] = [:]
-        var pendingBytes = 0
-        var finalize: [Finalize] = []
-        var writtenSinceSpaceCheck: Int64 = 0
-        let reserve = Self.extractionReserve(at: tree.path)
-        // Checked more often than the reserve can fill, so the check, not a
-        // failed write, is what normally stops a filling disk.
-        let spaceCheckInterval = max(1024 * 1024, min(32 * 1024 * 1024, reserve / 4))
-        let diskFull = OperationError.archive(
-            "Extracting “\(archivePath.lastPathComponent)” stopped because the disk was almost full. "
-                + "Nothing it unpacked was kept.")
-        func wrote(_ bytes: Int) throws {
-            writtenSinceSpaceCheck += Int64(bytes)
-            if writtenSinceSpaceCheck >= spaceCheckInterval {
-                writtenSinceSpaceCheck = 0
-                if let free = Self.freeSpace(of: tree.root), free < reserve { throw diskFull }
-            }
-        }
-        func remember(_ relative: String, _ identity: stat, _ entry: ArchiveEntry) throws {
-            guard finalize.count < limits.entries else {
-                throw OperationError.archive(
-                    "“\(archivePath.lastPathComponent)” has more than \(limits.entries) items, "
-                        + "more than Scope extracts at once. Nothing it unpacked was kept.")
-            }
-            finalize.append(
-                Finalize(
-                    relative: relative, identity: identity, permissions: entry.permissions, modified: entry.modified))
-        }
-        // Applies attributes through an open descriptor; resource forks are
-        // written to disk too, so they count against the space reserve.
-        func apply(_ attributes: [String: Data], to descriptor: CopyDescriptor) throws {
-            guard !attributes.isEmpty else { return }
-            try ArchiveAttributes.apply(attributes, to: descriptor.raw)
-            try wrote(attributes.values.reduce(0) { $0 + $1.count })
-        }
-        func applyPending(_ relative: String, to descriptor: CopyDescriptor) throws {
-            guard let attributes = pending.removeValue(forKey: relative) else { return }
-            pendingBytes -= Self.byteCount(attributes)
-            try apply(attributes, to: descriptor)
-        }
+        let session = ExtractionSession(
+            tree: tree, control: control, limits: extractionLimits, archiveName: archivePath.lastPathComponent)
 
         while true {
             try Task.checkCancellation()
@@ -288,151 +237,39 @@ extension FileEngine {
 
             switch entry.kind {
             case .metadata:
-                // AppleDouble records may precede or follow their data entry,
-                // and can describe only a regular file or folder in staging.
-                if let existing = try tree.info(place) {
-                    let kind = existing.st_mode & S_IFMT
-                    guard kind == S_IFREG || kind == S_IFDIR else { throw AppleDouble.invalid() }
-                    try apply(entry.extendedAttributes, to: tree.open(place, matching: existing))
-                } else if !entry.extendedAttributes.isEmpty {
-                    let earlier = pending[relative] ?? [:]
-                    let merged = earlier.merging(entry.extendedAttributes) { _, later in later }
-                    pendingBytes += Self.byteCount(merged) - Self.byteCount(earlier)
-                    guard pendingBytes <= limits.pendingMetadataBytes, merged.count <= 4096 else {
-                        throw OperationError.archive(
-                            "“\(archivePath.lastPathComponent)” has more macOS metadata waiting for its files "
-                                + "than Scope can hold. Nothing it unpacked was kept.")
-                    }
-                    pending[relative] = merged
-                }
+                try session.metadata(entry.extendedAttributes, at: place, relative: relative)
                 continue
             case .directory:
-                let existing = try tree.info(place)
-                if let existing, existing.st_mode & S_IFMT != S_IFDIR {
+                guard try session.directory(entry, at: place, relative: relative) else {
                     control.skipEntry(name)
                     continue
                 }
-                if existing == nil {
-                    guard mkdirat(place.folder.raw, place.name, 0o755) == 0 else {
-                        throw FileEngineError.posix("Create folder", place.path)
-                    }
-                }
-                guard let made = try tree.info(place) else { throw ExtractionTree.changed(place.path) }
-                let directory = try tree.open(place, matching: made)
-                if existing == nil { try tree.markQuarantined(directory) }
-                try apply(entry.extendedAttributes, to: directory)
-                try applyPending(relative, to: directory)
-                try remember(relative, made, entry)
             case .symlink(let link):
                 guard !link.isEmpty else { break }
-                guard symlinkat(link, place.folder.raw, place.name) == 0 else {
-                    throw FileEngineError.posix("Create link", place.path)
-                }
+                try session.symlink(link, at: place)
             case .hardlink(let linked):
-                // A second name for a file extracted earlier: made as a hard
-                // link to it, once that file is known to be a plain file
-                // inside the staging folder.
-                if let original = Self.safeRelativePath(linked), !original.isEmpty,
-                    case .place(let source) = try tree.locate(original, creating: false),
-                    try tree.info(source).map({ $0.st_mode & S_IFMT == S_IFREG }) == true,
-                    linkat(source.folder.raw, source.name, place.folder.raw, place.name, 0) == 0
-                {
+                if try session.hardLink(to: linked, at: place) {
                     control.update { $0.itemsDone += 1 }
                 } else {
                     control.skipEntry(name)
                 }
                 continue
             case .file:
-                let output = try CopyDescriptor(
-                    openat(place.folder.raw, place.name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600),
-                    path: place.path)
-                while true {
-                    try Task.checkCancellation()
-                    try control.waitWhilePaused()
-                    let data: Data
+                try session.file(entry, at: place, relative: relative) {
                     do {
-                        data = try reader.readData(upTo: FileEngine.chunkSize)
+                        return try reader.readData(upTo: FileEngine.chunkSize)
                     } catch {
                         throw damaged(error)
                     }
-                    if data.isEmpty { break }
-                    let count = data.count
-                    try data.withUnsafeBytes { bytes in
-                        guard let base = bytes.baseAddress else { return }
-                        var written = 0
-                        while written < count {
-                            let result = write(output.raw, base + written, count - written)
-                            if result < 0, errno == EINTR { continue }
-                            guard result > 0 else {
-                                // Something else may have filled the disk between checks.
-                                if errno == ENOSPC || errno == EDQUOT { throw diskFull }
-                                throw FileEngineError.posix("Write", place.path)
-                            }
-                            written += result
-                        }
-                    }
-                    compressedEstimate += Int64(count)
-                    try wrote(count)
-                    let done = compressedEstimate
-                    control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
                 }
-                // Set quarantine before restrictive modes, and before the
-                // completed result becomes visible under its final name.
-                try apply(entry.extendedAttributes, to: output)
-                try tree.markQuarantined(output)
-                try applyPending(relative, to: output)
-                // Some formats deliver sidecars after data. Keep the private
-                // staging file writable until all metadata has arrived.
-                try remember(relative, try output.info(), entry)
-                // Like copies, extracted files are on disk before they're shown.
-                guard fsync(output.raw) == 0 else { throw FileEngineError.posix("Write", place.path) }
             case .other:
                 // Devices, pipes and sockets are not extracted.
                 control.skipEntry(name)
             }
             control.update { $0.itemsDone += 1 }
         }
-        // Sidecars for folders made only as parents of other entries.
-        for (relative, attributes) in pending.sorted(by: { $0.key < $1.key }) {
-            try Task.checkCancellation()
-            guard case .place(let place) = try tree.locate(relative, creating: false),
-                let existing = try tree.info(place),
-                existing.st_mode & S_IFMT == S_IFDIR || existing.st_mode & S_IFMT == S_IFREG
-            else { throw AppleDouble.invalid() }
-            try apply(attributes, to: tree.open(place, matching: existing))
-        }
-        pending = [:]
-        try restoreModesAndDates(finalize, in: tree)
+        try session.finish()
         control.update { $0.bytesDone = $0.bytesTotal }
-    }
-
-    private static func byteCount(_ attributes: [String: Data]) -> Int {
-        attributes.reduce(0) { $0 + $1.key.utf8.count + $1.value.count }
-    }
-
-    /// Restores file modes only after late AppleDouble attributes, and
-    /// folders deepest first after every child has been written.
-    private func restoreModesAndDates(_ records: [Finalize], in tree: ExtractionTree) throws {
-        let files = records.filter { $0.identity.st_mode & S_IFMT != S_IFDIR }
-        let folders = records.filter { $0.identity.st_mode & S_IFMT == S_IFDIR }
-            .sorted { $0.relative.count > $1.relative.count }
-        for record in files + folders {
-            try Task.checkCancellation()
-            let descriptor = try tree.reopen(record.relative, matching: record.identity)
-            let directory = record.identity.st_mode & S_IFMT == S_IFDIR
-            let permissions = record.permissions.map { mode_t($0 & 0o777) } ?? (directory ? 0o755 : 0o644)
-            guard fchmod(descriptor.raw, permissions) == 0 else {
-                throw FileEngineError.posix("Restore permissions", tree.path + "/" + record.relative)
-            }
-            var times = [
-                timespec(tv_sec: Int(record.modified), tv_nsec: 0),
-                timespec(tv_sec: Int(record.modified), tv_nsec: 0),
-            ]
-            guard futimens(descriptor.raw, &times) == 0 else {
-                throw FileEngineError.posix("Restore dates", tree.path + "/" + record.relative)
-            }
-            _ = fsync(descriptor.raw)
-        }
     }
 
     private func applyQuarantine(_ properties: [String: Any]?, to url: URL) throws {

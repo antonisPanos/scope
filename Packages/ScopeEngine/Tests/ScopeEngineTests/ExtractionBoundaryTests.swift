@@ -18,7 +18,7 @@ import Testing
         var engine = sandbox.engine
         engine.archiveReaders = SwappingReaders(
             entries: [(ArchiveEntry(name: "escaped.txt", kind: .file, size: 7), "payload")],
-            swap: { try swapStaging(in: sandbox.root, for: outside.root) })
+            swap: { [root = sandbox.root, target = outside.root] in try swapStaging(in: root, for: target) })
         _ = try? await OperationHarness(engine: engine).run(.extract(archive))
         #expect(try TreeSnapshot(outside.root) == before)
         #expect(!outside.exists("escaped.txt"))
@@ -43,11 +43,11 @@ import Testing
                 (ArchiveEntry(name: "other.txt", kind: .file), "third"),
             ],
             swapBefore: 1,
-            swap: {
-                let staging = try stagingFolder(in: sandbox.root)
+            swap: { [root = sandbox.root, target = outside.root] in
+                let staging = try stagingFolder(in: root)
                 let sub = staging.appendingPathComponent("sub")
                 try FileManager.default.moveItem(at: sub, to: staging.appendingPathComponent("saved-sub"))
-                try FileManager.default.createSymbolicLink(at: sub, withDestinationURL: outside.root)
+                try FileManager.default.createSymbolicLink(at: sub, withDestinationURL: target)
             })
         let control = OperationControl()
         _ = try? await OperationHarness(engine: engine).run(.extract(archive), control: control)
@@ -65,9 +65,10 @@ import Testing
         // The archive's folder is moved aside and its name pointed outside.
         engine.archiveReaders = SwappingReaders(
             entries: [(ArchiveEntry(name: "result.txt", kind: .file), "payload")],
-            swap: {
-                try FileManager.default.moveItem(at: sandbox.url("work"), to: sandbox.url("moved"))
-                try FileManager.default.createSymbolicLink(at: sandbox.url("work"), withDestinationURL: outside.root)
+            swap: { [root = sandbox.root, target = outside.root] in
+                let work = root.appendingPathComponent("work")
+                try FileManager.default.moveItem(at: work, to: root.appendingPathComponent("moved"))
+                try FileManager.default.createSymbolicLink(at: work, withDestinationURL: target)
             })
         await #expect(throws: (any Error).self) { try await OperationHarness(engine: engine).run(.extract(archive)) }
         #expect(try TreeSnapshot(outside.root) == before)
@@ -186,7 +187,7 @@ import Testing
         guard length >= 0 else { return nil }
         var data = Data(count: length)
         _ = data.withUnsafeMutableBytes { getxattr(url.path, name, $0.baseAddress, length, 0, XATTR_NOFOLLOW) }
-        return String(decoding: data, as: UTF8.self)
+        return String(bytes: data, encoding: .utf8)
     }
 }
 
