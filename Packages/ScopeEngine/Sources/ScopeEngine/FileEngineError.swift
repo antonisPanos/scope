@@ -9,6 +9,8 @@ public enum FileEngineError: Error, Equatable, LocalizedError {
     case crossVolumeMoveNotSupported(String)
     case system(operation: String, path: String, code: Int32)
     case tooLarge(String)
+    /// A named pipe, socket or device file, which a copy can't reproduce.
+    case unsupportedItem(String, kind: String)
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +20,7 @@ public enum FileEngineError: Error, Equatable, LocalizedError {
         case .cannotCopyIntoItself(let path): "Can't copy \(path) into itself."
         case .crossVolumeMoveNotSupported(let path): "Moving \(path) to another disk is not supported yet."
         case .tooLarge(let path): "\((path as NSString).lastPathComponent) is too large to open here."
+        case .unsupportedItem(let path, let kind): "\(path) is \(kind), which Scope can't copy."
         case .system(let operation, let path, let code):
             "\(operation) failed for \(path): \(String(cString: strerror(code)))"
         }

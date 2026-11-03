@@ -383,19 +383,21 @@ extension FileEngine {
         let isFolderLike = ns.pathExtension.isEmpty
         let base = isFolderLike ? name : ns.deletingPathExtension
         let suffix = isFolderLike ? "" : "." + ns.pathExtension
+        // Generated names shorten the base, never the extension or the
+        // " copy 2" part, so they stay within the disk's name limit.
         let first: String
-        let numberedBase: String
+        let marker: String
         switch style {
         case .numbered:
             first = name
-            numberedBase = base
+            marker = ""
         case .copy:
-            first = "\(base) copy\(suffix)"
-            numberedBase = "\(base) copy"
+            first = Self.fittingName(base, " copy" + suffix)
+            marker = " copy"
         }
         for number in 1...10_000 {
             try Task.checkCancellation()
-            let candidate = number == 1 ? first : "\(numberedBase) \(number)\(suffix)"
+            let candidate = number == 1 ? first : Self.fittingName(base, "\(marker) \(number)\(suffix)")
             let url = folder.appendingPathComponent(candidate)
             if Self.lstatInfo(url.path) == nil { return try pathGuard.checkWriteLocation(url) }
         }
@@ -495,7 +497,7 @@ struct FailurePolicy {
         case is CancellationError, is PathGuardViolation: false
         case OperationError.stoppedByUser: false
         case FileEngineError.cannotCopyIntoItself, FileEngineError.destinationExists: false
-        case FileEngineError.crossVolumeMoveNotSupported: false
+        case FileEngineError.crossVolumeMoveNotSupported, FileEngineError.unsupportedItem: false
         default: true
         }
     }
