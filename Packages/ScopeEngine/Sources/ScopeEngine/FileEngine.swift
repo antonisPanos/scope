@@ -281,7 +281,9 @@ public struct FileEngine: Sendable {
         // The partial name must pass the guard like any other path we write.
         try pathGuard.checkWriteLocation(partial)
 
-        let staged = CopyLocation(parent: output.parent, name: partial.lastPathComponent, path: partial.path)
+        // The staged copy is named by its destination in messages (and in the
+        // tests' fault hook): its hidden name no longer says which item it is.
+        let staged = CopyLocation(parent: output.parent, name: partial.lastPathComponent, path: target.path)
         do {
             try job.copy(from: input, to: staged, relative: "")
             try Task.checkCancellation()

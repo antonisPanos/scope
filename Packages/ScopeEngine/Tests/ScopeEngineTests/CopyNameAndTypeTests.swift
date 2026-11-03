@@ -25,7 +25,7 @@ import Testing
         String(repeating: "a", count: 220) + ".txt",  // the length from the report
     ])
     func copiesAFileWithALongName(name: String) async throws {
-        #expect(name.utf8.count <= FileEngine.maxNameBytes)
+        #expect(storedLength(name) <= FileEngine.maxNameBytes)
         let source = try sandbox.write("source/" + name, "sentinel")
         try sandbox.mkdir("destination")
         try await engine.copyItem(at: source, to: sandbox.url("destination/" + name))
@@ -43,18 +43,29 @@ import Testing
         #expect(try partials(in: "destination") == [])
     }
 
+    /// File URLs may hand names back decomposed, so lengths are compared
+    /// as the disk stores them, and each generated name is really created.
+    private func storedLength(_ name: String) -> Int {
+        name.precomposedStringWithCanonicalMapping.utf8.count
+    }
+
     @Test func generatedNamesStayWithinTheLimit() throws {
         let base = String(repeating: "é", count: 125)
         let name = base + ".txt"
         try sandbox.write(name, "original")
-        let copy = try engine.uniqueName(name, in: sandbox.root, style: .copy).lastPathComponent
-        #expect(copy.utf8.count <= FileEngine.maxNameBytes)
-        #expect(copy.hasSuffix(" copy.txt") && copy.hasPrefix("éé"))
-        try sandbox.write(copy, "copy")
-        let second = try engine.uniqueName(name, in: sandbox.root, style: .copy).lastPathComponent
-        #expect(second.utf8.count <= FileEngine.maxNameBytes && second.hasSuffix(" copy 2.txt"))
-        let numbered = try engine.uniqueName(name, in: sandbox.root, style: .numbered).lastPathComponent
-        #expect(numbered.utf8.count <= FileEngine.maxNameBytes && numbered.hasSuffix(" 2.txt"))
+        let copy = try engine.uniqueName(name, in: sandbox.root, style: .copy)
+        #expect(storedLength(copy.lastPathComponent) <= FileEngine.maxNameBytes)
+        #expect(copy.lastPathComponent.hasSuffix(" copy.txt") && copy.lastPathComponent.hasPrefix("éé"))
+        try Data("copy".utf8).write(to: copy)
+        let second = try engine.uniqueName(name, in: sandbox.root, style: .copy)
+        #expect(storedLength(second.lastPathComponent) <= FileEngine.maxNameBytes)
+        #expect(second.lastPathComponent.hasSuffix(" copy 2.txt"))
+        try Data("second".utf8).write(to: second)
+        let numbered = try engine.uniqueName(name, in: sandbox.root, style: .numbered)
+        #expect(storedLength(numbered.lastPathComponent) <= FileEngine.maxNameBytes)
+        #expect(numbered.lastPathComponent.hasSuffix(" 2.txt"))
+        try Data("numbered".utf8).write(to: numbered)
+        #expect(try sandbox.names().count == 4)
         // Short names are untouched.
         #expect(FileEngine.fittingName("photo", " copy.jpg") == "photo copy.jpg")
     }
@@ -66,7 +77,7 @@ import Testing
         let names = try sandbox.names()
         #expect(names.count == 2)
         let copy = try #require(names.first { $0 != name })
-        #expect(copy.hasSuffix(" copy.txt") && copy.utf8.count <= FileEngine.maxNameBytes)
+        #expect(copy.hasSuffix(" copy.txt") && storedLength(copy) <= FileEngine.maxNameBytes)
         #expect(try String(contentsOf: sandbox.url(copy), encoding: .utf8) == "original")
     }
 
