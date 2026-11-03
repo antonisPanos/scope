@@ -72,5 +72,6 @@ The scoping doc (goals, milestones M0 to M4, test plan) is at https://claude.ai/
 - If `hdiutil`/`diskutil image attach` hangs, it is usually waiting on a macOS authorization
   prompt on the user's screen: ask them to look for one. Don't kill system processes.
 - Recents and Tags come from Spotlight, over the whole computer.
-- GitHub's runners top out at macOS 26, so CI runs the engine tests (engine targets macOS 15)
-  and skips the app build until a runner has the macOS 27.2 SDK.
+- Engine CI uses macOS 26 (engine targets macOS 15). The release workflow uses `xcode-27`
+  with Xcode 27.2 to build and publish ad-hoc signed DMGs without launching the app.
+  The existing app CI job on macOS 26 skips its build when the 27.2 SDK is unavailable.

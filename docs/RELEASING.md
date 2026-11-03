@@ -10,24 +10,46 @@ Versions come from the conventional commits, so nobody picks a number by hand.
    `MARKETING_VERSION` in `Config/Base.xcconfig` and adds the new section to `CHANGELOG.md`.
    `feat` bumps the minor version, `fix` and `perf` the patch. While Scope is 0.x,
    breaking changes bump the minor.
-3. Merge that PR when you want a release. GitHub Actions tags `vX.Y.Z` and creates the
-   GitHub Release with the changelog.
-4. On your Mac, from an up-to-date, clean `main`:
+3. Merge that PR when you want a release. The **Release PR** workflow tags `vX.Y.Z`
+   and creates the GitHub Release with the changelog.
+4. In the same workflow, **Build release DMG** checks out that exact tag and builds
+   the Release configuration on GitHub's `xcode-27` runner with Xcode 27.2. It verifies
+   the app's ad-hoc signature, distribution entitlements, disk image and checksum.
+5. **Attach DMG to release** uploads `Scope-X.Y.Z.dmg` and `Scope-X.Y.Z.dmg.sha256`
+   and adds installation/signing information to the release notes. The app is never
+   launched. No Apple account, certificate or additional GitHub secret is needed.
 
-   ```sh
-   git checkout main && git pull
-   make release
-   ```
+The build job has read-only repository access. Only the separate publishing job can
+write release assets; it downloads that build's artifact by ID and verifies the
+checksum and source tag again before uploading.
 
-   This fetches the tag, builds the Release configuration, makes `Scope-X.Y.Z.dmg`,
-   signs and notarizes it when you're set up for that (below), and attaches the DMG and
-   its SHA-256 to the GitHub Release.
+The release-please job starts the build through its outputs. A separate tag-push or
+`release: published` workflow would not be triggered by release-please's default
+`GITHUB_TOKEN`.
+
+## Retry or backfill an existing release
+
+In **Actions > Release PR > Run workflow**, select `main` and enter the published
+tag (for example `v0.2.0`) in **release_tag**. This builds that tag and replaces its
+DMG/checksum assets without changing the version or creating another release.
+Leaving the field empty keeps the usual release-please behavior.
+
+The tag must be `vX.Y.Z`, have a published GitHub Release, and belong to `main`'s
+history. A moved tag is refused at publication if it no longer matches the built
+source. The downloaded source ZIP/tar.gz files are GitHub's automatic archives;
+the DMG is the installer.
+
+## Build locally
 
 `make dmg` builds a DMG for whatever is checked out, without uploading. Use it to try
 the packaging. Builds that aren't on a tag are named `Scope-X.Y.Z-<commit>.dmg`.
 
-The DMG is built on your Mac because GitHub's runners don't have the macOS 27.2 SDK
-yet. Once they do, the same script can run in a workflow when a tag is pushed.
+`SCOPE_SIGNING_MODE=ad-hoc make dmg` explicitly chooses free ad-hoc signing even
+when a Developer ID certificate is available locally. The default `auto` mode
+detects a Developer ID certificate and notarization profile as described below.
+
+To publish locally from a clean checkout of a release tag, use `make release`.
+This remains available if the GitHub runner is unavailable.
 
 The build number (`CFBundleVersion`) is the number of commits on `main`, so it always goes up.
 
@@ -35,11 +57,18 @@ The build number (`CFBundleVersion`) is the number of commits on `main`, so it a
 
 | Setup | Result | Opening it on another Mac |
 | --- | --- | --- |
-| Nothing (today) | Ad-hoc signed DMG | Right-click Scope.app > Open the first time, or `xattr -dr com.apple.quarantine /Applications/Scope.app` |
+| Nothing (today, including CI) | App signed ad hoc, without a verified publisher identity or notarization | After the first launch is blocked, System Settings > Privacy & Security > Open Anyway for Scope |
 | Developer ID certificate | Signed DMG and app | Gatekeeper checks online and may still warn |
 | Certificate and notarization profile | Signed, notarized and stapled | Opens normally, even offline |
 
-`scripts/release.sh` detects which one applies, so nothing in the repo changes when you upgrade.
+Ad-hoc signing is a local code-integrity signature, not an Apple-verified developer
+identity. It needs no paid membership. It does not remove Gatekeeper's first-launch
+warning. Use [Apple's per-app approval instructions](https://support.apple.com/en-us/102445);
+there is no need to disable Gatekeeper globally.
+
+`scripts/release.sh` detects which setup applies to local builds. CI deliberately
+uses ad-hoc signing until Developer ID credentials and notarization are configured
+for the hosted runner; adding a certificate to your Mac does not change CI.
 
 ## One-time setup for notarized releases
 

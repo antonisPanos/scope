@@ -80,7 +80,9 @@ Screenshots are taken from Scope Dev.
 Download the DMG from the [latest release](https://github.com/antonisPanos/scope/releases/latest),
 open it, and drag Scope to Applications. Scope needs macOS 27.2 or later.
 
-> Releases aren't notarized yet. The first time you open Scope, right-click it and choose Open.
+> Releases are ad-hoc signed and aren't notarized yet, so macOS has no verified publisher
+> identity for Scope. After the first launch is blocked, open **System Settings > Privacy
+> & Security** and choose **Open Anyway** for Scope.
 
 Scope is in early development (0.x). Production builds support full file operations with
 normal macOS permissions. For local development, use Scope Dev, which changes files only

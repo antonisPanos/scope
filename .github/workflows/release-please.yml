@@ -2,23 +2,154 @@ name: Release PR
 
 # Keeps a "chore(main): release X.Y.Z" PR open with the next version and
 # changelog, worked out from the conventional commits on main. Merging it
-# tags vX.Y.Z and creates the GitHub Release; scripts/release.sh then
-# builds the DMG and attaches it.
+# tags vX.Y.Z and creates the GitHub Release. Its outputs start the DMG
+# jobs here: releases created with GITHUB_TOKEN don't trigger other workflows.
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing published tag to build/retry (for example v0.2.0); leave empty to update the release PR
+        required: false
+        type: string
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.existing.outputs.release_created || steps.release.outputs.release_created }}
+      tag_name: ${{ steps.existing.outputs.tag_name || steps.release.outputs.tag_name }}
     steps:
+      - name: Select an existing release for a manual retry
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a tag such as v0.2.0' >&2; exit 1; }
+          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName')"
+          [[ "$published" == "$TAG" ]] || { echo 'The release must already be published' >&2; exit 1; }
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+          echo 'release_created=true' >> "$GITHUB_OUTPUT"
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        if: inputs.release_tag == ''
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
+
+  build-dmg:
+    name: Build release DMG
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    concurrency:
+      group: release-dmg-${{ needs.release-please.outputs.tag_name }}
+      cancel-in-progress: false
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      SCOPE_SIGNING_MODE: ad-hoc
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      tag_name: ${{ needs.release-please.outputs.tag_name }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: refs/tags/${{ needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the release source and toolchain
+        id: source
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git merge-base --is-ancestor HEAD origin/main
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse "$TAG^{commit}")" ]]
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+          sdk="$(xcrun --sdk macosx --show-sdk-version)"
+          python3 -c 'import sys; assert tuple(map(int, sys.argv[1].split("."))) >= (27, 2), "macOS 27.2 SDK required"' "$sdk"
+      - name: Build and verify the ad-hoc signed app and DMG
+        run: |
+          set -euo pipefail
+          scripts/release.sh
+          app=build/ReleaseDerivedData/Build/Products/Release/Scope.app
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep -qx 'Signature=adhoc'
+          scripts/check-release-entitlements.sh "$app"
+          hdiutil verify "build/release/Scope-${TAG#v}.dmg"
+          (cd build/release && shasum -a 256 -c "Scope-${TAG#v}.dmg.sha256")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: artifact
+        with:
+          name: dmg-${{ needs.release-please.outputs.tag_name }}
+          path: |
+            build/release/Scope-*.dmg
+            build/release/Scope-*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-dmg:
+    name: Attach DMG to release
+    needs: build-dmg
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-dmg-${{ needs.build-dmg.outputs.tag_name }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.build-dmg.outputs.tag_name }}
+      SOURCE_SHA: ${{ needs.build-dmg.outputs.source_sha }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.build-dmg.outputs.artifact_id }}
+          path: dmg
+          merge-multiple: true
+      - name: Verify and attach the installer and checksum
+        working-directory: dmg
+        run: |
+          set -euo pipefail
+          [[ "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" == "$SOURCE_SHA" ]]
+          published="$(gh release view "$TAG" --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName')"
+          [[ "$published" == "$TAG" ]]
+          sha256sum --check --strict "Scope-${TAG#v}.dmg.sha256"
+          gh release upload "$TAG" "Scope-${TAG#v}.dmg" "Scope-${TAG#v}.dmg.sha256" --clobber
+      - name: Add download and first-launch instructions
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh release view "$TAG" --json body --jq .body > "$notes"
+          if ! grep -q '<!-- scope-dmg-install -->' "$notes"; then
+            cat >> "$notes" <<EOF
+
+          <!-- scope-dmg-install -->
+          ### Install Scope
+
+          Download **Scope-${TAG#v}.dmg**, open it, and drag **Scope** to **Applications**.
+          Requires **macOS 27.2 or later**. The matching `.sha256` file verifies the download.
+
+          **Ad-hoc signed, not notarized:** this build has no Apple-verified publisher identity.
+          After macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** for Scope.
+          [Apple's instructions](https://support.apple.com/en-us/102445) explain this per-app approval.
+          EOF
+            gh release edit "$TAG" --notes-file "$notes"
+          fi
