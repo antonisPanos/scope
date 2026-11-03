@@ -258,7 +258,7 @@ extension FileEngine {
                 try session.file(entry, at: place, relative: relative) {
                     do {
                         return try reader.readData(upTo: FileEngine.chunkSize)
-                    } catch {
+                    } catch let error as ArchiveReadError {
                         throw damaged(error)
                     }
                 }
