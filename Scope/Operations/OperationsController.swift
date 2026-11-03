@@ -383,8 +383,10 @@ final class OperationsController {
             alert.messageText = "Delete \(describe(request.items)) on “\(request.volume)” immediately?"
         }
         alert.informativeText =
-            "Items deleted here are removed right away. They can't be put back, and this can't be undone.\n\n"
-            + listing(request.items)
+            "Items deleted here are removed right away. They can't be put back, and this can't be undone."
+        // Every item is listed, never "…and N more": the user approves
+        // exactly what is shown, and nothing else is deleted.
+        alert.accessoryView = deletionListView(request.items)
         // Cancel is the default: Return keeps the items.
         alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
         let delete = alert.addButton(withTitle: "Delete Permanently")
@@ -395,6 +397,57 @@ final class OperationsController {
 
     private static func describe(_ items: [URL]) -> String {
         items.count == 1 ? "“\(items[0].lastPathComponent)”" : "these \(items.count) items"
+    }
+
+    /// The folder holding `item`, with the home folder shortened to ~.
+    /// A string operation only: nothing is read from disk.
+    private static func folderName(of item: URL) -> String {
+        (item.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+    }
+
+    /// Every item, one per line with the folder it's in, so items with the
+    /// same name (from Search or Recents) can be told apart. A scrolling,
+    /// selectable text box, grown to fit up to about a dozen lines.
+    private static func deletionListView(_ items: [URL]) -> NSScrollView {
+        let width: CGFloat = 400
+        let height = min(CGFloat(items.count) * 18 + 12, 230)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let size = scroll.contentSize
+        let text = NSTextView(frame: NSRect(origin: .zero, size: size))
+        text.isEditable = false
+        text.isSelectable = true
+        text.drawsBackground = false
+        text.isVerticallyResizable = true
+        text.isHorizontallyResizable = false
+        text.autoresizingMask = .width
+        text.minSize = NSSize(width: 0, height: size.height)
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        text.textContainer?.containerSize = NSSize(width: size.width, height: CGFloat.greatestFiniteMagnitude)
+        text.textContainer?.widthTracksTextView = true
+        text.textContainerInset = NSSize(width: 4, height: 4)
+        text.textStorage?.setAttributedString(attributedDeletionList(items))
+        text.setAccessibilityLabel("Items to delete")
+        scroll.documentView = text
+        return scroll
+    }
+
+    private static func attributedDeletionList(_ items: [URL]) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let list = NSMutableAttributedString()
+        for (index, item) in items.enumerated() {
+            if index > 0 { list.append(NSAttributedString(string: "\n")) }
+            list.append(
+                NSAttributedString(
+                    string: "• \(item.lastPathComponent)",
+                    attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
+            list.append(
+                NSAttributedString(
+                    string: " — in \(folderName(of: item))",
+                    attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+        }
+        return list
     }
 
     /// The items' names, one per line, up to ten.

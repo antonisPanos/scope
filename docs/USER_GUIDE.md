@@ -91,7 +91,8 @@ items. Cancel is the default. Items on other disks still use their Trash.
 
 **Delete Immediately** (`Option+Cmd+Delete`) skips the Trash after a separate
 confirmation for each disk, naming every item, with Cancel as default and no
-Apply to all. Permanent deletion cannot be undone. Neither form bypasses Scope
+Apply to all. The list scrolls and shows each item's folder, so items with the
+same name can be told apart. Permanent deletion cannot be undone. Neither form bypasses Scope
 Dev's scratch restriction or macOS permissions.
 
 Copies use hidden partial names and publish only when complete. Cross-disk moves
