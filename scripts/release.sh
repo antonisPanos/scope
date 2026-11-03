@@ -9,8 +9,9 @@
 #   - A "Developer ID Application" certificate in the keychain: signed with it,
 #     notarized with the notarytool profile "scope-notary" (override with
 #     SCOPE_NOTARY_PROFILE) and stapled. Without the profile it is signed only.
-#   - No certificate: ad-hoc signed. Opens on your own Macs after
-#     right-click > Open, or after clearing the quarantine flag.
+#   - No certificate: ad-hoc signed. First launch needs approval in
+#     System Settings > Privacy & Security > Open Anyway.
+# Set SCOPE_SIGNING_MODE=ad-hoc to use no Developer ID identity, as CI does.
 # One-time setup is in docs/RELEASING.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -51,8 +52,14 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 fi
 
 # Signing identity.
-identity="$(security find-identity -v -p codesigning 2>/dev/null \
-  | sed -nE 's/.*"(Developer ID Application: .*)"$/\1/p' | head -n 1)"
+case "${SCOPE_SIGNING_MODE:-auto}" in
+  auto)
+    identity="$(security find-identity -v -p codesigning 2>/dev/null \
+      | sed -nE 's/.*"(Developer ID Application: .*)"$/\1/p' | head -n 1)"
+    ;;
+  ad-hoc) identity="" ;;
+  *) fail "SCOPE_SIGNING_MODE must be auto or ad-hoc" ;;
+esac
 if [ -n "$identity" ]; then
   team="$(sed -nE 's/.*\(([A-Z0-9]{10})\)$/\1/p' <<<"$identity")"
   sign_mode="developer-id"
