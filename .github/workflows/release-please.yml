@@ -41,7 +41,7 @@ jobs:
           [[ "$published" == "$TAG" ]] || { echo 'The release must already be published' >&2; exit 1; }
           echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
           echo 'release_created=true' >> "$GITHUB_OUTPUT"
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         if: inputs.release_tag == ''
         id: release
         with:
@@ -67,7 +67,7 @@ jobs:
       source_sha: ${{ steps.source.outputs.sha }}
       tag_name: ${{ needs.release-please.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ needs.release-please.outputs.tag_name }}
           fetch-depth: 0
