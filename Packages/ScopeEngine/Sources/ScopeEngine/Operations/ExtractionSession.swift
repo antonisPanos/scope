@@ -47,12 +47,16 @@ final class ExtractionSession {
 
     /// Applies a sidecar now if its file or folder exists, or holds it
     /// within the budget until that arrives. Only a regular file or folder
-    /// may be described.
+    /// may be described. Attributes apply in arrival order, so the latest
+    /// sidecar wins: one held for a folder that a later entry made as its
+    /// parent goes first (#160).
     func metadata(_ attributes: [String: Data], at place: ExtractionTree.Place, relative: String) throws {
         if let existing = try tree.info(place) {
             let kind = existing.st_mode & S_IFMT
             guard kind == S_IFREG || kind == S_IFDIR else { throw AppleDouble.invalid() }
-            try apply(attributes, to: tree.open(place, matching: existing))
+            let descriptor = try tree.open(place, matching: existing)
+            try applyPending(relative, to: descriptor)
+            try apply(attributes, to: descriptor)
             return
         }
         guard !attributes.isEmpty else { return }
@@ -78,9 +82,11 @@ final class ExtractionSession {
         }
         guard let made = try tree.info(place) else { throw ExtractionTree.changed(place.path) }
         let directory = try tree.open(place, matching: made)
-        if existing == nil { try tree.markQuarantined(directory) }
-        try apply(entry.extendedAttributes, to: directory)
+        // Sidecars held for it arrived before this entry, so its own
+        // attributes come after them.
         try applyPending(relative, to: directory)
+        try apply(entry.extendedAttributes, to: directory)
+        if existing == nil { try tree.markQuarantined(directory) }
         try remember(relative, made, entry)
         return true
     }
@@ -119,11 +125,12 @@ final class ExtractionSession {
             let done = compressedEstimate
             control.update { $0.bytesDone = min($0.bytesTotal, done / 2) }
         }
-        // Set quarantine before restrictive modes, and before the completed
+        // Earlier sidecars first, then the entry's own attributes. Set
+        // quarantine before restrictive modes, and before the completed
         // result becomes visible under its final name.
+        try applyPending(relative, to: output)
         try apply(entry.extendedAttributes, to: output)
         try tree.markQuarantined(output)
-        try applyPending(relative, to: output)
         // Some formats deliver sidecars after data. Keep the private staging
         // file writable until all metadata has arrived.
         try remember(relative, try output.info(), entry)
