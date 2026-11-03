@@ -57,7 +57,11 @@ Production and development embed `ScopeArchiveService.xpc`. Its only entitlement
 is `com.apple.security.app-sandbox = true`: it has no user-file or network grants.
 Extraction receives an already-open read-only archive descriptor; the engine
 validates entry paths/links, limits sizes and free space, stages output, applies
-trusted quarantine provenance and publishes the result.
+trusted quarantine provenance and publishes the result. Every entry is created and
+reopened through descriptors from the pinned staging folder, one component at a
+time without following links, and published only into the archive's pinned folder.
+Metadata is applied as it arrives; only sidecars waiting for their file are held,
+within a fixed budget, as are the few fields needed to set final modes and dates.
 
 Compression receives bounded entry descriptions and source bytes with backpressure.
 The engine owns traversal, metadata checks, space/output budgets, staging and final
