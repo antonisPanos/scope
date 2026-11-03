@@ -16,7 +16,7 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        guard model.viewMode == .details, let node = item as? FileNode else { return false }
+        guard let node = item as? FileNode else { return false }
         return node.item.isBrowsableFolder && !node.item.isSymbolicLink
     }
 
