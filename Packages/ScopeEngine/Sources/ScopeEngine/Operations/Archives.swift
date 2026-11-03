@@ -122,7 +122,7 @@ extension FileEngine {
             stagingIdentity = created
             let tree = ExtractionTree(
                 root: try staging.open(O_RDONLY | O_DIRECTORY, matching: created), path: stagingURL.path)
-            try tree.prepareQuarantine(quarantine, at: stagingURL, pathGuard: pathGuard)
+            try tree.prepareQuarantine(quarantine)
             let size = Self.lstatInfo(archivePath.path).map { Int64($0.st_size) } ?? 0
             control.update {
                 $0.bytesTotal = size
@@ -272,16 +272,6 @@ extension FileEngine {
         control.update { $0.bytesDone = $0.bytesTotal }
     }
 
-    private func applyQuarantine(_ properties: [String: Any]?, to url: URL) throws {
-        guard let properties else { return }
-        var target = try pathGuard.checkWriteLocation(url)
-        var values = URLResourceValues()
-        // Use the public Launch Services-backed property instead of copying
-        // undocumented raw flags or granting approval to extracted code.
-        values.quarantineProperties = properties
-        try target.setResourceValues(values)
-    }
-
     /// The entry's path made relative and checked: absolute paths and any
     /// ".." component are refused (nil), so nothing lands outside the folder.
     static func safeRelativePath(_ name: String) -> String? {
@@ -352,7 +342,10 @@ extension FileEngine {
             guard CopyLocation.same(try staged.info(), identity) else {
                 throw FileEngineError.posix("Archive partial changed", partial.path, EBUSY)
             }
-            try applyQuarantine(job.quarantine, to: partial)
+            // Through the partial's own descriptor, never its path (#159).
+            if let properties = job.quarantine {
+                try QuarantineStamp.apply(QuarantineStamp.bytes(for: properties), to: descriptor, path: partial.path)
+            }
             try output.synchronize()
             try destination.validateParent(pathGuard: pathGuard)
             guard CopyLocation.same(try staged.info(), identity),

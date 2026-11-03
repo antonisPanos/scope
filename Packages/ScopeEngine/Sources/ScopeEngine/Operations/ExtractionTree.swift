@@ -17,8 +17,8 @@ struct ExtractionLimits: Sendable {
 final class ExtractionTree {
     let root: CopyDescriptor
     let path: String
-    /// What Launch Services wrote on the staging folder for the archive's
-    /// quarantine, copied to each extracted file and folder by descriptor.
+    /// What Launch Services writes for the archive's quarantine, set on the
+    /// staging folder and each extracted file and folder by descriptor.
     private(set) var quarantine: Data?
 
     struct Place {
@@ -99,39 +99,20 @@ final class ExtractionTree {
         return try open(place, matching: expected)
     }
 
-    /// Marks the staging folder through Launch Services, then keeps the bytes
-    /// it wrote, read back through the pinned descriptor, for everything else.
-    func prepareQuarantine(_ properties: [String: Any]?, at url: URL, pathGuard: PathGuard) throws {
+    /// Fresh Launch Services quarantine bytes for the archive's provenance,
+    /// set on the staging folder and later on everything else by descriptor.
+    /// No path in or above the staging folder is ever written (#159).
+    func prepareQuarantine(_ properties: [String: Any]?) throws {
         guard let properties else { return }
-        var target = try pathGuard.checkWriteLocation(url)
-        // The name must still be the pinned folder, and must be afterwards.
-        guard let named = FileEngine.lstatInfo(target.path), CopyLocation.same(named, try root.info()) else {
-            throw Self.changed(path)
-        }
-        var values = URLResourceValues()
-        // The public Launch Services property, rather than copying the
-        // archive's raw flags, which could carry approval to its contents.
-        values.quarantineProperties = properties
-        try target.setResourceValues(values)
-        let length = fgetxattr(root.raw, Self.quarantineName, nil, 0, 0, 0)
-        guard length > 0 else { throw Self.changed(path) }
-        var data = Data(count: length)
-        let read = data.withUnsafeMutableBytes {
-            fgetxattr(root.raw, Self.quarantineName, $0.baseAddress, length, 0, 0)
-        }
-        guard read == length else { throw FileEngineError.posix("Read quarantine", path) }
+        let data = try QuarantineStamp.bytes(for: properties)
         quarantine = data
+        try markQuarantined(root)
     }
 
     func markQuarantined(_ descriptor: CopyDescriptor) throws {
         guard let quarantine else { return }
-        let result = quarantine.withUnsafeBytes {
-            fsetxattr(descriptor.raw, Self.quarantineName, $0.baseAddress, quarantine.count, 0, 0)
-        }
-        guard result == 0 else { throw FileEngineError.posix("Set quarantine", path) }
+        try QuarantineStamp.apply(quarantine, to: descriptor.raw, path: path)
     }
-
-    private static let quarantineName = "com.apple.quarantine"
 
     static func changed(_ path: String) -> FileEngineError {
         .posix("Item changed while extracting", path, EBUSY)
