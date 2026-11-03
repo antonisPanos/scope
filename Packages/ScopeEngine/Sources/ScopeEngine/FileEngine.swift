@@ -330,13 +330,31 @@ public struct FileEngine: Sendable {
     /// The longest file name, in UTF-8 bytes, that APFS and HFS+ accept.
     static let maxNameBytes = 255
 
-    /// `base` + `tail`, with `base` shortened by whole characters until the
-    /// name fits `maxNameBytes`. Generated names ("… copy 2.txt") stay
-    /// legal when the original name is already near the limit.
-    static func fittingName(_ base: String, _ tail: String) -> String {
-        var base = Substring(base)
-        while base.count > 1, base.utf8.count + tail.utf8.count > maxNameBytes { base = base.dropLast() }
-        return String(base) + tail
+    /// `base` + `tail` + `ext` (such as "photo" + " copy 2" + ".jpg") within
+    /// `maxNameBytes`, so generated names stay legal when the original name
+    /// is already near the limit. The base is shortened by whole characters
+    /// first. When not even one of its characters fits beside the extension
+    /// (a very long extension, or one large composed character), the
+    /// extension goes too and the whole original name is shortened before
+    /// the tail. In the last resort the name is the tail alone ("copy 2").
+    static func fittingName(_ base: String, _ tail: String, extension ext: String = "") -> String {
+        if let head = shortened(base, toFit: tail + ext) { return head + tail + ext }
+        if var whole = shortened(base + ext, toFit: tail) {
+            while whole.count > 1, whole.last == "." || whole.last == " " { whole.removeLast() }
+            return whole + tail
+        }
+        return String(tail.drop { $0 == " " })
+    }
+
+    /// `text` without as few trailing characters as leave room for `rest`;
+    /// nil when that would leave nothing of a non-empty `text`.
+    private static func shortened(_ text: String, toFit rest: String) -> String? {
+        var head = Substring(text)
+        while head.utf8.count + rest.utf8.count > maxNameBytes {
+            guard !head.isEmpty else { return nil }
+            head = head.dropLast()
+        }
+        return head.isEmpty && !text.isEmpty ? nil : String(head)
     }
 
     static func isValidName(_ name: String) -> Bool {

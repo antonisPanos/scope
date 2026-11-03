@@ -67,7 +67,53 @@ import Testing
         try Data("numbered".utf8).write(to: numbered)
         #expect(try sandbox.names().count == 4)
         // Short names are untouched.
-        #expect(FileEngine.fittingName("photo", " copy.jpg") == "photo copy.jpg")
+        #expect(FileEngine.fittingName("photo", " copy", extension: ".jpg") == "photo copy.jpg")
+    }
+
+    /// The base can't shrink enough: the extension, or one large composed
+    /// character, takes the budget (#161). Each name is really created.
+    @Test(arguments: [
+        "a." + String(repeating: "e", count: 253),  // 255 bytes, almost all extension
+        "x" + String(repeating: "\u{301}", count: 124) + ".txt",  // one 249-byte character
+    ])
+    func generatedNamesFitWhenTheBaseCantShrink(name: String) throws {
+        #expect(storedLength(name) <= FileEngine.maxNameBytes)
+        try sandbox.write(name, "o")
+        var made: Set<String> = [name]
+        for style in [FileEngine.NameStyle.copy, .copy, .copy, .numbered, .numbered] {
+            let candidate = try engine.uniqueName(name, in: sandbox.root, style: style).lastPathComponent
+            #expect(storedLength(candidate) <= FileEngine.maxNameBytes)
+            #expect(FileEngine.isValidName(candidate))
+            #expect(!made.contains(candidate))
+            try Data("n".utf8).write(to: sandbox.url(candidate), options: .withoutOverwriting)
+            made.insert(candidate)
+        }
+        #expect(try sandbox.names().count == 6)
+    }
+
+    @Test func fittingNameKeepsWhatFits() {
+        let longExtension = "." + String(repeating: "e", count: 253)
+        // The whole name is shortened before the tail when the extension can't stay.
+        let copy = FileEngine.fittingName("a", " copy", extension: longExtension)
+        #expect(copy.utf8.count == FileEngine.maxNameBytes && copy.hasPrefix("a.eee") && copy.hasSuffix("e copy"))
+        // An indivisible 249-byte character keeps its place while it fits…
+        let big = "x" + String(repeating: "\u{301}", count: 124)
+        #expect(FileEngine.fittingName(big, " 2", extension: ".txt") == big + " 2.txt")
+        // …drops the extension and the dot next…
+        #expect(FileEngine.fittingName(big, " copy", extension: ".txt") == big + " copy")
+        // …and in the last resort the tail stands alone.
+        #expect(FileEngine.fittingName(big, " copy 2", extension: ".txt") == "copy 2")
+    }
+
+    @Test func duplicatesAFileWhoseExtensionFillsTheName() async throws {
+        let name = "a." + String(repeating: "e", count: 253)
+        try sandbox.write(name, "x")
+        try await OperationHarness(engine: engine).run(.duplicate([sandbox.url(name)]))
+        let names = try sandbox.names()
+        #expect(names.count == 2)
+        let copy = try #require(names.first { $0 != name })
+        #expect(copy.hasSuffix(" copy") && storedLength(copy) <= FileEngine.maxNameBytes)
+        #expect(try String(contentsOf: sandbox.url(copy), encoding: .utf8) == "x")
     }
 
     @Test func duplicatesAFileWhoseNameIsAtTheLimit() async throws {
