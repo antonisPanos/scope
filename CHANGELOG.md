@@ -3,6 +3,13 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.3.0](https://github.com/antonisPanos/scope/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **browser:** show color tags in every view ([#137](https://github.com/antonisPanos/scope/issues/137)) ([cb028bf](https://github.com/antonisPanos/scope/commit/cb028bf1ee6d857f8e5cad544fc47226ad9b2666))
+
 ## [0.2.0](https://github.com/antonisPanos/scope/compare/v0.1.0...v0.2.0) (2026-11-02)
 
 
