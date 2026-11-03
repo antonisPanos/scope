@@ -39,9 +39,9 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
 
     func prepareForContextMenu() {}
 
-    init(model: BrowserModel) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
         self.model = model
-        self.strip = IconGridViewController(model: model, style: .strip)
+        self.strip = IconGridViewController(model: model, style: .strip, tagCache: tagCache)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -110,6 +110,7 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
     }
 
     func close() {
+        strip.close()
         previewTask?.cancel()
         preview.close()
     }

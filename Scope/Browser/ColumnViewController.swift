@@ -21,10 +21,13 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     private let browser = FileBrowser()
     private let root = ColumnNode(item: nil)
+    private let tagCache: FileTagCache
 
-    init(model: BrowserModel) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
         self.model = model
+        self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
+        self.tagCache.onChange = { [weak self] url in self?.reloadTags(at: url) }
     }
 
     @available(*, unavailable)
@@ -55,14 +58,32 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
     // MARK: - FileBrowsingView
 
     func modelDidChange(_ change: BrowserModel.Change) {
+        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
+            tagCache.invalidate(clear: change.contains(.location))
+        }
         if change.contains(.location) { root.children = nil }
         if !change.isDisjoint(with: .anyItems) { reloadItems() }
         if !change.isDisjoint(with: [.anyItems, .sort]) {
             root.refreshNestedSettings(sort: model.sort, showHidden: AppSettings.shared.showHiddenFiles)
         }
+        if change.contains(.metadata) { reloadTags() }
     }
 
-    func close() { root.children = nil }
+    func close() {
+        tagCache.close()
+        root.children = nil
+    }
+
+    /// Update row values without rebuilding the column tree or its selection.
+    /// AppKit only requests new values for visible rows.
+    private func reloadTags(at url: URL? = nil) {
+        guard isViewLoaded else { return }
+        for column in 0...max(0, browser.lastColumn) {
+            guard let nodes = (browser.parentForItems(inColumn: column) as? ColumnNode)?.children else { continue }
+            let rows = IndexSet(nodes.indices.filter { url == nil || nodes[$0].item?.url == url })
+            if !rows.isEmpty { browser.reloadData(forRowIndexes: rows, inColumn: column) }
+        }
+    }
 
     var selectedItems: [FileItem] {
         guard let paths = browser.selectionIndexPaths as [IndexPath]? else { return [] }
@@ -251,6 +272,11 @@ extension ColumnViewController: NSBrowserDelegate {
     /// doesn't ask for cell images, so the icon rides along as a text attachment.
     func browser(_ browser: NSBrowser, objectValueForItem item: Any?) -> Any? {
         guard let file = (item as? ColumnNode)?.item else { return "" }
+        let tags = tagCache.tags(for: file.url) ?? []
+        return label(for: file, tags: tags)
+    }
+
+    private func label(for file: FileItem, tags: [String]) -> NSAttributedString {
         let icon = (IconCache.shared.icon(for: file).copy() as? NSImage) ?? NSImage()
         icon.size = NSSize(width: 16, height: 16)
         let attachment = NSTextAttachment()
@@ -264,6 +290,7 @@ extension ColumnViewController: NSBrowserDelegate {
                     .font: NSFont.systemFont(ofSize: NSFont.systemFontSize),
                     .foregroundColor: file.isHidden ? Palette.secondaryText : Palette.primaryText,
                 ]))
+        if let dots = TagDotsView.attachment(for: tags) { text.append(dots) }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
         text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))

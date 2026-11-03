@@ -33,6 +33,11 @@ Scratch Folder), and its status bar says so.
   Look. Size it with the slider in the status bar, Cmd+= and Cmd+-, or a pinch.
   Thumbnails held in memory are capped at 64 MB; Scope keeps no disk cache.
 - Gallery: a large preview of the selected item over a strip of thumbnails.
+- Finder color tags appear as colored dots in every view, on folder icons
+  and thumbnails in Icons and Gallery, and beside filenames in the other
+  views. Changes refresh without losing the selection or open columns.
+  Examples: [light appearance](images/color-tags-light.png),
+  [dark appearance](images/color-tags-dark.png), and [Columns](images/color-tags-columns.png).
 - Preview pane on the right in every view (Shift+Cmd+P): a Quick Look preview
   plus size, dates, last opened, tags, where, and for images their dimensions
   and camera, for audio and video their length, for folders their item count.

@@ -11,25 +11,37 @@ enum ColorTags {
 final class TagDotsView: NSView {
     private static let diameter: CGFloat = 10
     private static let step: CGFloat = 6
-    private static let leadingGap: CGFloat = 5
+    private let leadingGap: CGFloat
 
     private var colors: [NSColor] = []
+    private var shownTags: [String] = []
+
+    init(leadingGap: CGFloat = 5) {
+        self.leadingGap = leadingGap
+        super.init(frame: .zero)
+        isHidden = true
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("Use init(leadingGap:)") }
 
     func show(_ tags: [String]) {
         let colors = tags.compactMap { Palette.tagColor($0) }
-        guard colors != self.colors else { return }
+        guard tags != shownTags else { return }
+        shownTags = tags
         self.colors = colors
         isHidden = colors.isEmpty
         invalidateIntrinsicContentSize()
         needsDisplay = true
-        setAccessibilityElement(!tags.isEmpty)
+        setAccessibilityElement(!colors.isEmpty)
         setAccessibilityLabel(tags.isEmpty ? nil : "Tags: " + tags.joined(separator: ", "))
     }
 
     override var intrinsicContentSize: NSSize {
         guard !colors.isEmpty else { return NSSize(width: 0, height: Self.diameter) }
         return NSSize(
-            width: Self.leadingGap + Self.diameter + Self.step * CGFloat(colors.count - 1) + 1,
+            width: leadingGap + Self.diameter + Self.step * CGFloat(colors.count - 1) + 1,
             height: Self.diameter + 2)
     }
 
@@ -38,7 +50,7 @@ final class TagDotsView: NSView {
         // Drawn right to left so the first tag sits on top, like Finder.
         for (index, color) in colors.enumerated().reversed() {
             let rect = NSRect(
-                x: Self.leadingGap + Self.step * CGFloat(index), y: y, width: Self.diameter, height: Self.diameter)
+                x: leadingGap + Self.step * CGFloat(index), y: y, width: Self.diameter, height: Self.diameter)
             let dot = NSBezierPath(ovalIn: rect)
             color.setFill()
             dot.fill()
@@ -47,6 +59,30 @@ final class TagDotsView: NSView {
             dot.lineWidth = 1
             dot.stroke()
         }
+    }
+
+    /// A single attachment keeps the complete tag group visible when a
+    /// column's filename is truncated, including on a selected row.
+    static func attachment(for tags: [String]) -> NSAttributedString? {
+        let colors = tags.compactMap { Palette.tagColor($0) }
+        guard !colors.isEmpty else { return nil }
+        let size = NSSize(width: 5 + diameter + step * CGFloat(colors.count - 1) + 1, height: diameter + 2)
+        let image = NSImage(size: size, flipped: false) { _ in
+            for (index, color) in colors.enumerated().reversed() {
+                let dot = NSBezierPath(
+                    ovalIn: NSRect(x: 5 + step * CGFloat(index), y: 1, width: diameter, height: diameter))
+                color.setFill()
+                dot.fill()
+                NSColor.controlBackgroundColor.setStroke()
+                dot.lineWidth = 1
+                dot.stroke()
+            }
+            return true
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: -2, width: size.width, height: size.height)
+        return NSAttributedString(attachment: attachment)
     }
 }
 

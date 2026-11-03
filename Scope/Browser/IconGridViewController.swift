@@ -28,13 +28,16 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private var typeSelect = ""
     private var typeSelectTime = Date.distantPast
     private var observers: [NSObjectProtocol] = []
+    private let tagCache: FileTagCache
 
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("IconItem")
 
-    init(model: BrowserModel, style: Style) {
+    init(model: BrowserModel, style: Style, tagCache: FileTagCache? = nil) {
         self.model = model
         self.style = style
+        self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
+        self.tagCache.onChange = { [weak self] url in self?.thumbnailLoaded(url) }
     }
 
     @available(*, unavailable)
@@ -97,11 +100,20 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     // MARK: - FileBrowsingView
 
     func modelDidChange(_ change: BrowserModel.Change) {
+        if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
+            tagCache.invalidate(clear: change.contains(.location))
+        }
         if change.contains(.items) {
             reloadItems()
         } else if change.contains(.itemsUpdated) {
             applyRowChanges()
         }
+        if change.contains(.metadata) { refreshVisible() }
+    }
+
+    func close() {
+        tagCache.close()
+        ThumbnailCache.shared.cancelRequests(of: ObjectIdentifier(self))
     }
 
     var selectedItems: [FileItem] {
@@ -236,7 +248,9 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let scale = view.window?.backingScaleFactor ?? 2
         let thumbnail = ThumbnailCache.shared.thumbnail(
             for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard, owner: ObjectIdentifier(self))
-        item.show(file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size, showsName: style == .grid)
+        item.show(
+            file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size,
+            showsName: style == .grid, tags: tagCache.tags(for: file.url) ?? [])
     }
 
     // MARK: - Keys
@@ -366,6 +380,8 @@ final class IconItem: NSCollectionViewItem {
     private let icon = NSImageView()
     private let name = NSTextField(wrappingLabelWithString: "")
     private let background = NSView()
+    private let tagBadge = NSView()
+    private let tagDots = TagDotsView(leadingGap: 0)
     private var iconWidth: NSLayoutConstraint!
     private var iconHeight: NSLayoutConstraint!
     private var nameHidden: NSLayoutConstraint!
@@ -383,13 +399,20 @@ final class IconItem: NSCollectionViewItem {
         name.lineBreakMode = .byTruncatingMiddle
         name.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         name.textColor = Palette.primaryText
-        for view in [background, icon, name] as [NSView] {
+        tagBadge.wantsLayer = true
+        tagBadge.layer?.cornerRadius = 7
+        tagBadge.isHidden = true
+        tagDots.translatesAutoresizingMaskIntoConstraints = false
+        tagBadge.addSubview(tagDots)
+        for view in [background, icon, name, tagBadge] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
         iconWidth = icon.widthAnchor.constraint(equalToConstant: 64)
         iconHeight = icon.heightAnchor.constraint(equalToConstant: 64)
         nameHidden = name.heightAnchor.constraint(equalToConstant: 0)
+        let badgePosition = tagBadge.trailingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2)
+        badgePosition.priority = .defaultHigh
         NSLayoutConstraint.activate([
             icon.topAnchor.constraint(equalTo: root.topAnchor, constant: 6),
             icon.centerXAnchor.constraint(equalTo: root.centerXAnchor),
@@ -402,19 +425,29 @@ final class IconItem: NSCollectionViewItem {
             name.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 6),
             name.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 2),
             name.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -2),
+            badgePosition,
+            tagBadge.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 1),
+            tagBadge.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -1),
+            tagBadge.bottomAnchor.constraint(equalTo: icon.bottomAnchor, constant: 2),
+            tagDots.leadingAnchor.constraint(equalTo: tagBadge.leadingAnchor, constant: 3),
+            tagDots.trailingAnchor.constraint(equalTo: tagBadge.trailingAnchor, constant: -3),
+            tagDots.topAnchor.constraint(equalTo: tagBadge.topAnchor, constant: 2),
+            tagDots.bottomAnchor.constraint(equalTo: tagBadge.bottomAnchor, constant: -2),
         ])
         view = root
         imageView = icon
         textField = name
     }
 
-    func show(_ file: FileItem, image: NSImage, iconSize: CGFloat, showsName: Bool) {
+    func show(_ file: FileItem, image: NSImage, iconSize: CGFloat, showsName: Bool, tags: [String] = []) {
         icon.image = image
         iconWidth.constant = iconSize
         iconHeight.constant = iconSize
         name.stringValue = file.name
         name.isHidden = !showsName
         nameHidden.isActive = !showsName
+        tagDots.show(tags)
+        tagBadge.isHidden = tagDots.isHidden
         icon.alphaValue = file.isHidden ? 0.55 : 1
         view.toolTip = showsName ? nil : file.name
         updateHighlight()
@@ -443,6 +476,9 @@ final class IconItem: NSCollectionViewItem {
         var selection: CGColor?
         view.effectiveAppearance.performAsCurrentDrawingAppearance { selection = Palette.selection.cgColor }
         background.layer?.backgroundColor = showsSelection ? selection : nil
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            tagBadge.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.96).cgColor
+        }
     }
 
     override func viewWillLayout() {

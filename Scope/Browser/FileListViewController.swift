@@ -54,11 +54,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     let outlineView = FileOutlineView()
     var roots: [FileNode] = []
     var nodesByURL: [URL: FileNode] = [:]
-    private var tagCache: [URL: [String]] = [:]
-    private var tagLoads: Set<URL> = []
+    private let tagCache: FileTagCache
     /// Cached tags that may be out of date: still shown, but read again.
-    private(set) var staleTags: Set<URL> = []
-    private var tagGeneration = 0
+    var staleTags: Set<URL> { tagCache.staleURLs }
     private let headerView = NSTableHeaderView()
     private var observers: [NSObjectProtocol] = []
 
@@ -66,9 +64,11 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
-    init(model: BrowserModel) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
         self.model = model
+        self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
+        self.tagCache.onChange = { [weak self] url in self?.tagsChanged(at: url) }
     }
 
     @available(*, unavailable)
@@ -147,20 +147,17 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     // MARK: - Updates from the model
 
     func close() {
+        tagCache.close()
         roots = []
         nodesByURL = [:]
     }
 
     func modelDidChange(_ change: BrowserModel.Change) {
         if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
-            tagGeneration += 1
-            tagLoads = []
-            staleTags = Set(tagCache.keys)
+            tagCache.invalidate(clear: change.contains(.location))
         }
         if change.contains(.location) {
             nodesByURL = [:]
-            tagCache = [:]
-            staleTags = []
         }
         if change.contains(.viewMode) || change.contains(.location) { applyViewMode() }
         if change.contains(.sort) { applySortIndicator() }
@@ -268,7 +265,6 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         for index in changes.reloaded where updated[index].item != items[index] {
             let node = updated[index]
             node.update(items[index])
-            tagCache[node.item.url] = nil
             redrawn.append(node)
         }
         roots = updated
@@ -363,28 +359,13 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     // MARK: - Tags, loaded only for rows on screen
 
     func tags(for item: FileItem) -> [String]? {
-        let cached = tagCache[item.url]
-        if let cached, !staleTags.contains(item.url) { return cached }
-        guard !tagLoads.contains(item.url) else { return cached }
-        tagLoads.insert(item.url)
-        let engine = model.engine
-        let url = item.url
-        let generation = tagGeneration
-        Task { [weak self] in
-            let tags = (try? await engine.tags(for: url)) ?? []
-            guard let self, self.tagGeneration == generation else { return }
-            self.tagLoads.remove(url)
-            self.staleTags.remove(url)
-            let shown = self.tagCache[url] ?? []
-            self.tagCache[url] = tags
-            guard tags != shown else { return }
-            guard let node = self.nodesByURL[url] ?? self.findNode(url) else { return }
-            let row = self.outlineView.row(forItem: node)
-            if row >= 0 {
-                self.outlineView.reloadData(forRowIndexes: [row], columnIndexes: self.tagColumns)
-            }
-        }
-        return cached
+        tagCache.tags(for: item.url)
+    }
+
+    private func tagsChanged(at url: URL) {
+        guard let node = nodesByURL[url] ?? findNode(url) else { return }
+        let row = outlineView.row(forItem: node)
+        if row >= 0 { outlineView.reloadData(forRowIndexes: [row], columnIndexes: tagColumns) }
     }
 
     /// The columns that show tags: the name (as dots) and the Tags column.
