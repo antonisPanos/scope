@@ -5,7 +5,7 @@ MACOSX_DEPLOYMENT_TARGET = 27.2
 SDKROOT = macosx
 SWIFT_VERSION = 6.0
 SWIFT_STRICT_CONCURRENCY = complete
-MARKETING_VERSION = 0.3.0 // x-release-please-version
+MARKETING_VERSION = 0.4.0 // x-release-please-version
 CURRENT_PROJECT_VERSION = 1
 
 PRODUCT_NAME = ScopeArchiveService

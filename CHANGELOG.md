@@ -3,6 +3,18 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.4.0](https://github.com/antonisPanos/scope/compare/v0.3.0...v0.4.0) (2026-11-03)
+
+
+### Features
+
+* **browser:** add a compact horizontal list layout ([#140](https://github.com/antonisPanos/scope/issues/140)) ([78c35b6](https://github.com/antonisPanos/scope/commit/78c35b6daf6aaf7302e89b9b940284c385b3faa3))
+
+
+### Bug fixes
+
+* **browser:** keep navigation buttons in sync with history ([#139](https://github.com/antonisPanos/scope/issues/139)) ([215b00a](https://github.com/antonisPanos/scope/commit/215b00a32980867caddb29b1aaa687b03e430ce8))
+
 ## [0.3.0](https://github.com/antonisPanos/scope/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
