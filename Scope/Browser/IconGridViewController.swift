@@ -3,11 +3,11 @@ import ScopeEngine
 
 /// The icon view: a grid of icons or thumbnails that re-flows as the window
 /// resizes, sized by the slider, Cmd+Plus and Cmd+Minus, or a pinch. The same
-/// controller, in strip mode, is the row of thumbnails under the gallery's
-/// large preview.
+/// controller also provides the gallery's thumbnail strip and the compact
+/// List view, which fills columns vertically and scrolls horizontally.
 @MainActor
 final class IconGridViewController: NSViewController, FileBrowsingView {
-    enum Style { case grid, strip }
+    enum Style { case grid, strip, list }
 
     let model: BrowserModel
     let style: Style
@@ -21,7 +21,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         didSet { collectionView.menu = contextMenu }
     }
 
-    private let scrollView = NSScrollView()
+    private let scrollView: NSScrollView
     private let collectionView = IconCollectionView()
     private let layout = NSCollectionViewFlowLayout()
     private var items: [FileItem] = []
@@ -29,15 +29,18 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private var typeSelectTime = Date.distantPast
     private var observers: [NSObjectProtocol] = []
     private let tagCache: FileTagCache
+    private var listViewportSize: NSSize = .zero
 
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("IconItem")
+    private static let listItemIdentifier = NSUserInterfaceItemIdentifier("CompactListItem")
 
     init(model: BrowserModel, style: Style, tagCache: FileTagCache? = nil) {
         self.model = model
         self.style = style
+        self.scrollView = style == .list ? HorizontalListScrollView() : NSScrollView()
         self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
-        self.tagCache.onChange = { [weak self] url in self?.thumbnailLoaded(url) }
+        self.tagCache.onChange = { [weak self] url in self?.refreshItem(at: url) }
     }
 
     @available(*, unavailable)
@@ -49,16 +52,26 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     }
 
     override func loadView() {
-        layout.scrollDirection = style == .strip ? .horizontal : .vertical
-        layout.minimumInteritemSpacing = style == .strip ? 6 : 8
+        layout.scrollDirection = style == .grid ? .vertical : .horizontal
+        layout.minimumInteritemSpacing =
+            switch style {
+            case .grid: 8
+            case .strip: 6
+            case .list: 2
+            }
         layout.minimumLineSpacing = style == .strip ? 6 : 12
-        layout.sectionInset = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        let inset: CGFloat = style == .list ? 8 : 12
+        layout.sectionInset = NSEdgeInsets(top: inset, left: inset, bottom: inset, right: inset)
         collectionView.collectionViewLayout = layout
         collectionView.isSelectable = true
         collectionView.focusRingType = .none
-        collectionView.allowsMultipleSelection = style == .grid
+        collectionView.allowsMultipleSelection = style != .strip
         collectionView.backgroundColors = [Palette.windowBackground]
-        collectionView.register(IconItem.self, forItemWithIdentifier: Self.itemIdentifier)
+        if style == .list {
+            collectionView.register(CompactListItem.self, forItemWithIdentifier: Self.listItemIdentifier)
+        } else {
+            collectionView.register(IconItem.self, forItemWithIdentifier: Self.itemIdentifier)
+        }
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.onDoubleClick = { [weak self] in self?.openSelection() }
@@ -74,7 +87,10 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
         scrollView.documentView = collectionView
         scrollView.hasVerticalScroller = style == .grid
-        scrollView.hasHorizontalScroller = style == .strip
+        scrollView.hasHorizontalScroller = style != .grid
+        if style == .list {
+            scrollView.verticalScrollElasticity = .none
+        }
         scrollView.autohidesScrollers = true
         scrollView.backgroundColor = Palette.windowBackground
         view = scrollView
@@ -82,13 +98,18 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         let center = NotificationCenter.default
         observers.append(
             center.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.applySize() }
+                MainActor.assumeIsolated {
+                    guard let self, self.style == .grid else { return }
+                    self.applySize()
+                }
             })
-        observers.append(
-            center.addObserver(forName: ThumbnailCache.didLoad, object: nil, queue: .main) { [weak self] note in
-                let url = note.object as? URL
-                MainActor.assumeIsolated { self?.thumbnailLoaded(url) }
-            })
+        if style != .list {
+            observers.append(
+                center.addObserver(forName: ThumbnailCache.didLoad, object: nil, queue: .main) { [weak self] note in
+                    let url = note.object as? URL
+                    MainActor.assumeIsolated { self?.refreshItem(at: url) }
+                })
+        }
         observers.append(
             center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshVisible() }
@@ -97,9 +118,26 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         reloadItems()
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard style == .list, scrollView.contentSize.height > 0,
+            scrollView.contentSize != listViewportSize
+        else { return }
+        listViewportSize = scrollView.contentSize
+        layout.itemSize.width = compactColumnWidth
+        layout.invalidateLayout()
+        if let first = collectionView.selectionIndexPaths.min(), items.indices.contains(first.item) {
+            collectionView.scrollToItems(at: [first], scrollPosition: .nearestVerticalEdge)
+        }
+    }
+
     // MARK: - FileBrowsingView
 
     func modelDidChange(_ change: BrowserModel.Change) {
+        if change.contains(.location), style == .list {
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
         if !change.isDisjoint(with: [.anyItems, .location, .metadata]) {
             tagCache.invalidate(clear: change.contains(.location))
         }
@@ -131,8 +169,14 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
             })
         collectionView.selectionIndexPaths = paths
         if scroll, let first = paths.min() {
+            let position: NSCollectionView.ScrollPosition =
+                switch style {
+                case .grid: .nearestHorizontalEdge
+                case .strip: .centeredHorizontally
+                case .list: .nearestVerticalEdge
+                }
             collectionView.scrollToItems(
-                at: [first], scrollPosition: style == .strip ? .centeredHorizontally : .nearestHorizontalEdge)
+                at: [first], scrollPosition: position)
         }
         onSelectionChange?()
         return !paths.isEmpty
@@ -213,44 +257,59 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     }
 
     var iconSize: CGFloat {
-        style == .strip ? 56 : CGFloat(AppSettings.shared.iconSize)
+        switch style {
+        case .grid: CGFloat(AppSettings.shared.iconSize)
+        case .strip: 56
+        case .list: 16
+        }
     }
 
     private func applySize() {
         let size = iconSize
         // Room for two lines of name under the icon in the grid; none in the strip.
-        layout.itemSize =
-            style == .strip
-            ? NSSize(width: size + 12, height: size + 12)
-            : NSSize(width: max(size + 24, 84), height: size + 46)
+        switch style {
+        case .grid: layout.itemSize = NSSize(width: max(size + 24, 84), height: size + 46)
+        case .strip: layout.itemSize = NSSize(width: size + 12, height: size + 12)
+        case .list: layout.itemSize = NSSize(width: compactColumnWidth, height: 24)
+        }
         layout.invalidateLayout()
         refreshVisible()
     }
 
+    private var compactColumnWidth: CGFloat {
+        min(240, max(160, scrollView.contentSize.width - layout.sectionInset.left - layout.sectionInset.right))
+    }
+
     private func refreshVisible() {
         for item in collectionView.visibleItems() {
-            guard let item = item as? IconItem, let path = collectionView.indexPath(for: item),
+            guard let path = collectionView.indexPath(for: item),
                 items.indices.contains(path.item)
             else { continue }
             configure(item, with: items[path.item])
         }
     }
 
-    private func thumbnailLoaded(_ url: URL?) {
+    private func refreshItem(at url: URL?) {
         guard let url, let index = items.firstIndex(where: { $0.url == url }),
-            let item = collectionView.item(at: IndexPath(item: index, section: 0)) as? IconItem
+            let item = collectionView.item(at: IndexPath(item: index, section: 0))
         else { return }
         configure(item, with: items[index])
     }
 
-    private func configure(_ item: IconItem, with file: FileItem) {
+    private func configure(_ item: NSCollectionViewItem, with file: FileItem) {
+        let tags = tagCache.tags(for: file.url) ?? []
+        if let item = item as? CompactListItem {
+            item.show(file, tags: tags)
+            return
+        }
+        guard let item = item as? IconItem else { return }
         let size = iconSize
         let scale = view.window?.backingScaleFactor ?? 2
         let thumbnail = ThumbnailCache.shared.thumbnail(
             for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard, owner: ObjectIdentifier(self))
         item.show(
             file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size,
-            showsName: style == .grid, tags: tagCache.tags(for: file.url) ?? [])
+            showsName: style == .grid, tags: tags)
     }
 
     // MARK: - Keys
@@ -309,7 +368,8 @@ extension IconGridViewController: NSCollectionViewDataSource, NSCollectionViewDe
     func collectionView(
         _ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath
     ) -> NSCollectionViewItem {
-        let item = collectionView.makeItem(withIdentifier: Self.itemIdentifier, for: indexPath) as! IconItem
+        let identifier = style == .list ? Self.listItemIdentifier : Self.itemIdentifier
+        let item = collectionView.makeItem(withIdentifier: identifier, for: indexPath)
         configure(item, with: items[indexPath.item])
         return item
     }

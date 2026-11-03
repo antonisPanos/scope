@@ -76,10 +76,11 @@ final class BrowserViewController: NSViewController {
         if let sizeObserver { NotificationCenter.default.removeObserver(sizeObserver) }
     }
 
-    private static func makeView(for mode: ViewMode, model: BrowserModel) -> FileBrowsingView {
+    static func makeView(for mode: ViewMode, model: BrowserModel) -> FileBrowsingView {
         switch mode {
-        case .details, .list: FileListViewController(model: model)
+        case .details: FileListViewController(model: model)
         case .icons: IconGridViewController(model: model, style: .grid)
+        case .list: IconGridViewController(model: model, style: .list)
         case .columns: ColumnViewController(model: model)
         case .gallery: GalleryViewController(model: model)
         }
@@ -258,11 +259,12 @@ final class BrowserViewController: NSViewController {
 
     /// Swaps in the view for the model's view mode, keeping the selection.
     private func switchViewIfNeeded() {
-        let wantsList = model.viewMode == .details || model.viewMode == .list
         let matches: Bool =
             switch fileView {
-            case is FileListViewController: wantsList
-            case is IconGridViewController: model.viewMode == .icons
+            case is FileListViewController: model.viewMode == .details
+            case let collection as IconGridViewController:
+                (model.viewMode == .icons && collection.style == .grid)
+                    || (model.viewMode == .list && collection.style == .list)
             case is ColumnViewController: model.viewMode == .columns
             case is GalleryViewController: model.viewMode == .gallery
             default: false

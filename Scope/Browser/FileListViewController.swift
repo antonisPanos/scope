@@ -33,9 +33,8 @@ final class FileNode {
     }
 }
 
-/// The list and details views: an NSOutlineView fed by the browser model.
-/// In the list view only the name column shows and folders don't expand; in
-/// the details view folders expand in place, Finder style.
+/// Details view: an NSOutlineView with sortable metadata columns and folders
+/// that expand in place, Finder style.
 @MainActor
 final class FileListViewController: NSViewController, FileBrowsingView {
     let model: BrowserModel
@@ -138,7 +137,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.reloadVisibleNames() }
             })
-        applyViewMode()
+        applyColumns()
         applySortIndicator()
         // When swapped in for another view, the model already has items.
         reloadItems()
@@ -159,7 +158,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         if change.contains(.location) {
             nodesByURL = [:]
         }
-        if change.contains(.viewMode) || change.contains(.location) { applyViewMode() }
+        if change.contains(.location) { applyColumns() }
         if change.contains(.sort) { applySortIndicator() }
         if change.contains(.items) {
             reloadItems()
@@ -179,41 +178,28 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         }
     }
 
-    private func applyViewMode() {
+    private func applyColumns() {
         let selected = selectedURLs()
         defer { select(selected, scroll: true) }
-        let details = model.viewMode == .details
         for column in Column.allCases where column != .name {
             let tableColumn = outlineView.tableColumn(withIdentifier: column.identifier)
             if column == .location {
                 // "Where" shows only for search results, in the details view.
-                tableColumn?.isHidden = !(details && model.location.isSearch)
+                tableColumn?.isHidden = !model.location.isSearch
                 continue
             }
-            if details {
-                tableColumn?.isHidden =
-                    UserDefaults.standard.bool(forKey: hiddenKey(column))
-                    || (column.hiddenByDefault && UserDefaults.standard.object(forKey: hiddenKey(column)) == nil)
-            } else {
-                tableColumn?.isHidden = true
-            }
+            tableColumn?.isHidden =
+                UserDefaults.standard.bool(forKey: hiddenKey(column))
+                || (column.hiddenByDefault && UserDefaults.standard.object(forKey: hiddenKey(column)) == nil)
         }
-        if !details { outlineView.collapseItem(nil, collapseChildren: true) }
-        // The list view has no column headers; removing the header view (not
-        // just hiding it) gives its space back to the rows.
-        outlineView.headerView = details ? headerView : nil
         scrollView.tile()
-        scrollView.hasHorizontalScroller = details
-        outlineView.indentationPerLevel = details ? 14 : 0
         outlineView.tile()
         fitNameColumn(fill: true)
         outlineView.reloadData()
     }
 
-    /// Keeps every visible column on screen. The list view widens the name
-    /// column to the whole window, and that width is saved, so coming back to
-    /// Details could leave it wide enough to push the other columns out of
-    /// view. With `fill`, it also grows to take up spare width.
+    /// Keeps visible columns on screen, including when the saved name width
+    /// would push metadata out of view. With `fill`, it grows to fill spare space.
     private func fitNameColumn(fill: Bool) {
         guard let name = outlineView.tableColumn(withIdentifier: Column.name.identifier) else { return }
         let available = scrollView.contentView.bounds.width

@@ -138,7 +138,7 @@ enum ViewMode: String, CaseIterable, Sendable {
     case columns
     /// A large preview of the selection above a strip of thumbnails.
     case gallery
-    /// Names only, one per row.
+    /// Compact names that fill columns from top to bottom and scroll horizontally.
     case list
 
     var title: String {
@@ -157,11 +157,11 @@ enum ViewMode: String, CaseIterable, Sendable {
         case .details: "list.bullet.indent"
         case .columns: "rectangle.split.3x1"
         case .gallery: "rectangle.bottomhalf.inset.filled"
-        case .list: "list.bullet"
+        case .list: "rectangle.split.3x1.fill"
         }
     }
 
-    /// Finder's shortcuts: Cmd+1 to Cmd+4; the plain list takes Cmd+5.
+    /// Finder's shortcuts: Cmd+1 to Cmd+4; the compact list takes Cmd+5.
     var shortcut: String {
         switch self {
         case .icons: "1"

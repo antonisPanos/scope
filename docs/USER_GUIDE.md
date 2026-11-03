@@ -33,6 +33,11 @@ Scratch Folder), and its status bar says so.
   Look. Size it with the slider in the status bar, Cmd+= and Cmd+-, or a pinch.
   Thumbnails held in memory are capped at 64 MB; Scope keeps no disk cache.
 - Gallery: a large preview of the selected item over a strip of thumbnails.
+- List: compact file rows fill columns from top to bottom, then continue to
+  the right. Scroll horizontally with a trackpad or mouse wheel. The columns
+  reflow to fit the window height, and narrow panes use narrower columns.
+  Examples: [light appearance](images/compact-list-light.png),
+  [dark appearance](images/compact-list-dark.png), and the [List icon](images/compact-list-icon.png).
 - Finder color tags appear as colored dots in every view, on folder icons
   and thumbnails in Icons and Gallery, and beside filenames in the other
   views. Changes refresh without losing the selection or open columns.
