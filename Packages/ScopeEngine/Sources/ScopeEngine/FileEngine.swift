@@ -270,10 +270,14 @@ public struct FileEngine: Sendable {
         var job = CopyJob(progress: progress, control: control, readFault: readFault, writeFault: writeFault)
         let input = try CopyLocation(checked: source)
         let output = try CopyLocation(checked: target)
-        try job.measure(input)
+        // A named pipe or device file anywhere inside fails the copy here,
+        // before a partial exists, rather than being left out of it.
+        try job.measure(input, rejectingUnsupported: true)
 
+        // The staging name never includes the destination's name: a legal
+        // 255-byte name plus the prefix would exceed the disk's name limit.
         let partial = target.deletingLastPathComponent()
-            .appendingPathComponent(Self.partialPrefix + UUID().uuidString + "-" + target.lastPathComponent)
+            .appendingPathComponent(Self.partialPrefix + UUID().uuidString)
         // The partial name must pass the guard like any other path we write.
         try pathGuard.checkWriteLocation(partial)
 
@@ -316,9 +320,21 @@ public struct FileEngine: Sendable {
 
     // MARK: - Helpers
 
+    /// The longest file name, in UTF-8 bytes, that APFS and HFS+ accept.
+    static let maxNameBytes = 255
+
+    /// `base` + `tail`, with `base` shortened by whole characters until the
+    /// name fits `maxNameBytes`. Generated names ("… copy 2.txt") stay
+    /// legal when the original name is already near the limit.
+    static func fittingName(_ base: String, _ tail: String) -> String {
+        var base = Substring(base)
+        while base.count > 1, base.utf8.count + tail.utf8.count > maxNameBytes { base = base.dropLast() }
+        return String(base) + tail
+    }
+
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
-            && name.utf8.count <= 255
+            && name.utf8.count <= maxNameBytes
     }
 
     /// Renames `source` to `target` only if nothing is there; false with

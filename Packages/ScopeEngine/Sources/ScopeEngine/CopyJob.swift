@@ -30,7 +30,9 @@ struct CopyJob {
         self.writeFault = writeFault
     }
 
-    mutating func measure(_ source: CopyLocation) throws {
+    /// Counts what a copy of `source` will write. With `rejectingUnsupported`,
+    /// it fails on the first item a copy can't reproduce, before anything is written.
+    mutating func measure(_ source: CopyLocation, rejectingUnsupported: Bool = false) throws {
         try Task.checkCancellation()
         let info = try source.info()
         state.itemsTotal += 1
@@ -38,11 +40,25 @@ struct CopyJob {
         case S_IFDIR:
             let directory = try source.open(O_RDONLY | O_DIRECTORY, matching: info)
             for name in try CopyLocation.names(in: directory, path: source.path) {
-                try measure(source.child(name, in: directory))
+                try measure(source.child(name, in: directory), rejectingUnsupported: rejectingUnsupported)
             }
         case S_IFREG:
             state.bytesTotal += Int64(info.st_size)
-        default: break
+        default:
+            if rejectingUnsupported { try Self.checkCopyable(info, path: source.path) }
+        }
+    }
+
+    /// Folders, files and symlinks are copied. Named pipes, sockets and device
+    /// files are not, so a copy that meets one fails rather than publishing
+    /// a tree that silently lacks it.
+    static func checkCopyable(_ info: stat, path: String) throws {
+        switch info.st_mode & S_IFMT {
+        case S_IFDIR, S_IFREG, S_IFLNK: return
+        case S_IFIFO: throw FileEngineError.unsupportedItem(path, kind: "a named pipe (FIFO)")
+        case S_IFSOCK: throw FileEngineError.unsupportedItem(path, kind: "a socket")
+        case S_IFCHR, S_IFBLK: throw FileEngineError.unsupportedItem(path, kind: "a device file")
+        default: throw FileEngineError.unsupportedItem(path, kind: "a special file")
         }
     }
 
@@ -55,7 +71,7 @@ struct CopyJob {
         try control?.waitWhilePaused()
         let directory = info.st_mode & S_IFMT == S_IFDIR
         let link = info.st_mode & S_IFMT == S_IFLNK
-        guard directory || link || info.st_mode & S_IFMT == S_IFREG else { return }
+        try Self.checkCopyable(info, path: source.path)
         // The check and open refer to the same object. O_NONBLOCK also keeps
         // a regular file swapped for a pipe from hanging before fstat checks it.
         let input = try source.open(directory ? O_RDONLY | O_DIRECTORY : link ? O_SYMLINK : O_RDONLY, matching: info)
