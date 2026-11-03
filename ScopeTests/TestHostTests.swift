@@ -32,4 +32,9 @@ struct TestHostTests {
     @Test func theHostOpensNoWindow() {
         #expect(!NSApp.windows.contains { $0.windowController is BrowserWindowController })
     }
+
+    @Test func closingATestWindowDoesNotQuitTheHost() throws {
+        let delegate = try #require(NSApp.delegate as? AppDelegate)
+        #expect(!delegate.applicationShouldTerminateAfterLastWindowClosed(NSApp))
+    }
 }
