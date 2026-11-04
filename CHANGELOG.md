@@ -3,6 +3,20 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.4.1](https://github.com/antonisPanos/scope/compare/v0.4.0...v0.4.1) (2026-11-04)
+
+
+### Bug fixes
+
+* **archives:** apply held sidecars before newer metadata ([#163](https://github.com/antonisPanos/scope/issues/163)) ([23e9da5](https://github.com/antonisPanos/scope/commit/23e9da5ebd7ce934fac1ff93178bb5878e2e1d11))
+* **archives:** extract through pinned descriptors and bound metadata ([#154](https://github.com/antonisPanos/scope/issues/154)) ([5e1501b](https://github.com/antonisPanos/scope/commit/5e1501bab7b4aaea304c24a77e09c150153e765e))
+* **archives:** set quarantine by descriptor, never by a user path ([#164](https://github.com/antonisPanos/scope/issues/164)) ([bbbe002](https://github.com/antonisPanos/scope/commit/bbbe00211d6666cadb2c99b93c90df7e6eaa71e2))
+* **copy:** fit generated names when the extension fills the limit ([#162](https://github.com/antonisPanos/scope/issues/162)) ([5ef4e67](https://github.com/antonisPanos/scope/commit/5ef4e67cbff6b5d5710056d58ae0a92bf7017e1c))
+* **copy:** keep long names and refuse items a copy can't reproduce ([#153](https://github.com/antonisPanos/scope/issues/153)) ([3a9deb8](https://github.com/antonisPanos/scope/commit/3a9deb82d7c8d895eeb89f69227d90db3a140fa0))
+* **delete:** list every item in the permanent-delete confirmation ([#156](https://github.com/antonisPanos/scope/issues/156)) ([5072569](https://github.com/antonisPanos/scope/commit/5072569523c9320c6c4751636b5fb91068500459))
+* **disk-images:** check the image for writable mounts and honor cancel ([#155](https://github.com/antonisPanos/scope/issues/155)) ([3dbce9e](https://github.com/antonisPanos/scope/commit/3dbce9e14c23e7f0e3beeb0f8aac9ce0ff5fcef4))
+* **search:** check the search folder off the main thread ([#157](https://github.com/antonisPanos/scope/issues/157)) ([b727e6e](https://github.com/antonisPanos/scope/commit/b727e6ec768115e642125a17b8345f94aac5c8ff))
+
 ## [0.4.0](https://github.com/antonisPanos/scope/compare/v0.3.0...v0.4.0) (2026-11-03)
 
 
