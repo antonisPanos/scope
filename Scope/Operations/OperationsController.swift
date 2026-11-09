@@ -262,11 +262,27 @@ final class OperationsController {
         let name = conflict.existing.lastPathComponent
         let folder = conflict.existing.deletingLastPathComponent().lastPathComponent
         alert.messageText = "An item named “\(name)” already exists in “\(folder)”."
-        var text = "Replacing moves the existing item to the Trash, so you can get it back."
-        if let existing = conflict.existingModified, let incoming = conflict.incomingModified {
-            let style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+        func label(_ kind: ConflictItemKind) -> String {
+            switch kind {
+            case .file: "file"
+            case .directory: "folder"
+            case .symbolicLink: "symbolic link"
+            case .other: "other item"
+            case .unknown: "item of unknown type"
+            }
+        }
+        let style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+        func details(_ url: URL, _ kind: ConflictItemKind, _ modified: Date?) -> String {
+            let date = modified.map { ", modified \($0.formatted(style))" } ?? ""
+            return "\(url.path) (\(label(kind))\(date))"
+        }
+        var text = "Existing: \(details(conflict.existing, conflict.existingKind, conflict.existingModified))"
+        text += "\nNew: \(details(conflict.incoming, conflict.incomingKind, conflict.incomingModified))"
+        if conflict.existingKind == .directory {
             text +=
-                "\n\nExisting: modified \(existing.formatted(style))\nNew: modified \(incoming.formatted(style))"
+                "\n\nReplacing moves the entire existing folder to the Trash, including items only in that folder. It does not merge folders."
+        } else {
+            text += "\n\nReplacing moves the existing item to the Trash, so you can get it back."
         }
         text += "\n\nReplace If Older replaces only files whose existing copy is older."
         alert.informativeText = text
@@ -274,7 +290,12 @@ final class OperationsController {
             alert.addButton(withTitle: title)
         }
         alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Apply to all"
+        if conflict.incomingKind == .unknown || conflict.existingKind == .unknown {
+            alert.showsSuppressionButton = false
+        } else {
+            alert.suppressionButton?.title =
+                "Apply to all \(label(conflict.incomingKind)) → \(label(conflict.existingKind)) conflicts"
+        }
         return alert
     }
 
