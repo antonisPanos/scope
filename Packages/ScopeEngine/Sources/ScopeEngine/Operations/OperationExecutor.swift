@@ -224,137 +224,168 @@ extension FileEngine {
                 }
             }
 
-            let sameDisk = try sameOperationVolume(source, destination)
-            if moving && sameDisk {
-                // A rename is instant, so the existing item is trashed just
-                // before it, and put back if the rename fails.
-                var trashed: URL?
-                var moved = false
-                var lastFailure = ""
-                while !moved {
-                    if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
-                    do {
-                        try await moveItem(at: source, to: target)
-                        moved = true
-                    } catch {
-                        if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                        trashed = nil
-                        lastFailure = TransferReport.diagnostic(error)
-                        guard try await failures.retry(source, after: error) else { break }
-                    }
-                }
-                guard moved else {
-                    outcome = .failedAndSkipped(lastFailure)
-                    control.removePending(bytes: measurement.bytes, items: measurement.items)
-                    return
-                }
-                if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-                undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
-                control.update {
-                    $0.bytesDone += measurement.bytes
-                    $0.itemsDone += measurement.items
-                    $0.currentItem = source.lastPathComponent
-                }
-                outcome = .completed
-                return
-            }
-
-            // The copy is written under a partial name. Only when it is complete
-            // (and, for a move, verified) does a replaced item go to the Trash,
-            // right before the copy is renamed into its place.
-            let replaced = ReplacedItem()
-            var verifiedSource: VerifiedSource?
-            let existing = replacing ? target : nil
-            let placeCopy: (URL, URL) throws -> Void = { original, partial in
-                try validateParents()
-                if moving {
-                    control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
-                    self.copyTestOptions.boundary?(.beforeVerification, original, partial)
-                    verifiedSource = try self.verifyCopy(original, partial, control: control)
-                    self.copyTestOptions.boundary?(.afterVerification, original, partial)
-                }
-                if let existing, Self.lstatInfo(existing.path) != nil {
-                    try validateParents()
-                    replaced.trashed = try self.trashItemNow(existing)
-                }
-            }
-            // A failed attempt leaves nothing behind and puts a replaced item
-            // back, so the item can be tried again from the start.
-            let before = control.progress
-            var copied = false
-            var lastFailure = ""
-            while !copied {
-                do {
-                    try validateParents()
-                    try copyTracked(
-                        source, to: target, control: control, replacingExisting: replacing,
-                        validateParents: { input, output in
-                            try validateParents()
-                            if let (incoming, existing) = parents.last {
-                                try incoming.validateChildParent(input)
-                                try existing.validateChildParent(output)
-                            }
-                        }, beforePlacing: placeCopy
-                    )
-                    copied = true
-                } catch let error as PublishedCopyFinalizationError {
-                    if let trashed = replaced.trashed {
-                        undo.add(replacementStep(trashed, target: target, parents: parents))
-                    }
-                    undo.add(.trashCreated(target, fileID: error.publishedIdentity))
-                    if moving {
-                        throw OperationError.copyFinalizationFailed(
-                            source.lastPathComponent, error.localizedDescription)
-                    }
-                    throw error
-                } catch {
-                    if let trashed = replaced.trashed {
-                        do {
-                            try validateParents()
-                        } catch {
-                            undo.add(replacementStep(trashed, target: target, parents: parents))
-                            throw error
-                        }
-                        if let parent = parents.last?.1 {
-                            do {
-                                try placeBack(trashed, at: target, expectedParent: parent.fileIdentity)
-                            } catch {
-                                undo.add(replacementStep(trashed, target: target, parents: parents))
-                                throw error
-                            }
-                        } else {
-                            restoreReplaced(trashed, to: target, undo: undo)
-                        }
-                    }
-                    replaced.trashed = nil
-                    verifiedSource = nil
-                    control.update {
-                        $0.bytesDone = before.bytesDone
-                        $0.itemsDone = before.itemsDone
-                    }
-                    lastFailure = TransferReport.diagnostic(error)
-                    guard try await failures.retry(source, after: error) else { break }
-                }
-            }
-            guard copied else {
-                outcome = .failedAndSkipped(lastFailure)
-                control.removePending(bytes: measurement.bytes, items: measurement.items)
-                return
-            }
-            transferredBytes = max(0, control.progress.bytesDone - before.bytesDone)
-            if let trashed = replaced.trashed { undo.add(replacementStep(trashed, target: target, parents: parents)) }
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
-            if moving {
-                copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
-                guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
-                let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
-                if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
-            }
-            outcome = .completed
+            outcome = try await performTransfer(
+                TransferTarget(
+                    source: source, target: target, destination: destination,
+                    replacing: replacing, measurement: measurement),
+                context: context, failures: &failures, transferredBytes: &transferredBytes)
         } catch {
             outcome = .failed(TransferReport.diagnostic(error))
             throw error
         }
+    }
+
+    private struct TransferTarget {
+        let source: URL
+        let target: URL
+        let destination: URL
+        let replacing: Bool
+        let measurement: (bytes: Int64, items: Int)
+    }
+
+    private func performTransfer(
+        _ item: TransferTarget, context: TransferContext, failures: inout FailurePolicy,
+        transferredBytes: inout Int64
+    ) async throws -> TransferOutcome.Result {
+        let source = item.source
+        let target = item.target
+        let destination = item.destination
+        let replacing = item.replacing
+        let measurement = item.measurement
+        let moving = context.moving
+        let control = context.control
+        let undo = context.undo
+        let parents = context.parents
+        func validateParents() throws {
+            for (source, destination) in parents {
+                try source.validate(pathGuard: pathGuard)
+                try destination.validate(pathGuard: pathGuard)
+            }
+        }
+        let sameDisk = try sameOperationVolume(source, destination)
+        if moving && sameDisk {
+            // A rename is instant, so the existing item is trashed just
+            // before it, and put back if the rename fails.
+            var trashed: URL?
+            var moved = false
+            var lastFailure = ""
+            while !moved {
+                if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
+                do {
+                    try await moveItem(at: source, to: target)
+                    moved = true
+                } catch {
+                    if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                    trashed = nil
+                    lastFailure = TransferReport.diagnostic(error)
+                    guard try await failures.retry(source, after: error) else { break }
+                }
+            }
+            guard moved else {
+                control.removePending(bytes: measurement.bytes, items: measurement.items)
+                return .failedAndSkipped(lastFailure)
+            }
+            if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+            undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
+            control.update {
+                $0.bytesDone += measurement.bytes
+                $0.itemsDone += measurement.items
+                $0.currentItem = source.lastPathComponent
+            }
+            return .completed
+        }
+
+        // The copy is written under a partial name. Only when it is complete
+        // (and, for a move, verified) does a replaced item go to the Trash,
+        // right before the copy is renamed into its place.
+        let replaced = ReplacedItem()
+        var verifiedSource: VerifiedSource?
+        let existing = replacing ? target : nil
+        let placeCopy: (URL, URL) throws -> Void = { original, partial in
+            try validateParents()
+            if moving {
+                control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                self.copyTestOptions.boundary?(.beforeVerification, original, partial)
+                verifiedSource = try self.verifyCopy(original, partial, control: control)
+                self.copyTestOptions.boundary?(.afterVerification, original, partial)
+            }
+            if let existing, Self.lstatInfo(existing.path) != nil {
+                try validateParents()
+                replaced.trashed = try self.trashItemNow(existing)
+            }
+        }
+        // A failed attempt leaves nothing behind and puts a replaced item
+        // back, so the item can be tried again from the start.
+        let before = control.progress
+        var copied = false
+        var lastFailure = ""
+        while !copied {
+            do {
+                try validateParents()
+                try copyTracked(
+                    source, to: target, control: control, replacingExisting: replacing,
+                    validateParents: { input, output in
+                        try validateParents()
+                        if let (incoming, existing) = parents.last {
+                            try incoming.validateChildParent(input)
+                            try existing.validateChildParent(output)
+                        }
+                    }, beforePlacing: placeCopy
+                )
+                copied = true
+            } catch let error as PublishedCopyFinalizationError {
+                if let trashed = replaced.trashed {
+                    undo.add(replacementStep(trashed, target: target, parents: parents))
+                }
+                undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                if moving {
+                    throw OperationError.copyFinalizationFailed(
+                        source.lastPathComponent, error.localizedDescription)
+                }
+                throw error
+            } catch {
+                if let trashed = replaced.trashed {
+                    do {
+                        try validateParents()
+                    } catch {
+                        undo.add(replacementStep(trashed, target: target, parents: parents))
+                        throw error
+                    }
+                    if let parent = parents.last?.1 {
+                        do {
+                            try placeBack(trashed, at: target, expectedParent: parent.fileIdentity)
+                        } catch {
+                            undo.add(replacementStep(trashed, target: target, parents: parents))
+                            throw error
+                        }
+                    } else {
+                        restoreReplaced(trashed, to: target, undo: undo)
+                    }
+                }
+                replaced.trashed = nil
+                verifiedSource = nil
+                control.update {
+                    $0.bytesDone = before.bytesDone
+                    $0.itemsDone = before.itemsDone
+                }
+                lastFailure = TransferReport.diagnostic(error)
+                guard try await failures.retry(source, after: error) else { break }
+            }
+        }
+        guard copied else {
+            control.removePending(bytes: measurement.bytes, items: measurement.items)
+            return .failedAndSkipped(lastFailure)
+        }
+        transferredBytes = max(0, control.progress.bytesDone - before.bytesDone)
+        if let trashed = replaced.trashed { undo.add(replacementStep(trashed, target: target, parents: parents)) }
+        undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+        if moving {
+            copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
+            guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
+            let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
+            if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+        }
+        return .completed
     }
 
     /// Never follow a final link or infer eligibility when package metadata is unavailable.
