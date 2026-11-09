@@ -21,7 +21,7 @@ PROFILE = r'''(version 1)
 (deny file-write* (require-not (subpath (param "TEST_ROOT"))))
 (deny file-read* (require-all (subpath (param "REAL_HOME"))
     (require-not (subpath (param "PROJECT"))) (require-not (subpath (param "ROOT")))))
-(deny process-exec (require-not (literal (param "HELPER"))))
+(deny process-exec (require-not (require-any (literal (param "HELPER")) (literal "/usr/bin/env"))))
 (deny network*)
 '''
 
@@ -107,11 +107,20 @@ def main():
         helper = Path(swift).resolve().parent.parent / "libexec/swift/pm/swiftpm-testing-helper"
         if not helper.is_file():
             raise RuntimeError("Swift Testing helper is unavailable")
+        platform = subprocess.run(["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-platform-path"],
+                                  check=True, text=True, capture_output=True, timeout=10).stdout.strip()
+        frameworks = Path(platform) / "Developer/Library/Frameworks"
+        libraries = Path(platform) / "Developer/usr/lib"
+        if not (frameworks / "Testing.framework/Testing").is_file() or not libraries.is_dir():
+            raise RuntimeError("macOS SDK Testing framework or runtime libraries are unavailable")
         real_home = str(Path(pwd.getpwuid(os.getuid()).pw_dir).resolve())
+        # Set dyld paths after sandbox-exec, which may strip them under SIP.
+        # Only env and the selected helper are executable inside the sandbox.
         command = ["/usr/bin/sandbox-exec", "-p", PROFILE,
                    "-D", "ROOT=" + str(root), "-D", "TEST_ROOT=" + str(test_root),
                    "-D", "PROJECT=" + str(PROJECT), "-D", "REAL_HOME=" + real_home,
-                   "-D", "HELPER=" + str(helper), str(helper),
+                   "-D", "HELPER=" + str(helper), "/usr/bin/env",
+                   "DYLD_FRAMEWORK_PATH=" + str(frameworks), "DYLD_LIBRARY_PATH=" + str(libraries), str(helper),
                    "--test-bundle-path", str(next(iter(candidates))), "--testing-library", "swift-testing",
                    "--no-parallel"]
         output = run(command, env, root, fixtures, root / "test.log", 120)
