@@ -18,6 +18,10 @@ final class RecoveryJournal: @unchecked Sendable {
         let birthSeconds: Int64
         let birthNanoseconds: Int64
 
+        func sameObject(as other: Identity) -> Bool {
+            device == other.device && inode == other.inode && kind == other.kind
+        }
+
         init(_ info: stat) {
             device = UInt64(info.st_dev)
             inode = UInt64(info.st_ino)
@@ -152,9 +156,18 @@ final class RecoveryJournal: @unchecked Sendable {
                 case (.intent, .staging):
                     guard let identity else { throw Failure.invalidTransition }
                     record.staging = identity
-                case (.staging, .publishing): break
-                case (.publishing, .published):
-                    guard let identity, identity == record.staging else { throw Failure.invalidTransition }
+                case (.staging, .publishing):
+                    if let identity {
+                        guard let previous = record.staging, previous.sameObject(as: identity) else {
+                            throw Failure.invalidTransition
+                        }
+                        record.staging = identity
+                    }
+                case (.publishing, .published), (.published, .published):
+                    guard let identity, let previous = record.staging, previous.sameObject(as: identity) else {
+                        throw Failure.invalidTransition
+                    }
+                    record.staging = identity
                     record.published = identity
                 case (.intent, .resolved), (.staging, .resolved), (.publishing, .resolved), (.published, .resolved):
                     break

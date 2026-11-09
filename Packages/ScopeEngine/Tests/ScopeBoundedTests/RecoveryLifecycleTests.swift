@@ -112,3 +112,34 @@ extension RecoveryLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: source.path))
     }
 }
+
+extension RecoveryLifecycleTests {
+    @Test(arguments: ["file", "clone-attempt", "directory"])
+    func publishedRecordUsesPinnedIdentityAfterOldSourceMetadata(kind: String) async throws {
+        let fixture = try BoundedFixture()
+        let shared = try session(fixture, fail: .resolved)
+        let source: URL
+        if kind == "directory" {
+            source = fixture.root.appendingPathComponent("source-directory")
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: false)
+            try Data([1, 2]).write(to: source.appendingPathComponent("child"))
+        } else {
+            source = try fixture.write("source", count: 8)
+        }
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 946_684_800)], ofItemAtPath: source.path)
+        let target = fixture.root.appendingPathComponent("destination/out")
+        fixture.engine.recoverySession = shared
+        fixture.engine.copyTestOptions.disableCloning = kind != "clone-attempt"
+        let engine = fixture.engine
+        await #expect(throws: PublishedCopyFinalizationError.self) {
+            try await engine.copyItem(at: source, to: target)
+        }
+        let records = try shared.journal().discover(in: target.deletingLastPathComponent())
+        let record = try #require(records.first?.record)
+        var actual = stat()
+        #expect(lstat(target.path, &actual) == 0)
+        #expect(record.phase == .published)
+        #expect(record.published == RecoveryJournal.Identity(actual))
+    }
+}

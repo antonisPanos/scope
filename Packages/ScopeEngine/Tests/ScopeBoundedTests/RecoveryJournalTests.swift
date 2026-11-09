@@ -172,3 +172,29 @@ extension RecoveryJournalTests {
                 atPath: root.appendingPathComponent("session-" + record.session.uuidString).path))
     }
 }
+
+extension RecoveryJournalTests {
+    @Test func identityRefreshRejectsDifferentObject() throws {
+        let fixture = try BoundedFixture()
+        let root = try store(fixture)
+        let journal = try RecoveryJournal(root: root, pathGuard: .restricted(to: [fixture.root]))
+        let source = try fixture.write("source", count: 1)
+        let other = try fixture.write("other", count: 1)
+        let folder = fixture.root.appendingPathComponent("destination")
+        let stageName = FileEngine.partialPrefix + UUID().uuidString
+        let stage = folder.appendingPathComponent(stageName)
+        try Data([1]).write(to: stage)
+        let record = try journal.createIntent(
+            source: source, destination: folder.appendingPathComponent("out"), stagingName: stageName, action: .copy)
+        _ = try journal.transition(record.id, to: .staging, identity: identity(stage))
+        #expect(throws: RecoveryJournal.Failure.self) {
+            try journal.transition(record.id, to: .publishing, identity: identity(other))
+        }
+        var modifiedBirth = stat()
+        #expect(lstat(stage.path, &modifiedBirth) == 0)
+        modifiedBirth.st_birthtimespec.tv_sec -= 1
+        let refreshed = RecoveryJournal.Identity(modifiedBirth)
+        let updated = try journal.transition(record.id, to: .publishing, identity: refreshed)
+        #expect(updated.staging == refreshed)
+    }
+}

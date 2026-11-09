@@ -371,8 +371,15 @@ public struct FileEngine: Sendable {
                 throw FileEngineError.posix("Copy", target.path, EBUSY)
             }
             if let session = recoverySession, let journal, let record {
+                guard let descriptor = job.partialDescriptor else {
+                    throw FileEngineError.posix("Copy", target.path, EBUSY)
+                }
+                let pinned = try descriptor.info()
+                guard CopyLocation.same(pinned, identity) else {
+                    throw FileEngineError.posix("Copy", target.path, EBUSY)
+                }
                 try session.check(.publishing)
-                _ = try journal.transition(record.id, to: .publishing)
+                _ = try journal.transition(record.id, to: .publishing, identity: RecoveryJournal.Identity(pinned))
                 try output.validateParent(pathGuard: pathGuard)
             }
             guard CopyLocation.same(try staged.info(), identity),
@@ -408,13 +415,24 @@ public struct FileEngine: Sendable {
         copyTestOptions.boundary?(.beforeSync, source, target)
         control?.update { $0.currentItem = "Finalizing \(target.lastPathComponent)" }
         do {
-            if let session = recoverySession, let journal, let record, let identity = job.partialIdentity {
+            if let session = recoverySession, let journal, let record {
+                guard let descriptor = job.partialDescriptor else {
+                    throw FileEngineError.posix("Copy", target.path, EBUSY)
+                }
                 try session.check(.published)
-                _ = try journal.transition(record.id, to: .published, identity: RecoveryJournal.Identity(identity))
+                _ = try journal.transition(
+                    record.id, to: .published, identity: RecoveryJournal.Identity(descriptor.info()))
             }
             try job.finish(source: input, destination: output)
             try output.syncParent(fault: copySyncFault)
             if let session = recoverySession, let journal, let record {
+                guard let descriptor = job.partialDescriptor else {
+                    throw FileEngineError.posix("Copy", target.path, EBUSY)
+                }
+                // Directory and link metadata is applied in finish(), after the
+                // first published record. Refresh only from the pinned root.
+                _ = try journal.transition(
+                    record.id, to: .published, identity: RecoveryJournal.Identity(descriptor.info()))
                 try session.check(.resolved)
                 _ = try journal.transition(record.id, to: .resolved)
             }
