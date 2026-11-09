@@ -162,7 +162,8 @@ extension FileEngine {
             while !copied {
                 do {
                     try copyTracked(
-                        source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
+                        source, to: target, control: control, replacingExisting: replacing,
+                        recoveryAction: moving ? .move : .copy, beforePlacing: placeCopy)
                     copied = true
                 } catch let error as PublishedCopyFinalizationError {
                     // Publication succeeded: keep both the destination and its
@@ -223,7 +224,7 @@ extension FileEngine {
     /// Copies one item and adds its progress to the operation's totals.
     private func copyTracked(
         _ source: URL, to target: URL, control: OperationControl, replacingExisting: Bool = false,
-        beforePlacing: ((URL, URL) throws -> Void)? = nil
+        recoveryAction: RecoveryJournal.Action = .copy, beforePlacing: ((URL, URL) throws -> Void)? = nil
     ) throws {
         let base = control.progress
         try copyItem(
@@ -237,7 +238,7 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, replacingExisting: replacingExisting, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, recoveryAction: recoveryAction, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {

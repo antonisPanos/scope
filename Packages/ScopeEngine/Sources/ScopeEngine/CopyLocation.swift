@@ -177,8 +177,9 @@ struct CopyLocation {
 
     /// Removes only the unpublished partial, through its original parent.
     /// A replaced root is left alone, and symlinks are always unlinked as links.
-    func removePartial(matching expected: stat?) throws {
-        guard let current = try? info() else { return }
+    @discardableResult
+    func removePartial(matching expected: stat?) throws -> Bool {
+        guard let current = try? info() else { return false }
         guard let expected, Self.same(current, expected) else {
             throw FileEngineError.posix("Partial item changed", path, EBUSY)
         }
@@ -203,6 +204,7 @@ struct CopyLocation {
         guard unlinkat(parent.raw, name, directory ? AT_REMOVEDIR : 0) == 0 else {
             throw FileEngineError.posix("Remove partial", path)
         }
+        return true
     }
 
     func renameExclusively(to name: String, isDirectory: Bool) -> Bool {

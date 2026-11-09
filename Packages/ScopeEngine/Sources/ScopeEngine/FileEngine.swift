@@ -18,6 +18,9 @@ public struct CopyProgress: Sendable, Equatable {
 public struct FileEngine: Sendable {
     public let pathGuard: PathGuard
 
+    /// Optional, shared by engine instances; nil leaves recovery dormant.
+    var recoverySession: RecoverySession?
+
     /// What parses archives for Extract. Archives come from anywhere, so the
     /// app can run the parsing in a sandboxed service of its own; the engine
     /// opens the file, checks every entry's name and writes every file.
@@ -294,6 +297,7 @@ public struct FileEngine: Sendable {
         control: OperationControl?,
         progress: (@Sendable (CopyProgress) -> Void)?,
         replacingExisting: Bool = false,
+        recoveryAction: RecoveryJournal.Action = .copy,
         beforePlacing: ((_ source: URL, _ partial: URL) throws -> Void)? = nil
     ) throws {
         let source = try pathGuard.checkLocation(url)
@@ -325,6 +329,26 @@ public struct FileEngine: Sendable {
         // The staged copy is named by its destination in messages (and in the
         // tests' fault hook): its hidden name no longer says which item it is.
         let staged = CopyLocation(parent: output.parent, name: partial.lastPathComponent, path: target.path)
+        let journal: RecoveryJournal?
+        let record: RecoveryJournal.Record?
+        if let session = recoverySession {
+            journal = try session.journal()
+            try session.check(.intent)
+            record = try journal?.createIntent(
+                source: source, destination: target, stagingName: partial.lastPathComponent,
+                action: recoveryAction, expectedParent: RecoveryJournal.Identity(try output.parent.info()))
+        } else {
+            journal = nil
+            record = nil
+        }
+        var stagingRecorded = false
+        if let session = recoverySession, let journal, let record {
+            job.rootCreated = { identity in
+                try session.check(.staging)
+                _ = try journal.transition(record.id, to: .staging, identity: RecoveryJournal.Identity(identity))
+                stagingRecorded = true
+            }
+        }
         let publishedIdentity: FileIdentity
         do {
             try job.copy(from: input, to: staged, relative: "")
@@ -343,7 +367,15 @@ public struct FileEngine: Sendable {
                 throw FileEngineError.posix("Copy", target.path, EBUSY)
             }
             let current = try staged.info()
-            guard CopyLocation.same(current, identity),
+            guard CopyLocation.same(current, identity) else {
+                throw FileEngineError.posix("Copy", target.path, EBUSY)
+            }
+            if let session = recoverySession, let journal, let record {
+                try session.check(.publishing)
+                _ = try journal.transition(record.id, to: .publishing)
+                try output.validateParent(pathGuard: pathGuard)
+            }
+            guard CopyLocation.same(try staged.info(), identity),
                 staged.renameExclusively(to: output.name, isDirectory: identity.st_mode & S_IFMT == S_IFDIR)
             else {
                 throw FileEngineError.posix("Copy", target.path)
@@ -358,18 +390,34 @@ public struct FileEngine: Sendable {
                 size: isDirectory ? 0 : Int64(current.st_size), device: UInt64(current.st_dev),
                 kind: UInt32(current.st_mode & S_IFMT))
         } catch {
-            do {
-                try staged.removePartial(matching: job.partialIdentity)
-            } catch {
-                Self.logger.fault("Could not remove pinned partial: \(error.localizedDescription)")
+            // A failed or uncertain staging journal update is not proof of
+            // ownership. Leave that item and record untouched for review.
+            if recoverySession == nil || stagingRecorded {
+                do {
+                    let removed = try staged.removePartial(matching: job.partialIdentity)
+                    if removed, stagingRecorded, let session = recoverySession, let journal, let record {
+                        try session.check(.resolved)
+                        _ = try journal.transition(record.id, to: .resolved)
+                    }
+                } catch {
+                    Self.logger.fault("Could not clean up pinned partial or its journal: \(error.localizedDescription)")
+                }
             }
             throw error
         }
         copyTestOptions.boundary?(.beforeSync, source, target)
         control?.update { $0.currentItem = "Finalizing \(target.lastPathComponent)" }
         do {
+            if let session = recoverySession, let journal, let record, let identity = job.partialIdentity {
+                try session.check(.published)
+                _ = try journal.transition(record.id, to: .published, identity: RecoveryJournal.Identity(identity))
+            }
             try job.finish(source: input, destination: output)
             try output.syncParent(fault: copySyncFault)
+            if let session = recoverySession, let journal, let record {
+                try session.check(.resolved)
+                _ = try journal.transition(record.id, to: .resolved)
+            }
         } catch {
             throw PublishedCopyFinalizationError(
                 destination: target, reason: error.localizedDescription, publishedIdentity: publishedIdentity)

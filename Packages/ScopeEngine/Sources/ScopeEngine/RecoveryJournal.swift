@@ -114,15 +114,19 @@ final class RecoveryJournal: @unchecked Sendable {
         }
     }
 
-    func createIntent(source: URL, destination: URL, stagingName: String, action: Action) throws -> Record {
+    func createIntent(
+        source: URL, destination: URL, stagingName: String, action: Action, expectedParent: Identity? = nil
+    ) throws -> Record {
         try locked {
             let source = try pathGuard.checkLocation(source)
             let target = try pathGuard.checkWriteLocation(destination)
             let location = try CopyLocation(checked: target)
+            let parentIdentity = Identity(try location.parent.info())
+            guard expectedParent == nil || expectedParent == parentIdentity else { throw Failure.invalidStore }
             let record = Record(
                 version: 1, id: UUID(), session: sessionID, sessionIdentity: Identity(try sessionLock.info()),
                 source: source.path,
-                destination: target.path, stagingName: stagingName, parent: Identity(try location.parent.info()),
+                destination: target.path, stagingName: stagingName, parent: parentIdentity,
                 action: action, phase: .intent, staging: nil, published: nil)
             try validate(record)
             try withStoreLock {
@@ -152,7 +156,8 @@ final class RecoveryJournal: @unchecked Sendable {
                 case (.publishing, .published):
                     guard let identity, identity == record.staging else { throw Failure.invalidTransition }
                     record.published = identity
-                case (.intent, .resolved), (.staging, .resolved), (.published, .resolved): break
+                case (.intent, .resolved), (.staging, .resolved), (.publishing, .resolved), (.published, .resolved):
+                    break
                 default: throw Failure.invalidTransition
                 }
                 record.phase = phase
