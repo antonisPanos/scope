@@ -19,15 +19,18 @@ struct CopyJob {
     let control: OperationControl?
     let readFault: (@Sendable (String) -> Int32?)?
     let writeFault: (@Sendable (String, Int64) -> Int32?)?
+    let testOptions: FileEngine.CopyTestOptions
 
     init(
         progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
-        readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil
+        readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil,
+        testOptions: FileEngine.CopyTestOptions = .init()
     ) {
         progressHandler = progress
         self.control = control
         self.readFault = readFault
         self.writeFault = writeFault
+        self.testOptions = testOptions
     }
 
     /// Counts what a copy of `source` will write. With `rejectingUnsupported`,
@@ -106,7 +109,7 @@ struct CopyJob {
         } else {
             if let code = readFault?(source.path) { throw FileEngineError.posix("Read", source.path, code) }
             let cloned =
-                info.st_flags == 0
+                !testOptions.disableCloning && info.st_flags == 0
                 && fclonefileat(input.raw, destination.parent.raw, destination.name, UInt32(CLONE_NOOWNERCOPY)) == 0
             if cloned {
                 output = try destination.open(O_RDONLY)
@@ -123,6 +126,8 @@ struct CopyJob {
                 try copyData(input, output, source: source.path, destination: destination.path, info: info)
             }
             if relative.isEmpty { partialIdentity = try output.info() }
+            testOptions.boundary?(
+                .beforeMetadata, URL(fileURLWithPath: source.path), URL(fileURLWithPath: destination.path))
             guard fcopyfile(input.raw, output.raw, nil, copyfile_flags_t(COPYFILE_STAT | COPYFILE_XATTR)) == 0 else {
                 throw FileEngineError.posix("Copy attributes", destination.path)
             }
@@ -145,7 +150,8 @@ struct CopyJob {
         _ input: CopyDescriptor, _ output: CopyDescriptor, source: String, destination: String, info: stat
     ) throws {
         let size = off_t(info.st_size)
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: FileEngine.chunkSize, alignment: 16)
+        let sizeLimit = max(1, min(testOptions.chunkSize, FileEngine.chunkSize))
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: sizeLimit, alignment: 16)
         defer { buffer.deallocate() }
         let compressed = info.st_flags & UInt32(UF_COMPRESSED) != 0
         if !compressed, Int64(info.st_blocks) * 512 < Int64(size) {
@@ -181,7 +187,8 @@ struct CopyJob {
         while end.map({ offset < $0 }) ?? true {
             try Task.checkCancellation()
             try control?.waitWhilePaused()
-            let wanted = end.map { min(FileEngine.chunkSize, Int($0 - offset)) } ?? FileEngine.chunkSize
+            let chunkSize = max(1, min(testOptions.chunkSize, FileEngine.chunkSize))
+            let wanted = end.map { min(chunkSize, Int($0 - offset)) } ?? chunkSize
             let count = pread(input, buffer, wanted, offset)
             if count < 0 {
                 if errno == EINTR { continue }

@@ -6,7 +6,7 @@ import Foundation
 /// half done. Running out of space mid-copy is still handled, as a backstop.
 extension FileEngine {
     /// What a destination's file system allows.
-    struct DestinationLimits: Equatable {
+    struct DestinationLimits: Equatable, Sendable {
         /// The file system's name as `statfs` reports it ("apfs", "msdos", "exfat").
         var fileSystem: String
         /// The volume's name, for messages.
@@ -52,12 +52,12 @@ extension FileEngine {
     /// Throws the first reason the items can't go into `destination`.
     /// Items that will only be renamed (a move on one disk) need no space.
     func preflight(_ sources: [URL], into destination: URL, moving: Bool) throws {
-        guard let limits = DestinationLimits.of(destination) else { return }
-        guard let device = Self.lstatInfo(destination.path)?.st_dev else { return }
+        guard let limits = copyTestOptions.destinationLimits ?? DestinationLimits.of(destination) else { return }
+        guard Self.lstatInfo(destination.path)?.st_dev != nil else { return }
         var needed: Int64 = 0
         for source in sources {
             try Task.checkCancellation()
-            let sameDisk = Self.lstatInfo(source.path)?.st_dev == device
+            let sameDisk = try sameOperationVolume(source, destination)
             if moving && sameDisk { continue }
             var scan = PreflightScan(limits: limits)
             try scan.visit(source.path)
