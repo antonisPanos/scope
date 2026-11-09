@@ -18,6 +18,21 @@ make test       # engine suites, one at a time
 make app-test   # app tests hosted in Scope Dev
 ```
 
+The CI-only bounded fault profile runs `python3 scripts/test-bounded.py` on a
+disposable GitHub-hosted macOS runner. It refuses local execution; local use is
+unsupported until an approved quota-backed environment is available. The
+manifest selects a separate test target, and the runner confines its test process
+to an owned scratch root, blocks child processes and system Trash, and uses
+private fixtures. It watches the scratch tree at a 2 GiB allocated-byte threshold
+and the fixture tree at 2 MiB and 128 entries, with build and test timeouts. These
+polled thresholds can be exceeded between checks: they are not filesystem quotas.
+The profile models failures; it cannot establish real filesystem, device or
+power-loss behavior.
+
+`make test` and the CI sanitizer job retain the full integration suite, including
+mounted disposable test volumes. Run those only on an isolated CI/VM host with
+sufficient space and cleanup controls, never on the owner's Mac.
+
 Run `make` to see every target. Launch the result with:
 
 ```sh
