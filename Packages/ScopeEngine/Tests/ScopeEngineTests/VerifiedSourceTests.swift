@@ -81,7 +81,7 @@ import Testing
         let source = try sandbox.write("source.txt", "original")
         let copy = try sandbox.write("copy.txt", "original")
         let evidence = try sandbox.engine.verifyCopy(source, copy, control: nil)
-        let trashed = try #require(sandbox.engine.retireVerifiedSource(source, evidence: evidence))
+        let trashed = try #require(try sandbox.engine.retireVerifiedSource(source, evidence: evidence))
         #expect(!sandbox.exists("source.txt"))
         #expect(trashed.deletingLastPathComponent() == sandbox.trash)
         #expect(try String(contentsOf: trashed, encoding: .utf8) == "original")
