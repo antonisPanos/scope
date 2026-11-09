@@ -220,19 +220,72 @@ public final class UndoRecorder: Sendable {
     }
 }
 
+/// One top-level transfer result. A folder's counts include its descendants.
+public struct TransferOutcome: Sendable, Equatable {
+    public enum Result: Sendable, Equatable {
+        case completed
+        case skipped(String)
+        case failedAndSkipped(String)
+        case failed(String)
+    }
+    public let item: URL
+    public let items: Int
+    public let bytes: Int64
+    public let result: Result
+}
+
+/// Bounded per-operation report. Reserve the path and up to 4 KiB of
+/// diagnostic text for the next outcome before any mutation.
+public struct TransferReport: Sendable, Equatable {
+    public static let maxOutcomes = 1_000
+    public static let maxTextBytes = 512 * 1024
+    static let reasonBudget = 4 * 1024
+    public internal(set) var outcomes: [TransferOutcome] = []
+    public internal(set) var transferredBytes: Int64 = 0
+    public internal(set) var notStarted = 0
+    var textBytes = 0
+
+    public var skippedCount: Int {
+        outcomes.filter {
+            switch $0.result {
+            case .skipped, .failedAndSkipped: true
+            default: false
+            }
+        }.count
+    }
+
+    static func diagnostic(_ error: any Error) -> String {
+        let message = error.localizedDescription
+        guard message.utf8.count > reasonBudget else { return message }
+        var result = ""
+        for scalar in message.unicodeScalars {
+            if result.utf8.count + scalar.utf8.count > reasonBudget - 32 { break }
+            result.unicodeScalars.append(scalar)
+        }
+        return result + " [message shortened]"
+    }
+}
+
 /// Pause and progress for one running operation, shared between the worker
 /// and whoever displays it.
 public final class OperationControl: Sendable {
     private let state = Mutex(State())
+    private let reportOutcomeLimit: Int
 
     struct State {
         var paused = false
         var progress = OperationProgress()
         var samples: [(time: TimeInterval, bytes: Int64)] = []
         var skippedEntries: [String] = []
+        var transferReport: TransferReport?
     }
 
-    public init() {}
+    public init() { reportOutcomeLimit = TransferReport.maxOutcomes }
+
+    // Allows a tiny fixture to exercise the same boundary without 1,001 files.
+    init(reportOutcomeLimit: Int) {
+        self.reportOutcomeLimit = min(max(0, reportOutcomeLimit), TransferReport.maxOutcomes)
+    }
 
     public var isPaused: Bool {
         get { state.withLock { $0.paused } }
@@ -258,6 +311,51 @@ public final class OperationControl: Sendable {
         state.withLock { $0.skippedEntries }
     }
 
+    public var transferReport: TransferReport? {
+        state.withLock { $0.transferReport }
+    }
+
+    func beginTransferReport(notStarted: Int = 0) {
+        state.withLock {
+            var report = TransferReport()
+            report.notStarted = notStarted
+            $0.transferReport = report
+        }
+    }
+
+    func setNotStarted(_ count: Int) {
+        state.withLock { $0.transferReport?.notStarted = count }
+    }
+
+    func reserveOutcome(for item: URL, remaining: Int) throws {
+        try state.withLock { state in
+            guard var report = state.transferReport else { return }
+            let reservation = item.path.utf8.count + TransferReport.reasonBudget
+            guard report.outcomes.count < reportOutcomeLimit,
+                reservation <= TransferReport.maxTextBytes - report.textBytes
+            else {
+                report.notStarted = remaining
+                state.transferReport = report
+                throw OperationError.transferReportLimit(remaining)
+            }
+        }
+    }
+
+    func recordOutcome(_ outcome: TransferOutcome, transferredBytes: Int64 = 0) {
+        state.withLock { state in
+            guard var report = state.transferReport else { return }
+            let reason: String
+            switch outcome.result {
+            case .completed: reason = ""
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message): reason = message
+            }
+            report.textBytes += outcome.item.path.utf8.count + reason.utf8.count
+            report.transferredBytes += transferredBytes
+            report.outcomes.append(outcome)
+            state.transferReport = report
+        }
+    }
+
     func update(_ change: (inout OperationProgress) -> Void) {
         state.withLock { state in
             change(&state.progress)
@@ -266,6 +364,14 @@ public final class OperationControl: Sendable {
                 state.samples.append((now, state.progress.bytesDone))
                 state.samples.removeAll { now - $0.time > 3 }
             }
+        }
+    }
+
+    /// Remove an entire unprocessed top-level item from the measured plan.
+    func removePending(bytes: Int64, items: Int) {
+        update {
+            $0.bytesTotal = max($0.bytesDone, $0.bytesTotal - bytes)
+            $0.itemsTotal = max($0.itemsDone, $0.itemsTotal - items)
         }
     }
 
@@ -380,6 +486,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
 
     case itemsBusy([String])
     case stoppedByUser
+    case transferReportLimit(Int)
     /// The user said no to deleting for good on a disk with no Trash.
     case noTrash(String)
     /// A folder being deleted for good has another disk mounted inside.
@@ -403,6 +510,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .itemsBusy(let names):
             "\(names.joined(separator: ", ")) \(names.count == 1 ? "is" : "are") in use by another operation."
         case .stoppedByUser: "Stopped."
+        case .transferReportLimit(let remaining):
+            "The report limit was reached. \(remaining) remaining item(s) were untouched; run them in a smaller batch."
         case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
         case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
