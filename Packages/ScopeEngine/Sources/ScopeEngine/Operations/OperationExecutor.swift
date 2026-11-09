@@ -209,6 +209,7 @@ extension FileEngine {
                     } catch {
                         if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
                         replaced.trashed = nil
+                        verifiedSource = nil
                         control.update {
                             $0.bytesDone = before.bytesDone
                             $0.itemsDone = before.itemsDone
