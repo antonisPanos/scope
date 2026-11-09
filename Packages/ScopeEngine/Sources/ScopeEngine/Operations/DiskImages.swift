@@ -23,6 +23,7 @@ extension FileEngine {
         try pathGuard.checkLocation(image)
         let imagePath = try pathGuard.checkTarget(image)
         if !readOnly { try pathGuard.checkWriteLocation(imagePath) }
+        guard !Self.boundedTestProcess else { throw CocoaError(.featureUnsupported) }
         if let mountPoint {
             try pathGuard.checkWriteLocation(mountPoint)
             // diskutil makes the mount point itself, but its folder must exist.
@@ -93,6 +94,7 @@ extension FileEngine {
         _ path: String, _ arguments: [String], input: String?, timeout: TimeInterval
     ) async throws -> ToolOutput {
         try Task.checkCancellation()
+        guard !boundedTestProcess else { throw CocoaError(.featureUnsupported) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments

@@ -56,6 +56,38 @@ public struct FileEngine: Sendable {
     /// (ENOSPC) or a failing one (EIO) would. Always nil in the app.
     var writeFault: (@Sendable (String, Int64) -> Int32?)?
 
+    /// Internal deterministic seams. Defaults leave production behavior unchanged.
+    var copyTestOptions = CopyTestOptions()
+
+    static var boundedTestProcess: Bool {
+        ProcessInfo.processInfo.environment["SCOPE_BOUNDED_ROOT"] != nil
+    }
+
+    enum CopyBoundary: Sendable, Equatable {
+        case beforeMetadata, beforeVerification, afterVerification, beforePublication, beforeSync,
+            beforeSourceRetirement
+    }
+
+    struct CopyTestOptions: Sendable {
+        var chunkSize = FileEngine.chunkSize
+        var disableCloning = false
+        var destinationLimits: DestinationLimits?
+        /// Only simulates different volumes; it cannot authorize a same-volume rename.
+        var simulateDifferentVolumes = false
+        var boundary: (@Sendable (CopyBoundary, URL, URL) -> Void)?
+    }
+
+    func sameOperationVolume(_ source: URL, _ destination: URL) throws -> Bool {
+        if copyTestOptions.simulateDifferentVolumes {
+            // A simulated cross-volume move must never retire a source into the real Trash.
+            guard case .folder = trash, pathGuard.isRestricted else {
+                throw CocoaError(.featureUnsupported)
+            }
+            return false
+        }
+        return Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
+    }
+
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
     /// half-written item under its real name.
@@ -200,6 +232,11 @@ public struct FileEngine: Sendable {
         }
         switch trash {
         case .system:
+            // The bounded test process must fail closed even if a test creates
+            // an engine without configuring its private Trash.
+            guard !Self.boundedTestProcess else {
+                throw CocoaError(.featureUnsupported)
+            }
             var resulting: NSURL?
             try FileManager.default.trashItem(at: target, resultingItemURL: &resulting)
             return resulting as URL?
@@ -272,7 +309,9 @@ public struct FileEngine: Sendable {
         }
         guard !Self.isInside(target.path, source.path) else { throw FileEngineError.cannotCopyIntoItself(source.path) }
 
-        var job = CopyJob(progress: progress, control: control, readFault: readFault, writeFault: writeFault)
+        var job = CopyJob(
+            progress: progress, control: control, readFault: readFault, writeFault: writeFault,
+            testOptions: copyTestOptions)
         let input = try CopyLocation(checked: source)
         let output = try CopyLocation(checked: target)
         // A named pipe or device file anywhere inside fails the copy here,
@@ -298,6 +337,10 @@ public struct FileEngine: Sendable {
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
             try output.validateParent(pathGuard: pathGuard)
+            if let boundary = copyTestOptions.boundary {
+                boundary(.beforePublication, source, target)
+                try output.validateParent(pathGuard: pathGuard)
+            }
             guard let identity = job.partialIdentity,
                 CopyLocation.same(try staged.info(), identity),
                 staged.renameExclusively(to: output.name, isDirectory: identity.st_mode & S_IFMT == S_IFDIR)
@@ -314,6 +357,7 @@ public struct FileEngine: Sendable {
         }
         // The files are synced as they're written; this makes the rename
         // itself survive a power cut, before a move trashes the original.
+        copyTestOptions.boundary?(.beforeSync, source, target)
         output.syncParent()
         job.finish(source: input, destination: output)
     }
