@@ -10,6 +10,14 @@ import Testing
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["SCOPE_BOUNDED_ROOT"] != nil))
 struct BoundedFaultTests {
 
+    @Test func fixtureDestinationResolvesInsideGuard() throws {
+        let fixture = try BoundedFixture()
+        let destination = fixture.root.appendingPathComponent("destination")
+        #expect(try fixture.engine.pathGuard.checkWriteLocation(destination).path == destination.path)
+        #expect(try fixture.engine.pathGuard.checkTarget(destination).path == destination.path)
+        try fixture.checkBudget()
+    }
+
     @Test func writeFailureKeepsSourceAndRemovesPartial() async throws {
         let fixture = try BoundedFixture()
         let source = try fixture.write("source", count: 384)
