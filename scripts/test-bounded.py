@@ -20,6 +20,10 @@ PROFILE = r'''(version 1)
 (allow default)
 (deny file-write* (require-not (subpath (param "TEST_ROOT"))))
 (deny file-read* (require-all (subpath (param "REAL_HOME"))
+    (require-not (subpath (param "PROJECT"))) (require-not (subpath (param "ROOT")))
+    ; ANCESTOR_METADATA_EXCEPTIONS
+))
+(deny file-read-data (require-all (subpath (param "REAL_HOME"))
     (require-not (subpath (param "PROJECT"))) (require-not (subpath (param "ROOT")))))
 (deny process-exec (require-not (require-any (literal (param "HELPER")) (literal "/usr/bin/env"))))
 (deny network*)
@@ -113,13 +117,21 @@ def main():
         libraries = Path(platform) / "Developer/usr/lib"
         if not (frameworks / "Testing.framework/Testing").is_file() or not libraries.is_dir():
             raise RuntimeError("macOS SDK Testing framework or runtime libraries are unavailable")
-        real_home = str(Path(pwd.getpwuid(os.getuid()).pw_dir).resolve())
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+        # realpath() inspects each directory above ROOT. Permit only metadata
+        # on its literal home ancestors; their directory contents stay denied.
+        ancestors = [path for path in root.parents if path == home or home in path.parents]
+        ancestor_rules = "\n    ".join(
+            f'(require-not (literal (param "ANCESTOR_{index}")))' for index in range(len(ancestors)))
+        profile = PROFILE.replace("; ANCESTOR_METADATA_EXCEPTIONS", ancestor_rules)
+        ancestor_parameters = [value for index, path in enumerate(ancestors)
+                               for value in ("-D", f"ANCESTOR_{index}={path}")]
         # Set dyld paths after sandbox-exec, which may strip them under SIP.
         # Only env and the selected helper are executable inside the sandbox.
-        command = ["/usr/bin/sandbox-exec", "-p", PROFILE,
+        command = ["/usr/bin/sandbox-exec", "-p", profile,
                    "-D", "ROOT=" + str(root), "-D", "TEST_ROOT=" + str(test_root),
-                   "-D", "PROJECT=" + str(PROJECT), "-D", "REAL_HOME=" + real_home,
-                   "-D", "HELPER=" + str(helper), "/usr/bin/env",
+                   "-D", "PROJECT=" + str(PROJECT), "-D", "REAL_HOME=" + str(home),
+                   "-D", "HELPER=" + str(helper)] + ancestor_parameters + ["/usr/bin/env",
                    "DYLD_FRAMEWORK_PATH=" + str(frameworks), "DYLD_LIBRARY_PATH=" + str(libraries), str(helper),
                    "--test-bundle-path", str(next(iter(candidates))), "--testing-library", "swift-testing",
                    "--no-parallel"]
