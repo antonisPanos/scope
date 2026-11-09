@@ -49,4 +49,17 @@ struct MergeFoundationTests {
         control.recordOutcome(TransferOutcome(item: parent, items: 1, bytes: 0, result: .completed))
         #expect(control.transferReport?.outcomes.count == 2)
     }
+
+    @Test func pinnedDirectoryRejectsReplacement() throws {
+        let fixture = try BoundedFixture()
+        let directory = fixture.root.appendingPathComponent("folder")
+        let original = fixture.root.appendingPathComponent("original")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let guarder = PathGuard.restricted(to: [fixture.root])
+        let pinned = try MergeDirectory(directory, pathGuard: guarder, writable: true)
+        try FileManager.default.moveItem(at: directory, to: original)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { try pinned.validate(pathGuard: guarder) }
+        try fixture.checkBudget()
+    }
 }
