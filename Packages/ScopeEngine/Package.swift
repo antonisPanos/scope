@@ -1,5 +1,5 @@
-import Foundation
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
 
 // Positive selection: bounded builds do not even compile the volume suites.
