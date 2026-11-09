@@ -175,12 +175,15 @@ public enum UndoStep: Sendable, Hashable {
     case moveBack(from: URL, to: URL, fileID: FileIdentity)
     /// Undo a trash: put the item back from the Trash.
     case putBack(trashed: URL, original: URL)
+    /// Restore only if the containing merge folder is still the same object.
+    case putBackInParent(trashed: URL, original: URL, parent: FileIdentity)
 
     var touchedItems: [URL] {
         switch self {
         case .trashCreated(let url, _): [url]
         case .moveBack(let from, let to, _): [from, to]
         case .putBack(let trashed, let original): [trashed, original]
+        case .putBackInParent(let trashed, let original, _): [trashed, original]
         }
     }
 }
@@ -227,6 +230,7 @@ public struct TransferOutcome: Sendable, Equatable {
         case skipped(String)
         case failedAndSkipped(String)
         case failed(String)
+        case incomplete(String)
     }
     public let item: URL
     public let items: Int
@@ -351,7 +355,8 @@ public final class OperationControl: Sendable {
             let reason: String
             switch outcome.result {
             case .completed: reason = ""
-            case .skipped(let message), .failedAndSkipped(let message), .failed(let message): reason = message
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message), .incomplete(let message):
+                reason = message
             }
             precondition(outcome.item.path.utf8.count + reason.utf8.count <= reservation)
             report.textBytes += outcome.item.path.utf8.count + reason.utf8.count

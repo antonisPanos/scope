@@ -213,6 +213,7 @@ private struct OperationRow: View {
         switch outcome.result {
         case .completed: status = "Completed"
         case .skipped(let reason): status = "Skipped: \(reason)"
+        case .incomplete(let reason): status = "Incomplete: \(reason)"
         case .failedAndSkipped(let reason): status = "Skipped after failure: \(reason)"
         case .failed(let reason): status = "Failed: \(reason)"
         }

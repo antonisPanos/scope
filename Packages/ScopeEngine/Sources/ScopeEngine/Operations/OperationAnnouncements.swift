@@ -48,7 +48,7 @@ public struct FolderItemsChanged: Sendable, Equatable {
                 FolderItemsChanged(folder: parent(target), added: [target.lastPathComponent]),
                 FolderItemsChanged(folder: parent(source), removed: [source.lastPathComponent]),
             ]
-        case .putBack(_, let original):
+        case .putBack(_, let original), .putBackInParent(_, let original, _):
             return [FolderItemsChanged(folder: parent(original), removed: [original.lastPathComponent])]
         }
     }

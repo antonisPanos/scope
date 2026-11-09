@@ -274,4 +274,10 @@ struct MergeDirectory {
             throw FileEngineError.posix("Merge folder changed", url.path, EBUSY)
         }
     }
+
+    var fileIdentity: FileIdentity {
+        FileIdentity(
+            inode: UInt64(identity.st_ino), modified: 0, size: 0,
+            device: UInt64(identity.st_dev), kind: UInt32(identity.st_mode & S_IFMT))
+    }
 }

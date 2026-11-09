@@ -189,7 +189,9 @@ extension FileEngine {
                         let skippedBefore = control.transferReport?.skippedCount ?? 0
                         reportedMeasurement = (bytes: 0, items: 1)
                         control.update { $0.itemsDone += 1 }
+                        control.setNotStarted(context.remainingOutside + children.count)
                         for (index, child) in children.enumerated() {
+                            control.setNotStarted(context.remainingOutside + children.count - index)
                             try incoming.validate(pathGuard: pathGuard)
                             try existing.validate(pathGuard: pathGuard)
                             try await transferItem(
@@ -202,7 +204,7 @@ extension FileEngine {
                         }
                         outcome =
                             (control.transferReport?.skippedCount ?? 0) > skippedBefore
-                            ? .skipped("Some children were skipped") : .completed
+                            ? .incomplete("Some children were skipped") : .completed
                         return
                     case .skip, .replaceIfOlder:
                         outcome = .skipped(replaceIfOlder ? "Existing item is not older" : "Skipped by choice")
@@ -296,7 +298,9 @@ extension FileEngine {
                     )
                     copied = true
                 } catch let error as PublishedCopyFinalizationError {
-                    if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                    if let trashed = replaced.trashed {
+                        undo.add(replacementStep(trashed, target: target, parents: parents))
+                    }
                     undo.add(.trashCreated(target, fileID: error.publishedIdentity))
                     if moving {
                         throw OperationError.copyFinalizationFailed(
@@ -304,7 +308,24 @@ extension FileEngine {
                     }
                     throw error
                 } catch {
-                    if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                    if let trashed = replaced.trashed {
+                        do {
+                            try validateParents()
+                        } catch {
+                            undo.add(replacementStep(trashed, target: target, parents: parents))
+                            throw error
+                        }
+                        if let parent = parents.last?.1 {
+                            do {
+                                try placeBack(trashed, at: target, expectedParent: parent.fileIdentity)
+                            } catch {
+                                undo.add(replacementStep(trashed, target: target, parents: parents))
+                                throw error
+                            }
+                        } else {
+                            restoreReplaced(trashed, to: target, undo: undo)
+                        }
+                    }
                     replaced.trashed = nil
                     verifiedSource = nil
                     control.update {
@@ -321,7 +342,7 @@ extension FileEngine {
                 return
             }
             transferredBytes = max(0, control.progress.bytesDone - before.bytesDone)
-            if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+            if let trashed = replaced.trashed { undo.add(replacementStep(trashed, target: target, parents: parents)) }
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             if moving {
                 copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
@@ -350,6 +371,13 @@ extension FileEngine {
 
     /// Puts back an item that was trashed to make room for a replacement that
     /// then failed. If that isn't possible, the operation's undo can still do it.
+    private func replacementStep(_ trashed: URL, target: URL, parents: [(MergeDirectory, MergeDirectory)]) -> UndoStep {
+        if let parent = parents.last?.1 {
+            return .putBackInParent(trashed: trashed, original: target, parent: parent.fileIdentity)
+        }
+        return .putBack(trashed: trashed, original: target)
+    }
+
     private func restoreReplaced(_ trashed: URL, to original: URL, undo: UndoRecorder) {
         do {
             try placeBack(trashed, at: original)
@@ -366,6 +394,19 @@ extension FileEngine {
         guard Self.renameExclusively(from.path, to: to.path) else {
             throw FileEngineError.posix("Put back", from.path)
         }
+    }
+
+    private func placeBack(_ trashed: URL, at original: URL, expectedParent: FileIdentity) throws {
+        let from = try CopyLocation(checked: pathGuard.checkPutBack(trashed))
+        let to = try CopyLocation(checked: pathGuard.checkWriteLocation(original))
+        let parent = try to.parent.info()
+        guard UInt64(parent.st_dev) == expectedParent.device, UInt64(parent.st_ino) == expectedParent.inode,
+            UInt32(parent.st_mode & S_IFMT) == expectedParent.kind
+        else { throw OperationError.undoNotPossible("The original merge folder has changed.") }
+        try to.validateParent(pathGuard: pathGuard)
+        let source = try from.info()
+        guard from.renameExclusively(into: to.parent, as: to.name, isDirectory: source.st_mode & S_IFMT == S_IFDIR)
+        else { throw FileEngineError.posix("Put back", original.path) }
     }
 
     /// Copies one item and adds its progress to the operation's totals.
@@ -629,6 +670,8 @@ extension FileEngine {
                     throw OperationError.undoNotPossible("“\(trashed.lastPathComponent)” is no longer in the Trash.")
                 }
                 try await moveItem(at: trashed, to: original, puttingBack: true)
+            case .putBackInParent(let trashed, let original, let expected):
+                try placeBack(trashed, at: original, expectedParent: expected)
             }
             // Undoing a step reverses the change it recorded.
             undo.announce(FolderItemsChanged.changes(for: step).map(\.reversed))
