@@ -57,14 +57,23 @@ import Testing
         let handle = try FileHandle(forWritingTo: huge)
         try handle.truncate(atOffset: 4 * 1024 * 1024 * 1024 + 1)
         try handle.close()
-        await #expect(throws: OperationError.fileTooLarge("huge.bin", volume: "SCOPEFAT")) {
+        do {
             try await ops.run(.copy([huge], into: fat.work))
+            Issue.record("The oversized file should have been refused")
+        } catch let OperationError.incompatibleDestination(report) {
+            #expect(
+                report.entries.contains {
+                    $0.path == "huge.bin" && $0.reason == .fileTooLarge(limit: 4 * 1024 * 1024 * 1024 - 1)
+                })
         }
 
         try disk.write("notes/a:b.txt", "colon")
         try disk.write("notes/fine.txt", "fine")
-        await #expect(throws: OperationError.nameNotAllowed("a:b.txt", volume: "SCOPEFAT")) {
+        do {
             try await ops.run(.copy([disk.url("notes")], into: fat.work))
+            Issue.record("The incompatible name should have been refused")
+        } catch let OperationError.incompatibleDestination(report) {
+            #expect(report.entries.contains { $0.path == "notes/a:b.txt" && $0.reason == .invalidName })
         }
         #expect(try fat.names() == [])
 
