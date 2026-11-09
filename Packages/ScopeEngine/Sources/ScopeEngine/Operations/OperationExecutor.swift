@@ -164,6 +164,16 @@ extension FileEngine {
                     try copyTracked(
                         source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
                     copied = true
+                } catch let error as PublishedCopyFinalizationError {
+                    // Publication succeeded: keep both the destination and its
+                    // undo, and never restore over it or retry from scratch.
+                    if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                    undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                    if moving {
+                        throw OperationError.copyFinalizationFailed(
+                            source.lastPathComponent, error.localizedDescription)
+                    }
+                    throw error
                 } catch {
                     if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
                     replaced.trashed = nil
@@ -240,7 +250,12 @@ extension FileEngine {
         for source in sources {
             try Task.checkCancellation()
             let target = try uniqueName(source.lastPathComponent, in: source.deletingLastPathComponent(), style: .copy)
-            try copyTracked(source, to: target, control: control)
+            do {
+                try copyTracked(source, to: target, control: control)
+            } catch let error as PublishedCopyFinalizationError {
+                undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                throw error
+            }
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
         }
     }
