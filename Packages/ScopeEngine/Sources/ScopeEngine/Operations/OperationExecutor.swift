@@ -107,7 +107,7 @@ extension FileEngine {
                 }
             }
 
-            let sameDisk = Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
+            let sameDisk = try sameOperationVolume(source, destination)
             if moving && sameDisk {
                 // A rename is instant, so the existing item is trashed just
                 // before it, and put back if the rename fails.
@@ -148,7 +148,9 @@ extension FileEngine {
             let placeCopy: (URL, URL) throws -> Void = { original, partial in
                 if moving {
                     control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                    self.copyTestOptions.boundary?(.beforeVerification, original, partial)
                     verifiedSource = try self.verifyCopy(original, partial, control: control)
+                    self.copyTestOptions.boundary?(.afterVerification, original, partial)
                 }
                 if let existing, Self.lstatInfo(existing.path) != nil {
                     replaced.trashed = try self.trashItemNow(existing)
@@ -181,6 +183,7 @@ extension FileEngine {
             if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
             if moving {
+                copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
                 guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
                 let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
                 if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
