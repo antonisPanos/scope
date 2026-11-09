@@ -136,7 +136,7 @@ def main():
                    "--test-bundle-path", str(next(iter(candidates))), "--testing-library", "swift-testing",
                    "--no-parallel"]
         output = run(command, env, root, fixtures, root / "test.log", 120)
-        match = re.search(r"Test run with ([1-9][0-9]*) tests? passed", output)
+        match = re.search(r"Test run with ([1-9][0-9]*) tests?(?: in [1-9][0-9]* suites?)? passed", output)
         if "BoundedFaultTests" not in output or not match or int(match.group(1)) < 9:
             raise RuntimeError("the bounded test run did not confirm that tests executed")
         if any(fixtures.iterdir()):
