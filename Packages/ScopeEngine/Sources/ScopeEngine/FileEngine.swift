@@ -253,21 +253,14 @@ public struct FileEngine: Sendable {
         }
     }
 
-    /// Removes partial items a crashed or killed copy left in `directory`.
-    /// Returns how many were removed.
+    /// Prefixes do not prove ownership or that a copy is no longer active.
+    /// Recovery cannot safely remove partials with this API.
+    @available(*, deprecated, message: "Prefix-only partial cleanup is unsafe and no longer supported")
     @discardableResult
     public func removeLeftoverPartials(in directory: URL) async throws -> Int {
         return try await onIOThreads {
             try pathGuard.checkWriteLocation(directory)
-            let folder = try pathGuard.checkTarget(directory)
-            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-            var removed = 0
-            for name in names where name.hasPrefix(Self.partialPrefix) {
-                let partial = try pathGuard.checkWriteLocation(folder.appendingPathComponent(name))
-                try FileManager.default.removeItem(at: partial)
-                removed += 1
-            }
-            return removed
+            throw CocoaError(.featureUnsupported)
         }
     }
 
