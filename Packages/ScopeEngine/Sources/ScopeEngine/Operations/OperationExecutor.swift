@@ -61,138 +61,172 @@ extension FileEngine {
         _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
         undo: UndoRecorder, conflicts: inout ConflictPolicy, failures: inout FailurePolicy
     ) async throws {
+        control.beginTransferReport(notStarted: items.count)
         let destination = try pathGuard.checkWriteLocation(folder)
         let sources = try items.map { try pathGuard.checkLocation($0) }
-        let totals = try measure(sources)
+        // Keep the initial measurement for each top-level item. Measuring again
+        // after a failure can observe a different tree and corrupt the totals.
+        let measurements = try sources.map { try measure([$0]) }
         control.update {
-            $0.bytesTotal = totals.bytes
-            $0.itemsTotal = totals.items
+            $0.bytesTotal = measurements.reduce(0) { $0 + $1.bytes }
+            $0.itemsTotal = measurements.reduce(0) { $0 + $1.items }
         }
         try preflight(sources, into: destination, moving: moving)
 
-        for source in sources {
+        for (index, pair) in zip(sources, measurements).enumerated() {
+            let (source, measurement) = pair
             try Task.checkCancellation()
             try control.waitWhilePaused()
-            let sameFolder = source.deletingLastPathComponent().path == destination.path
-            if moving && sameFolder { continue }
-            var target = destination.appendingPathComponent(source.lastPathComponent)
-            var replacing = false
-            if Self.lstatInfo(target.path) != nil {
-                if sameFolder {
-                    // Pasting a copy into its own folder makes "name copy", like Finder.
-                    target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
-                } else {
-                    // lstat describes the link itself, including dangling links.
-                    func kind(_ url: URL) -> ConflictItemKind {
-                        guard let info = Self.lstatInfo(url.path) else { return .unknown }
-                        switch info.st_mode & S_IFMT {
-                        case S_IFREG: return .file
-                        case S_IFDIR: return .directory
-                        case S_IFLNK: return .symbolicLink
-                        default: return .other
+            try control.reserveOutcome(for: source, remaining: sources.count - index)
+            control.setNotStarted(sources.count - index - 1)
+            var outcome: TransferOutcome.Result = .failed("Stopped before completion")
+            var transferredBytes: Int64 = 0
+            defer {
+                control.recordOutcome(
+                    TransferOutcome(item: source, items: measurement.items, bytes: measurement.bytes, result: outcome),
+                    transferredBytes: transferredBytes)
+            }
+            do {
+                let sameFolder = source.deletingLastPathComponent().path == destination.path
+                if moving && sameFolder {
+                    outcome = .skipped("Already in the destination folder")
+                    control.removePending(bytes: measurement.bytes, items: measurement.items)
+                    continue
+                }
+                var target = destination.appendingPathComponent(source.lastPathComponent)
+                var replacing = false
+                if Self.lstatInfo(target.path) != nil {
+                    if sameFolder {
+                        // Pasting a copy into its own folder makes "name copy", like Finder.
+                        target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
+                    } else {
+                        // lstat describes the link itself, including dangling links.
+                        func kind(_ url: URL) -> ConflictItemKind {
+                            guard let info = Self.lstatInfo(url.path) else { return .unknown }
+                            switch info.st_mode & S_IFMT {
+                            case S_IFREG: return .file
+                            case S_IFDIR: return .directory
+                            case S_IFLNK: return .symbolicLink
+                            default: return .other
+                            }
                         }
-                    }
-                    let conflict = Conflict(
-                        incoming: source, existing: target, incomingModified: Self.modified(source),
-                        existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target))
-                    var choice = try await conflicts.resolve(conflict)
-                    if choice == .replaceIfOlder {
-                        choice = Self.isOlderFile(target, than: source) ? .replace : .skip
-                    }
-                    switch choice {
-                    case .skip, .replaceIfOlder:
-                        control.update { $0.itemsDone += 1 }
-                        continue
-                    case .keepBoth:
-                        target = try uniqueName(source.lastPathComponent, in: destination, style: .numbered)
-                    case .replace:
-                        guard !Self.isInside(source.path, target.path) else {
-                            throw FileEngineError.cannotCopyIntoItself(source.path)
+                        let conflict = Conflict(
+                            incoming: source, existing: target, incomingModified: Self.modified(source),
+                            existingModified: Self.modified(target), incomingKind: kind(source),
+                            existingKind: kind(target))
+                        var choice = try await conflicts.resolve(conflict)
+                        let replaceIfOlder = choice == .replaceIfOlder
+                        if choice == .replaceIfOlder {
+                            choice = Self.isOlderFile(target, than: source) ? .replace : .skip
                         }
-                        // The existing item stays until its replacement is ready.
-                        replacing = true
-                    case .stop:
-                        throw OperationError.stoppedByUser
+                        switch choice {
+                        case .skip, .replaceIfOlder:
+                            outcome = .skipped(replaceIfOlder ? "Existing item is not older" : "Skipped by choice")
+                            control.removePending(bytes: measurement.bytes, items: measurement.items)
+                            continue
+                        case .keepBoth:
+                            target = try uniqueName(source.lastPathComponent, in: destination, style: .numbered)
+                        case .replace:
+                            guard !Self.isInside(source.path, target.path) else {
+                                throw FileEngineError.cannotCopyIntoItself(source.path)
+                            }
+                            // The existing item stays until its replacement is ready.
+                            replacing = true
+                        case .stop:
+                            throw OperationError.stoppedByUser
+                        }
                     }
                 }
-            }
 
-            let sameDisk = Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
-            if moving && sameDisk {
-                // A rename is instant, so the existing item is trashed just
-                // before it, and put back if the rename fails.
-                var trashed: URL?
-                var moved = false
-                while !moved {
-                    if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
+                let sameDisk = Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
+                if moving && sameDisk {
+                    // A rename is instant, so the existing item is trashed just
+                    // before it, and put back if the rename fails.
+                    var trashed: URL?
+                    var moved = false
+                    var lastFailure = ""
+                    while !moved {
+                        if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
+                        do {
+                            try await moveItem(at: source, to: target)
+                            moved = true
+                        } catch {
+                            if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                            trashed = nil
+                            lastFailure = TransferReport.diagnostic(error)
+                            guard try await failures.retry(source, after: error) else { break }
+                        }
+                    }
+                    guard moved else {
+                        outcome = .failedAndSkipped(lastFailure)
+                        control.removePending(bytes: measurement.bytes, items: measurement.items)
+                        continue
+                    }
+                    if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                    undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
+                    control.update {
+                        $0.bytesDone += measurement.bytes
+                        $0.itemsDone += measurement.items
+                        $0.currentItem = source.lastPathComponent
+                    }
+                    outcome = .completed
+                    continue
+                }
+
+                // The copy is written under a partial name. Only when it is complete
+                // (and, for a move, verified) does a replaced item go to the Trash,
+                // right before the copy is renamed into its place.
+                let replaced = ReplacedItem()
+                let existing = replacing ? target : nil
+                let placeCopy: (URL, URL) throws -> Void = { original, partial in
+                    if moving {
+                        control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                        try self.verifyCopy(original, partial, control: control)
+                    }
+                    if let existing, Self.lstatInfo(existing.path) != nil {
+                        replaced.trashed = try self.trashItemNow(existing)
+                    }
+                }
+                // A failed attempt leaves nothing behind and puts a replaced item
+                // back, so the item can be tried again from the start.
+                let before = control.progress
+                var copied = false
+                var lastFailure = ""
+                while !copied {
                     do {
-                        try await moveItem(at: source, to: target)
-                        moved = true
+                        try copyTracked(
+                            source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy
+                        )
+                        copied = true
                     } catch {
-                        if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                        trashed = nil
+                        if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                        replaced.trashed = nil
+                        control.update {
+                            $0.bytesDone = before.bytesDone
+                            $0.itemsDone = before.itemsDone
+                        }
+                        lastFailure = TransferReport.diagnostic(error)
                         guard try await failures.retry(source, after: error) else { break }
                     }
                 }
-                guard moved else {
-                    control.update { $0.itemsDone += 1 }
+                guard copied else {
+                    outcome = .failedAndSkipped(lastFailure)
+                    control.removePending(bytes: measurement.bytes, items: measurement.items)
                     continue
                 }
-                if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-                undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
-                let size = (try? measure([target]))?.bytes ?? 0
-                control.update {
-                    $0.bytesDone += size
-                    $0.itemsDone += 1
-                    $0.currentItem = source.lastPathComponent
-                }
-                continue
-            }
-
-            // The copy is written under a partial name. Only when it is complete
-            // (and, for a move, verified) does a replaced item go to the Trash,
-            // right before the copy is renamed into its place.
-            let replaced = ReplacedItem()
-            let existing = replacing ? target : nil
-            let placeCopy: (URL, URL) throws -> Void = { original, partial in
+                transferredBytes = max(0, control.progress.bytesDone - before.bytesDone)
+                if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                undo.add(.trashCreated(target, fileID: Self.fileID(target)))
                 if moving {
-                    control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
-                    try self.verifyCopy(original, partial, control: control)
+                    // From here the move finishes even if cancelled: the copy is in
+                    // place and verified, so the original goes to the Trash.
+                    let trashed = try trashItemNow(source)
+                    if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
                 }
-                if let existing, Self.lstatInfo(existing.path) != nil {
-                    replaced.trashed = try self.trashItemNow(existing)
-                }
-            }
-            // A failed attempt leaves nothing behind and puts a replaced item
-            // back, so the item can be tried again from the start.
-            let before = control.progress
-            var copied = false
-            while !copied {
-                do {
-                    try copyTracked(
-                        source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy)
-                    copied = true
-                } catch {
-                    if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                    replaced.trashed = nil
-                    control.update {
-                        $0.bytesDone = before.bytesDone
-                        $0.itemsDone = before.itemsDone
-                    }
-                    guard try await failures.retry(source, after: error) else { break }
-                }
-            }
-            guard copied else {
-                control.update { $0.itemsDone += 1 }
-                continue
-            }
-            if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
-            if moving {
-                // From here the move finishes even if cancelled: the copy is in
-                // place and verified, so the original goes to the Trash.
-                let trashed = try trashItemNow(source)
-                if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+                outcome = .completed
+            } catch {
+                outcome = .failed(TransferReport.diagnostic(error))
+                throw error
             }
         }
     }

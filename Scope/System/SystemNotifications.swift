@@ -121,11 +121,17 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
             lines.append(message)
             content.sound = .defaultCritical
         default:
-            content.subtitle = "Done in \(Self.format(duration))"
-            if snapshot.progress.bytesTotal > 0 {
-                lines.append(ByteCountFormatter.string(fromByteCount: snapshot.progress.bytesTotal, countStyle: .file))
+            let skipped = snapshot.transferReport?.skippedCount ?? 0
+            content.subtitle = Self.completionSubtitle(skippedCount: skipped, duration: duration)
+            let bytes = Self.completionBytes(
+                transferredBytes: snapshot.transferReport?.transferredBytes, progressBytes: snapshot.progress.bytesDone)
+            if bytes > 0 {
+                lines.append(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
             }
             content.sound = .default
+        }
+        if let report = snapshot.transferReport, report.skippedCount > 0 {
+            lines.append("Skipped \(report.skippedCount) item(s)")
         }
         if !snapshot.skippedEntries.isEmpty {
             lines.append(
@@ -133,6 +139,14 @@ final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
         }
         content.body = lines.joined(separator: " · ")
         return content
+    }
+
+    static func completionBytes(transferredBytes: Int64?, progressBytes: Int64) -> Int64 {
+        transferredBytes ?? progressBytes
+    }
+
+    static func completionSubtitle(skippedCount: Int, duration: TimeInterval) -> String {
+        skippedCount > 0 ? "Completed with skipped items" : "Done in \(format(duration))"
     }
 
     private static func format(_ seconds: TimeInterval) -> String {

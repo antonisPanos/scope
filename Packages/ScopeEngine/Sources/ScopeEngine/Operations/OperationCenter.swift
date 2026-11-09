@@ -29,6 +29,7 @@ public actor OperationCenter {
         public let canUndo: Bool
         public let isUndo: Bool
         public let skippedEntries: [String]
+        public let transferReport: TransferReport?
         public let destinationFolder: URL?
 
         public var isActive: Bool {
@@ -269,7 +270,7 @@ public actor OperationCenter {
                 started: entry.started, finished: entry.finished, queuePosition: queuePosition,
                 canUndo: !entry.isActive && !entry.undone && !entry.undo.recorded.isEmpty && !entry.isUndoOperation,
                 isUndo: entry.isUndoOperation, skippedEntries: entry.control.skippedEntries,
-                destinationFolder: entry.operation.destinationFolder)
+                transferReport: entry.control.transferReport, destinationFolder: entry.operation.destinationFolder)
         }
     }
 

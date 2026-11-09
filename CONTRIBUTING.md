@@ -56,6 +56,18 @@ Scope moves and deletes files, so development never changes real ones.
 rules apply to everyone. Do not create a CodeGraph index automatically; consult
 it first for code discovery only when `.codegraph/` already exists.
 
+## Transfer reports
+
+Copy and move reports are kept in memory for the operation's activity history;
+no report is written to disk. Each report holds at most 1,000 top-level
+outcomes and 512 KiB of path and diagnostic text. Before starting an item,
+Scope reserves its path plus 4 KiB for a diagnostic. If it cannot reserve
+space, it stops before that item, reports the number left untouched, and the
+remaining items can be run in smaller batches. Folder outcomes include their
+measured descendant counts. A diagnostic longer than 4 KiB is visibly
+shortened; all attempted items still have a report entry. Clearing finished
+activity or trimming history releases the reports.
+
 ## Branches
 
 `main` is always buildable. Every change goes through a short-lived branch and a pull request.
