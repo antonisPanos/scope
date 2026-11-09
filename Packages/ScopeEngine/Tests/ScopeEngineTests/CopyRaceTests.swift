@@ -107,10 +107,12 @@ import Testing
         let target = sandbox.url("copy.txt")
         let engine = sandbox.engine
         #expect(throws: (any Error).self) {
-            try engine.copyItem(at: source, to: target, control: nil, progress: nil) { _, partial in
-                try FileManager.default.moveItem(at: partial, to: kept)
-                try Data("replacement sentinel".utf8).write(to: partial, options: .withoutOverwriting)
-            }
+            try engine.copyItem(
+                at: source, to: target, control: nil, progress: nil,
+                beforePlacing: { _, partial in
+                    try FileManager.default.moveItem(at: partial, to: kept)
+                    try Data("replacement sentinel".utf8).write(to: partial, options: .withoutOverwriting)
+                })
         }
         #expect(!sandbox.exists("copy.txt"))
         let partial = try #require(try sandbox.names().first { $0.hasPrefix(FileEngine.partialPrefix) })
