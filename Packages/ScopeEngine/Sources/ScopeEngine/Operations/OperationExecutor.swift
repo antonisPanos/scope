@@ -111,13 +111,17 @@ extension FileEngine {
                         }
                         let conflict = Conflict(
                             incoming: source, existing: target, incomingModified: Self.modified(source),
-                            existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target))
+                            existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target),
+                            canMerge: Self.mergeEligible(source, target))
                         var choice = try await conflicts.resolve(conflict)
                         let replaceIfOlder = choice == .replaceIfOlder
                         if choice == .replaceIfOlder {
                             choice = Self.isOlderFile(target, than: source) ? .replace : .skip
                         }
                         switch choice {
+                        case .merge:
+                            // Merge remains unavailable until pinned recursive execution is implemented.
+                            throw CocoaError(.featureUnsupported)
                         case .skip, .replaceIfOlder:
                             outcome = .skipped(replaceIfOlder ? "Existing item is not older" : "Skipped by choice")
                             control.removePending(bytes: measurement.bytes, items: measurement.items)
@@ -238,6 +242,18 @@ extension FileEngine {
                 throw error
             }
         }
+    }
+
+    /// Never follow a final link or infer eligibility when package metadata is unavailable.
+    static func mergeEligible(_ incoming: URL, _ existing: URL) -> Bool {
+        func ordinaryDirectory(_ url: URL) -> Bool {
+            guard let info = lstatInfo(url.path), info.st_mode & S_IFMT == S_IFDIR,
+                let values = try? url.resourceValues(forKeys: [.isPackageKey]),
+                let isPackage = values.isPackage
+            else { return false }
+            return !isPackage
+        }
+        return ordinaryDirectory(incoming) && ordinaryDirectory(existing)
     }
 
     /// Puts back an item that was trashed to make room for a replacement that
@@ -628,10 +644,11 @@ struct ConflictPolicy {
         try Task.checkCancellation()
         let key = Key(incoming: conflict.incomingKind, existing: conflict.existingKind)
         let known = key.incoming != .unknown && key.existing != .unknown
-        if known, let choice = remembered[key] { return choice }
+        if known, let choice = remembered[key], choice != .merge || conflict.canMerge { return choice }
         let (choice, applyToAll) = await resolver(conflict)
         // A cancel while the question was open wins over the answer.
         try Task.checkCancellation()
+        guard choice != .merge || conflict.canMerge else { throw CocoaError(.featureUnsupported) }
         if applyToAll && known && choice != .stop { remembered[key] = choice }
         return choice
     }

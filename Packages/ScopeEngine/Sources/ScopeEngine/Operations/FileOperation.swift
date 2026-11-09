@@ -244,6 +244,7 @@ public struct TransferReport: Sendable, Equatable {
     public internal(set) var transferredBytes: Int64 = 0
     public internal(set) var notStarted = 0
     var textBytes = 0
+    var reservations: [Int] = []
 
     public var skippedCount: Int {
         outcomes.filter {
@@ -331,24 +332,28 @@ public final class OperationControl: Sendable {
         try state.withLock { state in
             guard var report = state.transferReport else { return }
             let reservation = item.path.utf8.count + TransferReport.reasonBudget
-            guard report.outcomes.count < reportOutcomeLimit,
-                reservation <= TransferReport.maxTextBytes - report.textBytes
+            guard report.outcomes.count + report.reservations.count < reportOutcomeLimit,
+                reservation <= TransferReport.maxTextBytes - report.textBytes - report.reservations.reduce(0, +)
             else {
                 report.notStarted = remaining
                 state.transferReport = report
                 throw OperationError.transferReportLimit(remaining)
             }
+            report.reservations.append(reservation)
+            state.transferReport = report
         }
     }
 
     func recordOutcome(_ outcome: TransferOutcome, transferredBytes: Int64 = 0) {
         state.withLock { state in
             guard var report = state.transferReport else { return }
+            guard let reservation = report.reservations.popLast() else { return }
             let reason: String
             switch outcome.result {
             case .completed: reason = ""
             case .skipped(let message), .failedAndSkipped(let message), .failed(let message): reason = message
             }
+            precondition(outcome.item.path.utf8.count + reason.utf8.count <= reservation)
             report.textBytes += outcome.item.path.utf8.count + reason.utf8.count
             report.transferredBytes += transferredBytes
             report.outcomes.append(outcome)
@@ -406,6 +411,8 @@ public struct OperationProgress: Sendable, Equatable {
 
 /// What to do when an item with the same name already exists at the destination.
 public enum ConflictChoice: Sendable, Equatable {
+    /// Combine the contents of two eligible ordinary folders.
+    case merge
     /// Move the existing item to the Trash, then put the new one in its place.
     case replace
     /// Replace the existing file only when it was modified before the new
@@ -436,10 +443,13 @@ public struct Conflict: Sendable, Equatable {
     public var existingModified: Date?
     public let incomingKind: ConflictItemKind
     public let existingKind: ConflictItemKind
+    /// Computed by the engine; unknown eligibility must remain false.
+    public let canMerge: Bool
 
     public init(
         incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil,
-        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown
+        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown,
+        canMerge: Bool = false
     ) {
         self.incoming = incoming
         self.existing = existing
@@ -447,6 +457,7 @@ public struct Conflict: Sendable, Equatable {
         self.existingModified = existingModified
         self.incomingKind = incomingKind
         self.existingKind = existingKind
+        self.canMerge = canMerge && incomingKind == .directory && existingKind == .directory
     }
 }
 
