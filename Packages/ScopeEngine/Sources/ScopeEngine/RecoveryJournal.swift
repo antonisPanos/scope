@@ -50,7 +50,10 @@ final class RecoveryJournal: @unchecked Sendable {
         let record: Record
         let ownership: Ownership
     }
-    enum Failure: Error { case invalidStore, busy, limit, malformed, invalidTransition, io(Int32) }
+    enum Failure: Error {
+        case invalidStore, busy, limit, malformed, invalidTransition
+        case io(Int32)
+    }
 
     private let root: CopyDescriptor
     private let sessionLock: CopyDescriptor
@@ -58,8 +61,12 @@ final class RecoveryJournal: @unchecked Sendable {
     private let mutex = NSLock()
     private let pathGuard: PathGuard
     private let rootURL: URL
+    private let recordLimit: Int
 
-    init(root url: URL, pathGuard: PathGuard, sessionID: UUID = UUID()) throws {
+    init(
+        root url: URL, pathGuard: PathGuard, sessionID: UUID = UUID(), recordLimit: Int = RecoveryJournal.maxRecords
+    ) throws {
+        guard (1...Self.maxRecords).contains(recordLimit) else { throw Failure.limit }
         let checked = try pathGuard.checkWriteLocation(url)
         guard checked.path == url.standardizedFileURL.path else { throw Failure.invalidStore }
         let fd = Darwin.open(checked.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
@@ -70,18 +77,21 @@ final class RecoveryJournal: @unchecked Sendable {
         self.sessionID = sessionID
         self.pathGuard = pathGuard
         self.rootURL = checked
-        // Serialize session creation and refuse an exhausted store before adding
-        // another persistent lock file. Locks are never deleted automatically.
+        self.recordLimit = recordLimit
+        // Serialize session creation. One entry remains reserved for a later
+        // session to run bounded metadata maintenance after a crash.
         let storeFD = openat(fd, "store.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         let storeLock = try CopyDescriptor(storeFD, path: "store.lock")
         let storeInfo = try storeLock.info()
         guard storeInfo.st_uid == getuid(), storeInfo.st_mode & S_IFMT == S_IFREG,
-              storeInfo.st_mode & 0o7777 == 0o600, storeInfo.st_nlink == 1 else { throw Failure.invalidStore }
+            storeInfo.st_mode & 0o7777 == 0o600, storeInfo.st_nlink == 1
+        else { throw Failure.invalidStore }
         guard flock(storeFD, LOCK_EX | LOCK_NB) == 0 else { throw Failure.busy }
         defer { flock(storeFD, LOCK_UN) }
         var namedStore = stat()
         guard fstatat(fd, "store.lock", &namedStore, AT_SYMLINK_NOFOLLOW) == 0,
-              Identity(namedStore) == Identity(storeInfo), try Self.names(in: fd).count < Self.maxEntries - 1 else {
+            Identity(namedStore) == Identity(storeInfo), try Self.names(in: fd).count < Self.maxEntries
+        else {
             throw Failure.invalidStore
         }
         let name = "session-" + sessionID.uuidString
@@ -89,11 +99,19 @@ final class RecoveryJournal: @unchecked Sendable {
         let lock = try CopyDescriptor(lockFD, path: name)
         let sessionInfo = try lock.info()
         guard sessionInfo.st_uid == getuid(), sessionInfo.st_mode & S_IFMT == S_IFREG,
-              sessionInfo.st_mode & 0o7777 == 0o600, sessionInfo.st_nlink == 1 else { throw Failure.invalidStore }
+            sessionInfo.st_mode & 0o7777 == 0o600, sessionInfo.st_nlink == 1
+        else { throw Failure.invalidStore }
         guard flock(lock.raw, LOCK_EX | LOCK_NB) == 0 else { throw Failure.busy }
         self.sessionLock = lock
-        try sync(lock.raw)
-        try sync(root.raw)
+        do {
+            try sync(lock.raw)
+            try sync(root.raw)
+            try maintainLocked()
+        } catch {
+            try? removeMetadata(name, expected: Identity(sessionInfo))
+            try? sync(root.raw)
+            throw error
+        }
     }
 
     func createIntent(source: URL, destination: URL, stagingName: String, action: Action) throws -> Record {
@@ -101,13 +119,17 @@ final class RecoveryJournal: @unchecked Sendable {
             let source = try pathGuard.checkLocation(source)
             let target = try pathGuard.checkWriteLocation(destination)
             let location = try CopyLocation(checked: target)
-            let record = Record(version: 1, id: UUID(), session: sessionID, sessionIdentity: Identity(try sessionLock.info()), source: source.path,
+            let record = Record(
+                version: 1, id: UUID(), session: sessionID, sessionIdentity: Identity(try sessionLock.info()),
+                source: source.path,
                 destination: target.path, stagingName: stagingName, parent: Identity(try location.parent.info()),
                 action: action, phase: .intent, staging: nil, published: nil)
             try validate(record)
             try withStoreLock {
+                try validateSessionName()
+                try maintainLocked()
                 let names = try entryNames()
-                guard names.filter({ $0.hasPrefix("record-") }).count < Self.maxRecords else { throw Failure.limit }
+                guard names.filter({ $0.hasPrefix("record-") }).count < recordLimit else { throw Failure.limit }
                 try write(record, replacing: false)
             }
             return record
@@ -118,7 +140,10 @@ final class RecoveryJournal: @unchecked Sendable {
         try locked {
             try withStoreLock {
                 var record = try read(id)
-                guard record.session == sessionID else { throw Failure.invalidTransition }
+                guard record.session == sessionID, record.sessionIdentity == Identity(try sessionLock.info()) else {
+                    throw Failure.invalidTransition
+                }
+                try validateSessionName()
                 switch (record.phase, phase) {
                 case (.intent, .staging):
                     guard let identity else { throw Failure.invalidTransition }
@@ -133,6 +158,10 @@ final class RecoveryJournal: @unchecked Sendable {
                 record.phase = phase
                 try validate(record)
                 try write(record, replacing: true)
+                if phase == .resolved {
+                    try removeMetadata(recordName(id))
+                    try sync(root.raw)
+                }
                 return record
             }
         }
@@ -152,7 +181,8 @@ final class RecoveryJournal: @unchecked Sendable {
                         throw Failure.malformed
                     }
                     let record = try read(id)
-                    guard URL(fileURLWithPath: record.destination).deletingLastPathComponent().path == checked.path else {
+                    guard URL(fileURLWithPath: record.destination).deletingLastPathComponent().path == checked.path
+                    else {
                         continue
                     }
                     let status = try ownership(record, folder: checked)
@@ -171,7 +201,7 @@ final class RecoveryJournal: @unchecked Sendable {
                 guard record.session != sessionID else { throw Failure.busy }
                 let lock = try inactiveLock(record.session, expected: record.sessionIdentity)
                 defer { flock(lock.raw, LOCK_UN) }
-                guard unlinkat(root.raw, recordName(id), 0) == 0 else { throw Failure.io(errno) }
+                try removeMetadata(recordName(id))
                 try sync(root.raw)
             }
         }
@@ -180,9 +210,9 @@ final class RecoveryJournal: @unchecked Sendable {
     private func ownership(_ record: Record, folder: URL) throws -> Ownership {
         if record.session == sessionID { return .active }
         let lock: CopyDescriptor
-        do { lock = try inactiveLock(record.session, expected: record.sessionIdentity) }
-        catch Failure.busy { return .active }
-        catch { return .ambiguous }
+        do { lock = try inactiveLock(record.session, expected: record.sessionIdentity) } catch Failure.busy {
+            return .active
+        } catch { return .ambiguous }
         defer { flock(lock.raw, LOCK_UN) }
         if record.phase == .resolved { return .resolved }
         if record.phase == .published { return .published }
@@ -206,7 +236,8 @@ final class RecoveryJournal: @unchecked Sendable {
         let lock = try CopyDescriptor(fd, path: name)
         let info = try lock.info()
         guard info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o7777 == 0o600,
-              info.st_nlink == 1, Identity(info) == expected else { throw Failure.invalidStore }
+            info.st_nlink == 1, Identity(info) == expected
+        else { throw Failure.invalidStore }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw Failure.busy }
         var current = stat()
         guard fstatat(root.raw, name, &current, AT_SYMLINK_NOFOLLOW) == 0, Identity(current) == expected else {
@@ -217,46 +248,70 @@ final class RecoveryJournal: @unchecked Sendable {
 
     private func validate(_ record: Record) throws {
         guard record.version == 1, record.source.hasPrefix("/"), record.destination.hasPrefix("/"),
-              record.source.utf8.count <= Self.maxPathBytes, record.destination.utf8.count <= Self.maxPathBytes,
-              !record.source.utf8.contains(0), !record.destination.utf8.contains(0),
-              record.stagingName.hasPrefix(FileEngine.partialPrefix),
-              UUID(uuidString: String(record.stagingName.dropFirst(FileEngine.partialPrefix.count))) != nil,
-              record.stagingName.utf8.count <= 255, record.parent.kind == UInt32(S_IFDIR),
-              record.parent.inode != 0, record.sessionIdentity.kind == UInt32(S_IFREG),
-              record.sessionIdentity.inode != 0 else { throw Failure.malformed }
+            record.source.utf8.count <= Self.maxPathBytes, record.destination.utf8.count <= Self.maxPathBytes,
+            !record.source.utf8.contains(0), !record.destination.utf8.contains(0),
+            record.stagingName.hasPrefix(FileEngine.partialPrefix),
+            UUID(uuidString: String(record.stagingName.dropFirst(FileEngine.partialPrefix.count))) != nil,
+            record.stagingName.utf8.count <= 255, record.parent.kind == UInt32(S_IFDIR),
+            record.parent.inode != 0, record.sessionIdentity.kind == UInt32(S_IFREG),
+            record.sessionIdentity.inode != 0
+        else { throw Failure.malformed }
         switch record.phase {
         case .intent: guard record.staging == nil, record.published == nil else { throw Failure.malformed }
-        case .staging, .publishing: guard record.staging != nil, record.published == nil else { throw Failure.malformed }
-        case .published: guard record.staging != nil, record.staging == record.published else { throw Failure.malformed }
+        case .staging, .publishing:
+            guard record.staging != nil, record.published == nil else { throw Failure.malformed }
+        case .published:
+            guard record.staging != nil, record.staging == record.published else { throw Failure.malformed }
         case .resolved: break
         }
         if let identity = record.staging {
             guard identity.inode != 0, [UInt32(S_IFREG), UInt32(S_IFDIR), UInt32(S_IFLNK)].contains(identity.kind),
-                  identity.device == record.parent.device else { throw Failure.malformed }
+                identity.device == record.parent.device
+            else { throw Failure.malformed }
         }
     }
 
     private func recordName(_ id: UUID) -> String { "record-" + id.uuidString }
 
     private func read(_ id: UUID) throws -> Record {
-        let name = recordName(id)
-        let file = try CopyDescriptor(openat(root.raw, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC), path: name)
+        try readNamed(recordName(id), expectedID: id)
+    }
+
+    private func readNamed(_ name: String, expectedID: UUID?) throws -> Record {
+        let file = try CopyDescriptor(
+            openat(root.raw, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC), path: name)
         let info = try file.info()
         guard info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o7777 == 0o600,
-              info.st_nlink == 1, info.st_size > 0, info.st_size <= Int64(Self.maxRecordBytes) else { throw Failure.malformed }
+            info.st_nlink == 1, info.st_size > 0, info.st_size <= Int64(Self.maxRecordBytes)
+        else { throw Failure.malformed }
         var bytes = [UInt8](repeating: 0, count: Int(info.st_size))
         var offset = 0
         var interruptions = 0
         while offset < bytes.count {
             let remaining = bytes.count - offset
-            let count = bytes.withUnsafeMutableBytes { Darwin.read(file.raw, $0.baseAddress!.advanced(by: offset), remaining) }
-            if count < 0 && errno == EINTR && interruptions < 8 { interruptions += 1; continue }
+            let count = bytes.withUnsafeMutableBytes {
+                Darwin.read(file.raw, $0.baseAddress!.advanced(by: offset), remaining)
+            }
+            if count < 0 && errno == EINTR && interruptions < 8 {
+                interruptions += 1
+                continue
+            }
             guard count > 0 else { throw Failure.malformed }
             offset += count
         }
         let record: Record
         do { record = try JSONDecoder().decode(Record.self, from: Data(bytes)) } catch { throw Failure.malformed }
-        guard record.id == id else { throw Failure.malformed }
+        let after = try file.info()
+        var named = stat()
+        guard fstatat(root.raw, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+            Identity(info) == Identity(after), Identity(info) == Identity(named),
+            info.st_size == after.st_size, info.st_size == named.st_size,
+            info.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+            info.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+            info.st_ctimespec.tv_sec == after.st_ctimespec.tv_sec,
+            info.st_ctimespec.tv_nsec == after.st_ctimespec.tv_nsec,
+            expectedID == nil || record.id == expectedID
+        else { throw Failure.malformed }
         try validate(record)
         return record
     }
@@ -265,24 +320,117 @@ final class RecoveryJournal: @unchecked Sendable {
         let data = try JSONEncoder().encode(record)
         guard data.count <= Self.maxRecordBytes else { throw Failure.limit }
         try checkEntryLimit()
-        let temporary = "tmp-" + UUID().uuidString
-        let file = try CopyDescriptor(openat(root.raw, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600), path: temporary)
+        let temporary = "tmp-" + sessionID.uuidString + "-" + UUID().uuidString
+        let file = try CopyDescriptor(
+            openat(root.raw, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600), path: temporary)
+        let temporaryIdentity = Identity(try file.info())
+        defer { try? removeMetadata(temporary, expected: temporaryIdentity) }
         try data.withUnsafeBytes { bytes in
             var offset = 0
             var interruptions = 0
             while offset < bytes.count {
                 let count = Darwin.write(file.raw, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
-                if count < 0 && errno == EINTR && interruptions < 8 { interruptions += 1; continue }
+                if count < 0 && errno == EINTR && interruptions < 8 {
+                    interruptions += 1
+                    continue
+                }
                 guard count > 0 else { throw Failure.io(errno) }
                 offset += count
             }
         }
         try sync(file.raw)
-        let result = replacing
+        let result =
+            replacing
             ? renameat(root.raw, temporary, root.raw, recordName(record.id))
             : renameatx_np(root.raw, temporary, root.raw, recordName(record.id), UInt32(RENAME_EXCL))
         guard result == 0 else { throw Failure.io(errno) }
         try sync(root.raw)
+    }
+
+    /// Reclaims only metadata in the private journal root, while the store lock
+    /// is held. A corrupt record stops maintenance before any deletion.
+    func maintain() throws {
+        try locked { try withStoreLock { try maintainLocked() } }
+    }
+
+    private func maintainLocked() throws {
+        let names = try entryNames()
+        let recordNames = names.filter { $0.hasPrefix("record-") }
+        guard recordNames.count <= Self.maxRecords else { throw Failure.limit }
+        var records: [Record] = []
+        for name in recordNames {
+            guard let id = UUID(uuidString: String(name.dropFirst(7))), name == recordName(id) else {
+                throw Failure.malformed
+            }
+            records.append(try read(id))
+        }
+        var changed = false
+        for name in names where name.hasPrefix("session-") {
+            let suffix = String(name.dropFirst(8))
+            guard let id = UUID(uuidString: suffix), name == "session-" + id.uuidString else { continue }
+            guard id != sessionID else { continue }
+            let related = records.filter { $0.session == id }
+            let fd = openat(root.raw, name, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            guard fd >= 0 else { continue }
+            let held = try CopyDescriptor(fd, path: name)
+            let info = try held.info()
+            guard info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG,
+                info.st_mode & 0o7777 == 0o600, info.st_nlink == 1,
+                related.allSatisfy({ $0.sessionIdentity == Identity(info) }),
+                flock(fd, LOCK_EX | LOCK_NB) == 0
+            else { continue }
+            defer { flock(fd, LOCK_UN) }
+            var current = stat()
+            guard fstatat(root.raw, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
+                Identity(info) == Identity(current)
+            else { continue }
+            for record in related where record.phase == .resolved {
+                try removeMetadata(recordName(record.id))
+                changed = true
+            }
+            // A temp name contains its owner session and a random UUID. Only
+            // clean it while that exact session's lock is held.
+            let tempPrefix = "tmp-" + id.uuidString + "-"
+            var hasUnverifiedTemporary = false
+            for temporary in names where temporary.hasPrefix(tempPrefix) {
+                guard UUID(uuidString: String(temporary.dropFirst(tempPrefix.count))) != nil,
+                    let candidate = try? readNamed(temporary, expectedID: nil),
+                    candidate.session == id, candidate.sessionIdentity == Identity(info)
+                else {
+                    hasUnverifiedTemporary = true
+                    continue
+                }
+                try removeMetadata(temporary)
+                changed = true
+            }
+            if !hasUnverifiedTemporary && related.allSatisfy({ $0.phase == .resolved }) {
+                try removeMetadata(name)
+                changed = true
+            }
+        }
+        if changed { try sync(root.raw) }
+    }
+
+    private func validateSessionName() throws {
+        var named = stat()
+        let name = "session-" + sessionID.uuidString
+        guard fstatat(root.raw, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+            Identity(named) == Identity(try sessionLock.info())
+        else { throw Failure.invalidStore }
+    }
+
+    private func removeMetadata(_ name: String, expected: Identity? = nil) throws {
+        let fd = openat(root.raw, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0 && errno == ENOENT { return }
+        let file = try CopyDescriptor(fd, path: name)
+        let info = try file.info()
+        var named = stat()
+        guard info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG,
+            info.st_mode & 0o7777 == 0o600, info.st_nlink == 1,
+            fstatat(root.raw, name, &named, AT_SYMLINK_NOFOLLOW) == 0,
+            Identity(info) == Identity(named), expected == nil || expected == Identity(info)
+        else { throw Failure.invalidStore }
+        guard unlinkat(root.raw, name, 0) == 0 else { throw Failure.io(errno) }
     }
 
     private func sync(_ fd: Int32) throws {
@@ -297,12 +445,18 @@ final class RecoveryJournal: @unchecked Sendable {
 
     private static func names(in directory: Int32) throws -> [String] {
         let fd = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard fd >= 0, let stream = fdopendir(fd) else { if fd >= 0 { close(fd) }; throw Failure.io(errno) }
+        guard fd >= 0, let stream = fdopendir(fd) else {
+            if fd >= 0 { close(fd) }
+            throw Failure.io(errno)
+        }
         defer { closedir(stream) }
         var names: [String] = []
         while true {
             errno = 0
-            guard let entry = readdir(stream) else { if errno != 0 { throw Failure.io(errno) }; break }
+            guard let entry = readdir(stream) else {
+                if errno != 0 { throw Failure.io(errno) }
+                break
+            }
             let name = withUnsafeBytes(of: entry.pointee.d_name) {
                 String(decoding: $0.prefix(Int(entry.pointee.d_namlen)), as: UTF8.self)
             }
@@ -314,23 +468,28 @@ final class RecoveryJournal: @unchecked Sendable {
     }
 
     private func checkEntryLimit() throws {
-        guard try entryNames().count < Self.maxEntries else { throw Failure.limit }
+        // Leave room for one temporary file and one later maintenance session.
+        guard try entryNames().count < Self.maxEntries - 2 else { throw Failure.limit }
     }
 
     private func withStoreLock<T>(_ body: () throws -> T) throws -> T {
         let checked = try pathGuard.checkWriteLocation(rootURL)
         guard checked.path == rootURL.path else { throw Failure.invalidStore }
-        let current = try CopyDescriptor(Darwin.open(checked.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC), path: checked.path)
+        let current = try CopyDescriptor(
+            Darwin.open(checked.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC), path: checked.path)
         guard Identity(try current.info()) == Identity(try root.info()) else { throw Failure.invalidStore }
-        let file = try CopyDescriptor(openat(root.raw, "store.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600), path: "store.lock")
+        let file = try CopyDescriptor(
+            openat(root.raw, "store.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600), path: "store.lock")
         let info = try file.info()
         guard info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o7777 == 0o600,
-              info.st_nlink == 1 else { throw Failure.invalidStore }
+            info.st_nlink == 1
+        else { throw Failure.invalidStore }
         guard flock(file.raw, LOCK_EX | LOCK_NB) == 0 else { throw Failure.busy }
         defer { flock(file.raw, LOCK_UN) }
         var currentLock = stat()
         guard fstatat(root.raw, "store.lock", &currentLock, AT_SYMLINK_NOFOLLOW) == 0,
-              Identity(currentLock) == Identity(info) else { throw Failure.invalidStore }
+            Identity(currentLock) == Identity(info)
+        else { throw Failure.invalidStore }
         return try body()
     }
 
