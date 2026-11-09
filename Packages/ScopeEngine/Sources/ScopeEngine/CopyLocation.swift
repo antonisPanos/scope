@@ -268,4 +268,10 @@ struct MergeDirectory {
         try validate(pathGuard: pathGuard)
         return try CopyLocation.names(in: descriptor, path: url.path).sorted()
     }
+
+    func validateChildParent(_ parent: CopyDescriptor) throws {
+        guard CopyLocation.same(try descriptor.info(), try parent.info()) else {
+            throw FileEngineError.posix("Merge folder changed", url.path, EBUSY)
+        }
+    }
 }

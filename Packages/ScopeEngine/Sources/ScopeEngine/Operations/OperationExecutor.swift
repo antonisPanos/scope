@@ -95,17 +95,27 @@ extension FileEngine {
     private func transferItem(
         _ source: URL, measurement: (bytes: Int64, items: Int), into destination: URL,
         moving: Bool, remaining: Int, control: OperationControl, undo: UndoRecorder,
-        conflicts: inout ConflictPolicy, failures: inout FailurePolicy
+        conflicts: inout ConflictPolicy, failures: inout FailurePolicy,
+        parents: [(MergeDirectory, MergeDirectory)] = []
     ) async throws {
+        func validateParents() throws {
+            for (source, destination) in parents {
+                try source.validate(pathGuard: pathGuard)
+                try destination.validate(pathGuard: pathGuard)
+            }
+        }
         try Task.checkCancellation()
         try control.waitWhilePaused()
+        try validateParents()
         try control.reserveOutcome(for: source, remaining: remaining)
         control.setNotStarted(remaining - 1)
         var outcome: TransferOutcome.Result = .failed("Stopped before completion")
         var transferredBytes: Int64 = 0
+        var reportedMeasurement = measurement
         defer {
             control.recordOutcome(
-                TransferOutcome(item: source, items: measurement.items, bytes: measurement.bytes, result: outcome),
+                TransferOutcome(
+                    item: source, items: reportedMeasurement.items, bytes: reportedMeasurement.bytes, result: outcome),
                 transferredBytes: transferredBytes)
         }
         do {
@@ -135,15 +145,50 @@ extension FileEngine {
                         incoming: source, existing: target, incomingModified: Self.modified(source),
                         existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target),
                         canMerge: Self.mergeEligible(source, target))
+                    let mergePins: (MergeDirectory, MergeDirectory)?
+                    if conflict.canMerge {
+                        mergePins = (
+                            try MergeDirectory(source, pathGuard: pathGuard, writable: false),
+                            try MergeDirectory(target, pathGuard: pathGuard, writable: true)
+                        )
+                    } else {
+                        mergePins = nil
+                    }
                     var choice = try await conflicts.resolve(conflict)
+                    try validateParents()
+                    if let (incoming, existing) = mergePins {
+                        try incoming.validate(pathGuard: pathGuard)
+                        try existing.validate(pathGuard: pathGuard)
+                    }
                     let replaceIfOlder = choice == .replaceIfOlder
                     if choice == .replaceIfOlder {
                         choice = Self.isOlderFile(target, than: source) ? .replace : .skip
                     }
                     switch choice {
                     case .merge:
-                        // Merge remains unavailable until pinned recursive execution is implemented.
-                        throw CocoaError(.featureUnsupported)
+                        guard !moving, let (incoming, existing) = mergePins,
+                            Self.mergeEligible(source, target),
+                            !Self.isInside(target.path, source.path), !Self.isInside(source.path, target.path)
+                        else { throw CocoaError(.featureUnsupported) }
+                        let names = try incoming.names(pathGuard: pathGuard)
+                        let children = names.map { source.appendingPathComponent($0) }
+                        let childMeasurements = try children.map { try measure([$0]) }
+                        let skippedBefore = control.transferReport?.skippedCount ?? 0
+                        reportedMeasurement = (bytes: 0, items: 1)
+                        control.update { $0.itemsDone += 1 }
+                        for (index, child) in children.enumerated() {
+                            try incoming.validate(pathGuard: pathGuard)
+                            try existing.validate(pathGuard: pathGuard)
+                            try await transferItem(
+                                child, measurement: childMeasurements[index], into: target, moving: false,
+                                remaining: children.count - index, control: control, undo: undo,
+                                conflicts: &conflicts, failures: &failures,
+                                parents: parents + [(incoming, existing)])
+                        }
+                        outcome =
+                            (control.transferReport?.skippedCount ?? 0) > skippedBefore
+                            ? .skipped("Some children were skipped") : .completed
+                        return
                     case .skip, .replaceIfOlder:
                         outcome = .skipped(replaceIfOlder ? "Existing item is not older" : "Skipped by choice")
                         control.removePending(bytes: measurement.bytes, items: measurement.items)
@@ -204,6 +249,7 @@ extension FileEngine {
             var verifiedSource: VerifiedSource?
             let existing = replacing ? target : nil
             let placeCopy: (URL, URL) throws -> Void = { original, partial in
+                try validateParents()
                 if moving {
                     control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
                     self.copyTestOptions.boundary?(.beforeVerification, original, partial)
@@ -211,6 +257,7 @@ extension FileEngine {
                     self.copyTestOptions.boundary?(.afterVerification, original, partial)
                 }
                 if let existing, Self.lstatInfo(existing.path) != nil {
+                    try validateParents()
                     replaced.trashed = try self.trashItemNow(existing)
                 }
             }
@@ -221,15 +268,24 @@ extension FileEngine {
             var lastFailure = ""
             while !copied {
                 do {
+                    try validateParents()
                     try copyTracked(
-                        source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy
+                        source, to: target, control: control, replacingExisting: replacing,
+                        validateParents: { input, output in
+                            try validateParents()
+                            if let (incoming, existing) = parents.last {
+                                try incoming.validateChildParent(input)
+                                try existing.validateChildParent(output)
+                            }
+                        }, beforePlacing: placeCopy
                     )
                     copied = true
                 } catch let error as PublishedCopyFinalizationError {
                     if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
                     undo.add(.trashCreated(target, fileID: error.publishedIdentity))
                     if moving {
-                        throw OperationError.copyFinalizationFailed(source.lastPathComponent, error.localizedDescription)
+                        throw OperationError.copyFinalizationFailed(
+                            source.lastPathComponent, error.localizedDescription)
                     }
                     throw error
                 } catch {
@@ -300,6 +356,7 @@ extension FileEngine {
     /// Copies one item and adds its progress to the operation's totals.
     private func copyTracked(
         _ source: URL, to target: URL, control: OperationControl, replacingExisting: Bool = false,
+        validateParents: ((CopyDescriptor, CopyDescriptor) throws -> Void)? = nil,
         beforePlacing: ((URL, URL) throws -> Void)? = nil
     ) throws {
         let base = control.progress
@@ -314,7 +371,7 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, replacingExisting: replacingExisting, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, validateParents: validateParents, beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
