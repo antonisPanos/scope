@@ -57,6 +57,14 @@ extension FileEngine {
 
     // MARK: - Copy and move
 
+    private struct TransferContext {
+        let moving: Bool
+        let control: OperationControl
+        let undo: UndoRecorder
+        let parents: [(MergeDirectory, MergeDirectory)]
+        let remainingOutside: Int
+    }
+
     private func transfer(
         _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
         undo: UndoRecorder, conflicts: inout ConflictPolicy, failures: inout FailurePolicy
@@ -86,18 +94,23 @@ extension FileEngine {
     ) async throws {
         for (index, pair) in zip(sources, measurements).enumerated() {
             try await transferItem(
-                pair.0, measurement: pair.1, into: destination, moving: moving,
-                remaining: sources.count - index, control: control, undo: undo,
+                pair.0, measurement: pair.1, into: destination,
+                context: TransferContext(
+                    moving: moving, control: control, undo: undo, parents: [],
+                    remainingOutside: sources.count - index - 1),
                 conflicts: &conflicts, failures: &failures)
         }
     }
 
     private func transferItem(
         _ source: URL, measurement: (bytes: Int64, items: Int), into destination: URL,
-        moving: Bool, remaining: Int, control: OperationControl, undo: UndoRecorder,
-        conflicts: inout ConflictPolicy, failures: inout FailurePolicy,
-        parents: [(MergeDirectory, MergeDirectory)] = []
+        context: TransferContext,
+        conflicts: inout ConflictPolicy, failures: inout FailurePolicy
     ) async throws {
+        let moving = context.moving
+        let control = context.control
+        let undo = context.undo
+        let parents = context.parents
         func validateParents() throws {
             for (source, destination) in parents {
                 try source.validate(pathGuard: pathGuard)
@@ -107,8 +120,8 @@ extension FileEngine {
         try Task.checkCancellation()
         try control.waitWhilePaused()
         try validateParents()
-        try control.reserveOutcome(for: source, remaining: remaining)
-        control.setNotStarted(remaining - 1)
+        try control.reserveOutcome(for: source, remaining: context.remainingOutside + 1)
+        control.setNotStarted(context.remainingOutside)
         var outcome: TransferOutcome.Result = .failed("Stopped before completion")
         var transferredBytes: Int64 = 0
         var reportedMeasurement = measurement
@@ -180,10 +193,12 @@ extension FileEngine {
                             try incoming.validate(pathGuard: pathGuard)
                             try existing.validate(pathGuard: pathGuard)
                             try await transferItem(
-                                child, measurement: childMeasurements[index], into: target, moving: false,
-                                remaining: children.count - index, control: control, undo: undo,
-                                conflicts: &conflicts, failures: &failures,
-                                parents: parents + [(incoming, existing)])
+                                child, measurement: childMeasurements[index], into: target,
+                                context: TransferContext(
+                                    moving: false, control: control, undo: undo,
+                                    parents: parents + [(incoming, existing)],
+                                    remainingOutside: context.remainingOutside + children.count - index - 1),
+                                conflicts: &conflicts, failures: &failures)
                         }
                         outcome =
                             (control.transferReport?.skippedCount ?? 0) > skippedBefore

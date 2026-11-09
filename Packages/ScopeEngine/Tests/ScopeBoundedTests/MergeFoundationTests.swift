@@ -24,11 +24,15 @@ struct MergeFoundationTests {
     @Test func mergeChoiceIsNotReusedForIneligibleFolders() async throws {
         let count = Mutex(0)
         var policy = ConflictPolicy { _ in
-            let current = count.withLock { value in value += 1; return value }
+            let current = count.withLock { value in
+                value += 1
+                return value
+            }
             return current == 1 ? (.merge, true) : (.skip, false)
         }
         let url = URL(fileURLWithPath: "/folder")
-        let eligible = Conflict(incoming: url, existing: url, incomingKind: .directory, existingKind: .directory, canMerge: true)
+        let eligible = Conflict(
+            incoming: url, existing: url, incomingKind: .directory, existingKind: .directory, canMerge: true)
         let ineligible = Conflict(incoming: url, existing: url, incomingKind: .directory, existingKind: .directory)
         #expect(try await policy.resolve(eligible) == .merge)
         #expect(try await policy.resolve(ineligible) == .skip)
