@@ -61,6 +61,7 @@ public enum Volumes {
     /// must pass the path guard.
     public static func eject(_ url: URL, pathGuard: PathGuard) async throws {
         let volume = try pathGuard.checkLocation(url)
+        guard !FileEngine.boundedTestProcess else { throw CocoaError(.featureUnsupported) }
         try await FileManager.default.unmountVolume(at: volume, options: [.allPartitionsAndEjectDisk, .withoutUI])
     }
 
@@ -81,6 +82,7 @@ public enum Volumes {
     /// guard, and internal disks and the startup disk are refused.
     public static func forceEject(_ url: URL, pathGuard: PathGuard) async throws {
         let volume = try pathGuard.checkWriteLocation(url)
+        guard !FileEngine.boundedTestProcess else { throw CocoaError(.featureUnsupported) }
         if let reason = forceEjectRefusal(volume) {
             throw CocoaError(
                 .fileWriteNoPermission,

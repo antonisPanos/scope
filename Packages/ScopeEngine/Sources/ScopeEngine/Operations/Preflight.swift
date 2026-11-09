@@ -121,15 +121,16 @@ extension FileEngine {
         }
     ) throws {
         let checkedDestination = try pathGuard.checkWriteLocation(destination)
-        let limits = try capabilities(checkedDestination)
-        let device = try CopyLocation(checked: checkedDestination).info().st_dev
+        let limits = try copyTestOptions.destinationLimits ?? capabilities(checkedDestination)
+        _ = try CopyLocation(checked: checkedDestination).info()
         var needed: Int64 = 0
         var report = PreflightReport(volume: limits.volumeName)
         for source in sources {
             try Task.checkCancellation()
             let checkedSource = try pathGuard.checkLocation(source)
             let location = try CopyLocation(checked: checkedSource)
-            let sameDisk = try location.info().st_dev == device
+            _ = try location.info()
+            let sameDisk = try sameOperationVolume(checkedSource, checkedDestination)
             if moving && sameDisk { continue }
             var scan = PreflightScan(limits: limits, report: report)
             try scan.visit(location, relative: checkedSource.lastPathComponent)
