@@ -1,5 +1,19 @@
 import Foundation
 
+/// The destination exists, but Scope could not complete its sync. Callers
+/// must preserve and account for it instead of retrying as an unpublished copy.
+public struct PublishedCopyFinalizationError: Error, LocalizedError {
+    public let destination: URL
+    public let reason: String
+    /// Identity of the staged object that was published, not a later occupant
+    /// of the destination path. Directory versions may be unavailable.
+    public let publishedIdentity: FileIdentity
+
+    public var errorDescription: String? {
+        "The copy at “\(destination.lastPathComponent)” was published, but finalizing it failed: \(reason)"
+    }
+}
+
 public enum FileEngineError: Error, Equatable, LocalizedError {
     case destinationExists(String)
     case sourceMissing(String)

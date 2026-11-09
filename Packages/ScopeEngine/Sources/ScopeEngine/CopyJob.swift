@@ -20,17 +20,19 @@ struct CopyJob {
     let readFault: (@Sendable (String) -> Int32?)?
     let writeFault: (@Sendable (String, Int64) -> Int32?)?
     let testOptions: FileEngine.CopyTestOptions
+    let syncFault: CopySyncFault?
 
     init(
         progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
         readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil,
-        testOptions: FileEngine.CopyTestOptions = .init()
+        testOptions: FileEngine.CopyTestOptions = .init(), syncFault: CopySyncFault? = nil
     ) {
         progressHandler = progress
         self.control = control
         self.readFault = readFault
         self.writeFault = writeFault
         self.testOptions = testOptions
+        self.syncFault = syncFault
     }
 
     /// Counts what a copy of `source` will write. With `rejectingUnsupported`,
@@ -91,7 +93,7 @@ struct CopyJob {
                     from: source.child(name, in: input), to: destination.child(name, in: output),
                     relative: relative.isEmpty ? name : relative + "/" + name)
             }
-            _ = fsync(output.raw)
+            try CopySync.sync(output.raw, path: destination.path, point: .directory, fault: syncFault)
         } else if link {
             var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
             let count = readlinkat(source.parent.raw, source.name, &buffer, buffer.count - 1)
@@ -133,6 +135,8 @@ struct CopyJob {
             }
             if info.st_flags != 0 { _ = fchflags(output.raw, 0) }
             try Self.copyTimes(info, to: output)
+            // Also flush cloned files, and metadata written after copyData.
+            try CopySync.sync(output.raw, path: destination.path, point: .file, fault: syncFault)
         }
         let flags = FileEngine.settableFlags(info.st_flags)
         let hasACL = Self.hasACL(input)
@@ -176,7 +180,6 @@ struct CopyJob {
             try copyRange(
                 input.raw, output.raw, from: 0, to: nil, buffer: buffer, source: source, destination: destination)
         }
-        guard fsync(output.raw) == 0 else { throw FileEngineError.posix("Write", destination) }
     }
 
     private mutating func copyRange(
@@ -211,23 +214,26 @@ struct CopyJob {
         }
     }
 
-    func finish(source: CopyLocation, destination: CopyLocation) {
+    func finish(source: CopyLocation, destination: CopyLocation) throws {
         for entry in deferred {
-            // Changed or replaced objects never receive deferred metadata.
-            // Failures here remain best effort, as before publication was pinned.
-            do {
-                let link = entry.source.st_mode & S_IFMT == S_IFLNK
-                let flags = link ? O_SYMLINK : O_RDONLY
-                let input = try source.descendant(entry.relative).open(flags, matching: entry.source)
-                let output = try destination.descendant(entry.relative).open(flags, matching: entry.destination)
+            // Do not apply metadata from a changed source. Opening the
+            // destination is mandatory: its final sync must not be skipped.
+            let link = entry.source.st_mode & S_IFMT == S_IFLNK
+            let flags = link ? O_SYMLINK : O_RDONLY
+            let output = try destination.descendant(entry.relative).open(flags, matching: entry.destination)
+            if let input = try? source.descendant(entry.relative).open(flags, matching: entry.source) {
                 let metadata = entry.directory || link ? COPYFILE_METADATA : COPYFILE_ACL
                 if entry.directory || link || entry.hasACL {
                     _ = fcopyfile(input.raw, output.raw, nil, copyfile_flags_t(metadata))
                     if entry.directory || link { try? Self.copyTimes(entry.source, to: output) }
                 }
                 if entry.flags != 0 { _ = fchflags(output.raw, entry.flags) }
-            } catch {
-                continue
+            }
+            // Symlink descriptors cannot be fsynced; their containing folder
+            // is synced after its entries and metadata have been applied.
+            if entry.source.st_mode & S_IFMT != S_IFLNK {
+                try CopySync.sync(
+                    output.raw, path: destination.path, point: entry.directory ? .directory : .file, fault: syncFault)
             }
         }
     }

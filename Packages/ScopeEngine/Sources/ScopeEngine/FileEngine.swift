@@ -89,6 +89,8 @@ public struct FileEngine: Sendable {
         }
         return Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
     }
+    /// Tests only: model a copy sync syscall failure without changing paths.
+    var copySyncFault: CopySyncFault?
 
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
@@ -279,8 +281,9 @@ public struct FileEngine: Sendable {
     /// links, never followed. Permissions, extended
     /// attributes (including Finder tags and resource forks), ACLs, dates and
     /// file flags are kept. The copy is written under a hidden partial name and
-    /// renamed into place at the end; on cancel or failure the partial item is
-    /// removed and the destination is left as it was.
+    /// renamed into place at the end. Before publication, cancellation or
+    /// failure removes the partial; a PublishedCopyFinalizationError instead
+    /// means the destination was published but its final sync failed.
     public func copyItem(
         at url: URL,
         to destination: URL,
@@ -313,7 +316,7 @@ public struct FileEngine: Sendable {
 
         var job = CopyJob(
             progress: progress, control: control, readFault: readFault, writeFault: writeFault,
-            testOptions: copyTestOptions)
+            testOptions: copyTestOptions, syncFault: copySyncFault)
         let input = try CopyLocation(checked: source)
         let output = try CopyLocation(checked: target)
         // A named pipe or device file anywhere inside fails the copy here,
@@ -330,6 +333,7 @@ public struct FileEngine: Sendable {
         // The staged copy is named by its destination in messages (and in the
         // tests' fault hook): its hidden name no longer says which item it is.
         let staged = CopyLocation(parent: output.parent, name: partial.lastPathComponent, path: target.path)
+        let publishedIdentity: FileIdentity
         do {
             try job.copy(from: input, to: staged, relative: "")
             try Task.checkCancellation()
@@ -343,12 +347,24 @@ public struct FileEngine: Sendable {
                 boundary(.beforePublication, source, target)
                 try output.validateParent(pathGuard: pathGuard)
             }
-            guard let identity = job.partialIdentity,
-                CopyLocation.same(try staged.info(), identity),
+            guard let identity = job.partialIdentity else {
+                throw FileEngineError.posix("Copy", target.path, EBUSY)
+            }
+            let current = try staged.info()
+            guard CopyLocation.same(current, identity),
                 staged.renameExclusively(to: output.name, isDirectory: identity.st_mode & S_IFMT == S_IFDIR)
             else {
                 throw FileEngineError.posix("Copy", target.path)
             }
+            let isDirectory = current.st_mode & S_IFMT == S_IFDIR
+            publishedIdentity = FileIdentity(
+                inode: UInt64(current.st_ino),
+                modified: isDirectory
+                    ? 0
+                    : Int64(current.st_mtimespec.tv_sec) * 1_000_000_000
+                        + Int64(current.st_mtimespec.tv_nsec),
+                size: isDirectory ? 0 : Int64(current.st_size), device: UInt64(current.st_dev),
+                kind: UInt32(current.st_mode & S_IFMT))
         } catch {
             do {
                 try staged.removePartial(matching: job.partialIdentity)
@@ -357,11 +373,15 @@ public struct FileEngine: Sendable {
             }
             throw error
         }
-        // The files are synced as they're written; this makes the rename
-        // itself survive a power cut, before a move trashes the original.
         copyTestOptions.boundary?(.beforeSync, source, target)
-        output.syncParent()
-        job.finish(source: input, destination: output)
+        control?.update { $0.currentItem = "Finalizing \(target.lastPathComponent)" }
+        do {
+            try job.finish(source: input, destination: output)
+            try output.syncParent(fault: copySyncFault)
+        } catch {
+            throw PublishedCopyFinalizationError(
+                destination: target, reason: error.localizedDescription, publishedIdentity: publishedIdentity)
+        }
     }
 
     /// Total bytes and items under `urls`, as a copy would count them.
