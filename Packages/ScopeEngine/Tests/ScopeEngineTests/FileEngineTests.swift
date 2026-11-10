@@ -301,11 +301,12 @@ import Testing
         #expect(try sandbox.names(in: "dest") == [])
     }
 
-    @Test func removesLeftoverPartials() async throws {
+    @Test func refusesPrefixOnlyPartialCleanup() async throws {
         try sandbox.write("folder/\(FileEngine.partialPrefix)1234-a.txt", "half")
         try sandbox.write("folder/kept.txt", "kept")
-        let removed = try await engine.removeLeftoverPartials(in: sandbox.url("folder"))
-        #expect(removed == 1)
-        #expect(try sandbox.names(in: "folder") == ["kept.txt"])
+        await #expect(throws: CocoaError.self) {
+            try await engine.removeLeftoverPartials(in: sandbox.url("folder"))
+        }
+        #expect(try sandbox.names(in: "folder") == [".scope-partial-1234-a.txt", "kept.txt"])
     }
 }

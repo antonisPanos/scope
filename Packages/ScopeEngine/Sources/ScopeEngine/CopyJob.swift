@@ -6,6 +6,8 @@ struct CopyJob {
     let progressHandler: (@Sendable (CopyProgress) -> Void)?
     var state = CopyProgress(bytesDone: 0, bytesTotal: 0, itemsDone: 0, itemsTotal: 0, currentItem: "")
     var partialIdentity: stat?
+    /// Keeps the original staged root pinned across metadata and publication.
+    var partialDescriptor: CopyDescriptor?
 
     private struct Deferred {
         let relative: String
@@ -21,12 +23,14 @@ struct CopyJob {
     let writeFault: (@Sendable (String, Int64) -> Int32?)?
     let syncFault: CopySyncFault?
     let testOptions: FileEngine.CopyTestOptions
+    var rootCreated: ((stat) throws -> Void)?
 
     init(
         progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
         readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil,
         syncFault: CopySyncFault? = nil,
-        testOptions: FileEngine.CopyTestOptions = .init()
+        testOptions: FileEngine.CopyTestOptions = .init(),
+        rootCreated: ((stat) throws -> Void)? = nil
     ) {
         progressHandler = progress
         self.control = control
@@ -34,6 +38,7 @@ struct CopyJob {
         self.writeFault = writeFault
         self.syncFault = syncFault
         self.testOptions = testOptions
+        self.rootCreated = rootCreated
     }
 
     /// Counts what a copy of `source` will write. With `rejectingUnsupported`,
@@ -89,6 +94,10 @@ struct CopyJob {
             let created = try destination.info()
             if relative.isEmpty { partialIdentity = created }
             output = try destination.open(O_RDONLY | O_DIRECTORY, matching: created)
+            if relative.isEmpty {
+                partialDescriptor = output
+                try rootCreated?(output.info())
+            }
             for name in try CopyLocation.names(in: input, path: source.path).sorted() {
                 try copy(
                     from: source.child(name, in: input), to: destination.child(name, in: output),
@@ -109,6 +118,10 @@ struct CopyJob {
             let created = try destination.info()
             if relative.isEmpty { partialIdentity = created }
             output = try destination.open(O_SYMLINK, matching: created)
+            if relative.isEmpty {
+                partialDescriptor = output
+                try rootCreated?(output.info())
+            }
         } else {
             if let code = readFault?(source.path) { throw FileEngineError.posix("Read", source.path, code) }
             let cloned =
@@ -116,6 +129,11 @@ struct CopyJob {
                 && fclonefileat(input.raw, destination.parent.raw, destination.name, UInt32(CLONE_NOOWNERCOPY)) == 0
             if cloned {
                 output = try destination.open(O_RDONLY)
+                if relative.isEmpty {
+                    partialIdentity = try output.info()
+                    partialDescriptor = output
+                    try rootCreated?(output.info())
+                }
                 clearACL(output)
                 state.bytesDone += Int64(info.st_size)
                 report()
@@ -125,7 +143,11 @@ struct CopyJob {
                         destination.parent.raw, destination.name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
                         0o600),
                     path: destination.path)
-                if relative.isEmpty { partialIdentity = try output.info() }
+                if relative.isEmpty {
+                    partialIdentity = try output.info()
+                    partialDescriptor = output
+                    try rootCreated?(output.info())
+                }
                 try copyData(input, output, source: source.path, destination: destination.path, info: info)
             }
             if relative.isEmpty { partialIdentity = try output.info() }

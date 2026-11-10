@@ -324,6 +324,7 @@ extension FileEngine {
                 try validateParents()
                 try copyTracked(
                     source, to: target, control: control, replacingExisting: replacing,
+                    recoveryAction: moving ? .move : .copy,
                     validateParents: { input, output in
                         try validateParents()
                         if let (incoming, existing) = parents.last {
@@ -443,6 +444,7 @@ extension FileEngine {
     /// Copies one item and adds its progress to the operation's totals.
     private func copyTracked(
         _ source: URL, to target: URL, control: OperationControl, replacingExisting: Bool = false,
+        recoveryAction: RecoveryJournal.Action = .copy,
         validateParents: ((CopyDescriptor, CopyDescriptor) throws -> Void)? = nil,
         beforePlacing: ((URL, URL) throws -> Void)? = nil
     ) throws {
@@ -458,7 +460,8 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, replacingExisting: replacingExisting, validateParents: validateParents, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, recoveryAction: recoveryAction, validateParents: validateParents,
+            beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
