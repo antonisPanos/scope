@@ -175,12 +175,15 @@ public enum UndoStep: Sendable, Hashable {
     case moveBack(from: URL, to: URL, fileID: FileIdentity)
     /// Undo a trash: put the item back from the Trash.
     case putBack(trashed: URL, original: URL)
+    /// Restore only if the containing merge folder is still the same object.
+    case putBackInParent(trashed: URL, original: URL, parent: FileIdentity)
 
     var touchedItems: [URL] {
         switch self {
         case .trashCreated(let url, _): [url]
         case .moveBack(let from, let to, _): [from, to]
         case .putBack(let trashed, let original): [trashed, original]
+        case .putBackInParent(let trashed, let original, _): [trashed, original]
         }
     }
 }
@@ -220,19 +223,121 @@ public final class UndoRecorder: Sendable {
     }
 }
 
+/// One top-level transfer result. A folder's counts include its descendants.
+public struct TransferOutcome: Sendable, Equatable {
+    public enum Result: Sendable, Equatable {
+        case completed
+        case skipped(String)
+        case failedAndSkipped(String)
+        case failed(String)
+        /// Some children of a merged folder were skipped; they are reported separately.
+        case incomplete(String)
+
+        /// The skip reason or diagnostic; empty for a completed item.
+        public var reason: String {
+            switch self {
+            case .completed: ""
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message),
+                .incomplete(let message):
+                message
+            }
+        }
+
+        /// A merged folder's skipped children are counted on their own.
+        public var isSkipped: Bool {
+            switch self {
+            case .skipped, .failedAndSkipped: true
+            default: false
+            }
+        }
+    }
+    public let item: URL
+    public let items: Int
+    public let bytes: Int64
+    public let result: Result
+}
+
+/// Bounded per-operation report. Every outcome is counted, and a batch never
+/// stops because of the report. Outcomes are listed in order until the list
+/// reaches `maxOutcomes` or `maxTextBytes`; after that, a skipped or failed
+/// outcome takes the place of the latest listed completed one, and whatever
+/// is not listed is counted in `unlistedCount`.
+public struct TransferReport: Sendable, Equatable {
+    public static let maxOutcomes = 1_000
+    public static let maxTextBytes = 512 * 1024
+    static let reasonBudget = 4 * 1024
+    public internal(set) var outcomes: [TransferOutcome] = []
+    /// Outcomes counted but not listed, because the list was full.
+    public internal(set) var unlistedCount = 0
+    /// Every skipped item, listed or not.
+    public internal(set) var skippedCount = 0
+    public internal(set) var transferredBytes: Int64 = 0
+    public internal(set) var notStarted = 0
+    var textBytes = 0
+
+    /// True when some outcome was not a plain completion.
+    public var hasProblems: Bool {
+        skippedCount > 0 || outcomes.contains { $0.result != .completed }
+    }
+
+    mutating func record(_ outcome: TransferOutcome, limit: Int) {
+        if outcome.result.isSkipped { skippedCount += 1 }
+        let cost = Self.cost(of: outcome)
+        if outcomes.count < limit, cost <= Self.maxTextBytes - textBytes {
+            outcomes.append(outcome)
+            textBytes += cost
+            return
+        }
+        // A full list keeps the problems visible: they displace completions.
+        if outcome.result != .completed, let index = outcomes.lastIndex(where: { $0.result == .completed }) {
+            let removed = outcomes.remove(at: index)
+            textBytes -= Self.cost(of: removed)
+            unlistedCount += 1
+            if cost <= Self.maxTextBytes - textBytes {
+                outcomes.append(outcome)
+                textBytes += cost
+                return
+            }
+        }
+        unlistedCount += 1
+    }
+
+    private static func cost(of outcome: TransferOutcome) -> Int {
+        outcome.item.path.utf8.count + outcome.result.reason.utf8.count
+    }
+
+    static func diagnostic(_ error: any Error) -> String {
+        let message = error.localizedDescription
+        guard message.utf8.count > reasonBudget else { return message }
+        var result = ""
+        for scalar in message.unicodeScalars {
+            if result.utf8.count + scalar.utf8.count > reasonBudget - 32 { break }
+            result.unicodeScalars.append(scalar)
+        }
+        return result + " [message shortened]"
+    }
+}
+
 /// Pause and progress for one running operation, shared between the worker
 /// and whoever displays it.
 public final class OperationControl: Sendable {
     private let state = Mutex(State())
+    private let reportOutcomeLimit: Int
 
     struct State {
         var paused = false
         var progress = OperationProgress()
         var samples: [(time: TimeInterval, bytes: Int64)] = []
         var skippedEntries: [String] = []
+        var transferReport: TransferReport?
     }
 
-    public init() {}
+    public init() { reportOutcomeLimit = TransferReport.maxOutcomes }
+
+    // Lets a tiny fixture exercise the list limit without 1,001 files.
+    init(reportOutcomeLimit: Int) {
+        self.reportOutcomeLimit = min(max(0, reportOutcomeLimit), TransferReport.maxOutcomes)
+    }
 
     public var isPaused: Bool {
         get { state.withLock { $0.paused } }
@@ -258,6 +363,31 @@ public final class OperationControl: Sendable {
         state.withLock { $0.skippedEntries }
     }
 
+    public var transferReport: TransferReport? {
+        state.withLock { $0.transferReport }
+    }
+
+    func beginTransferReport(notStarted: Int = 0) {
+        state.withLock {
+            var report = TransferReport()
+            report.notStarted = notStarted
+            $0.transferReport = report
+        }
+    }
+
+    func setNotStarted(_ count: Int) {
+        state.withLock { $0.transferReport?.notStarted = count }
+    }
+
+    func recordOutcome(_ outcome: TransferOutcome, transferredBytes: Int64 = 0) {
+        state.withLock { state in
+            guard var report = state.transferReport else { return }
+            report.record(outcome, limit: reportOutcomeLimit)
+            report.transferredBytes += transferredBytes
+            state.transferReport = report
+        }
+    }
+
     func update(_ change: (inout OperationProgress) -> Void) {
         state.withLock { state in
             change(&state.progress)
@@ -266,6 +396,14 @@ public final class OperationControl: Sendable {
                 state.samples.append((now, state.progress.bytesDone))
                 state.samples.removeAll { now - $0.time > 3 }
             }
+        }
+    }
+
+    /// Remove an entire unprocessed top-level item from the measured plan.
+    func removePending(bytes: Int64, items: Int) {
+        update {
+            $0.bytesTotal = max($0.bytesDone, $0.bytesTotal - bytes)
+            $0.itemsTotal = max($0.itemsDone, $0.itemsTotal - items)
         }
     }
 
@@ -300,6 +438,8 @@ public struct OperationProgress: Sendable, Equatable {
 
 /// What to do when an item with the same name already exists at the destination.
 public enum ConflictChoice: Sendable, Equatable {
+    /// Combine the contents of two eligible ordinary folders.
+    case merge
     /// Move the existing item to the Trash, then put the new one in its place.
     case replace
     /// Replace the existing file only when it was modified before the new
@@ -311,6 +451,16 @@ public enum ConflictChoice: Sendable, Equatable {
     case stop
 }
 
+/// The item itself, without following a symbolic link.
+public enum ConflictItemKind: Sendable, Hashable {
+    case file
+    case directory
+    case symbolicLink
+    case other
+    /// Metadata was unavailable, or the caller did not supply it.
+    case unknown
+}
+
 public struct Conflict: Sendable, Equatable {
     public let incoming: URL
     public let existing: URL
@@ -318,12 +468,23 @@ public struct Conflict: Sendable, Equatable {
     /// the app doesn't touch the disk to ask.
     public var incomingModified: Date?
     public var existingModified: Date?
+    public let incomingKind: ConflictItemKind
+    public let existingKind: ConflictItemKind
+    /// Computed by the engine; unknown eligibility must remain false.
+    public let canMerge: Bool
 
-    public init(incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil) {
+    public init(
+        incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil,
+        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown,
+        canMerge: Bool = false
+    ) {
         self.incoming = incoming
         self.existing = existing
         self.incomingModified = incomingModified
         self.existingModified = existingModified
+        self.incomingKind = incomingKind
+        self.existingKind = existingKind
+        self.canMerge = canMerge && incomingKind == .directory && existingKind == .directory
     }
 }
 
@@ -353,7 +514,7 @@ public struct ItemFailure: Sendable, Equatable {
 /// Retry and stop are never remembered.
 public typealias FailureResolver = @Sendable (ItemFailure) async -> (choice: FailureChoice, applyToAll: Bool)
 
-/// Answers a conflict; `applyToAll` reuses the answer for the rest of the operation.
+/// Answers a conflict; `applyToAll` reuses the answer for the same item-kind pair.
 public typealias ConflictResolver = @Sendable (Conflict) async -> (choice: ConflictChoice, applyToAll: Bool)
 
 public enum OperationError: Error, Equatable, LocalizedError {
@@ -368,6 +529,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     /// A folder being deleted for good has another disk mounted inside.
     case diskInside(String)
     case verificationFailed(String)
+    case copiedSourceChanged(String)
     case copyFinalizationFailed(String, String)
     case notAnArchive(String)
     case archive(String)
@@ -377,6 +539,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case mountFailed(String)
     case needsUnsandboxedBuild
     case notEnoughSpace(needed: Int64, available: Int64, volume: String)
+    case incompatibleDestination(PreflightReport)
     case fileTooLarge(String, volume: String)
     case nameNotAllowed(String, volume: String)
 
@@ -388,6 +551,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
         case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
+        case .copiedSourceChanged(let path):
+            "“\((path as NSString).lastPathComponent)” was copied, but the source changed or could not be checked and was kept."
         case .copyFinalizationFailed(let name, let reason):
             "\(reason) The move of “\(name)” did not complete; the source was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
@@ -400,6 +565,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .notEnoughSpace(let needed, let available, let volume):
             "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
                 + "and \(Self.bytes(available)) is free. Nothing was copied."
+        case .incompatibleDestination(let report): report.description
         case .fileTooLarge(let name, let volume):
             "“\(name)” is larger than 4 GB, which \(volume) can't store (its format is FAT32). Nothing was copied."
         case .nameNotAllowed(let name, let volume):

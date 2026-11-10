@@ -53,6 +53,7 @@ private struct OperationRow: View {
     let snapshot: OperationCenter.Snapshot
     let controller: OperationsController
     var onUndo: (UUID) -> Void
+    @State private var showDetails = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -71,6 +72,29 @@ private struct OperationRow: View {
                 if !snapshot.progress.currentItem.isEmpty, snapshot.state == .running {
                     Text(snapshot.progress.currentItem).font(.caption).foregroundStyle(.tertiary)
                         .lineLimit(1).truncationMode(.middle)
+                }
+                if let report = snapshot.transferReport, !snapshot.isActive, report.notStarted > 0 {
+                    Text("\(report.notStarted) item(s) were not started.")
+                        .font(.caption).foregroundStyle(Color(nsColor: Palette.warning))
+                }
+                if let report = snapshot.transferReport, report.hasProblems, !report.outcomes.isEmpty {
+                    Button(showDetails ? "Hide transfer details" : "Show transfer details") {
+                        showDetails.toggle()
+                    }.buttonStyle(.link)
+                    if showDetails {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(report.outcomes.enumerated()), id: \.offset) { entry in
+                                    Text(outcomeDescription(entry.element)).textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if report.unlistedCount > 0 {
+                                    Text("\(report.unlistedCount) more item(s) not listed.")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }.frame(maxHeight: 180)
+                    }
                 }
                 if !snapshot.skippedEntries.isEmpty {
                     Text(
@@ -133,7 +157,10 @@ private struct OperationRow: View {
         case .running: "arrow.triangle.2.circlepath"
         case .paused: "pause.circle"
         case .cancelling: "xmark.circle"
-        case .done: snapshot.isUndo ? "arrow.uturn.backward.circle" : "checkmark.circle"
+        case .done:
+            (snapshot.transferReport?.skippedCount ?? 0) > 0
+                ? "exclamationmark.triangle"
+                : (snapshot.isUndo ? "arrow.uturn.backward.circle" : "checkmark.circle")
         case .failed: "exclamationmark.triangle"
         case .cancelled: "xmark.circle"
         }
@@ -143,7 +170,8 @@ private struct OperationRow: View {
         switch snapshot.state {
         case .failed: Color(nsColor: Palette.error)
         case .cancelled, .cancelling: Color(nsColor: Palette.warning)
-        case .done: Color.accentColor
+        case .done:
+            (snapshot.transferReport?.skippedCount ?? 0) > 0 ? Color(nsColor: Palette.warning) : Color.accentColor
         default: .secondary
         }
     }
@@ -168,7 +196,11 @@ private struct OperationRow: View {
             }
             if snapshot.state == .paused { parts.append("paused") }
         case .done:
-            parts.append(snapshot.isUndo ? "Undone" : "Done")
+            if let report = snapshot.transferReport, report.skippedCount > 0 {
+                parts.append("Completed with \(report.skippedCount) skipped item(s)")
+            } else {
+                parts.append(snapshot.isUndo ? "Undone" : "Done")
+            }
             if let started = snapshot.started, let finished = snapshot.finished {
                 parts.append("took \(Self.duration(finished.timeIntervalSince(started)))")
             }
@@ -178,6 +210,18 @@ private struct OperationRow: View {
             parts.append(snapshot.canUndo ? "Cancelled; finished items can be undone" : "Cancelled")
         }
         return parts.joined(separator: " · ")
+    }
+
+    private func outcomeDescription(_ outcome: TransferOutcome) -> String {
+        let status: String
+        switch outcome.result {
+        case .completed: status = "Completed"
+        case .skipped(let reason): status = "Skipped: \(reason)"
+        case .incomplete(let reason): status = "Incomplete: \(reason)"
+        case .failedAndSkipped(let reason): status = "Skipped after failure: \(reason)"
+        case .failed(let reason): status = "Failed: \(reason)"
+        }
+        return "\(outcome.item.path) — \(status) (\(outcome.items) item(s), \(Self.bytes(outcome.bytes)) planned)"
     }
 
     private static func bytes(_ value: Int64) -> String {

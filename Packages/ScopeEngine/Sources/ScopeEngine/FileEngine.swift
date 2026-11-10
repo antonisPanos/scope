@@ -35,6 +35,8 @@ public struct FileEngine: Sendable {
     var toolRunner: ToolRunner?
     /// Tests only: simulate slow path resolution at the I/O boundary.
     var readValidationHook: (@Sendable () -> Void)?
+    /// Tests only: called after an individual source item is verified.
+    var verifiedItemHook: (@Sendable (String) -> Void)?
 
     /// Tests only: items for which the Trash refuses, as on a disk without
     /// one. Always nil in the app.
@@ -298,6 +300,7 @@ public struct FileEngine: Sendable {
         progress: (@Sendable (CopyProgress) -> Void)?,
         replacingExisting: Bool = false,
         recoveryAction: RecoveryJournal.Action = .copy,
+        validateParents: ((CopyDescriptor, CopyDescriptor) throws -> Void)? = nil,
         beforePlacing: ((_ source: URL, _ partial: URL) throws -> Void)? = nil
     ) throws {
         let source = try pathGuard.checkLocation(url)
@@ -315,6 +318,7 @@ public struct FileEngine: Sendable {
             syncFault: copySyncFault, testOptions: copyTestOptions)
         let input = try CopyLocation(checked: source)
         let output = try CopyLocation(checked: target)
+        try validateParents?(input.parent, output.parent)
         // A named pipe or device file anywhere inside fails the copy here,
         // before a partial exists, rather than being left out of it.
         try job.measure(input, rejectingUnsupported: true)
@@ -358,6 +362,7 @@ public struct FileEngine: Sendable {
             // A move verifies the copy here, while it still has its partial
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
+            try validateParents?(input.parent, output.parent)
             try output.validateParent(pathGuard: pathGuard)
             if let boundary = copyTestOptions.boundary {
                 boundary(.beforePublication, source, target)

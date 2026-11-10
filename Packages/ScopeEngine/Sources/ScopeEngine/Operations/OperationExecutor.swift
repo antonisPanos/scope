@@ -57,24 +57,86 @@ extension FileEngine {
 
     // MARK: - Copy and move
 
+    private struct TransferContext {
+        let moving: Bool
+        let control: OperationControl
+        let undo: UndoRecorder
+        let parents: [(MergeDirectory, MergeDirectory)]
+        let remainingOutside: Int
+    }
+
     private func transfer(
         _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
         undo: UndoRecorder, conflicts: inout ConflictPolicy, failures: inout FailurePolicy
     ) async throws {
+        control.beginTransferReport(notStarted: items.count)
         let destination = try pathGuard.checkWriteLocation(folder)
         let sources = try items.map { try pathGuard.checkLocation($0) }
-        let totals = try measure(sources)
+        // Keep the initial measurement for each top-level item. Measuring again
+        // after a failure can observe a different tree and corrupt the totals.
+        let measurements = try sources.map { try measure([$0]) }
         control.update {
-            $0.bytesTotal = totals.bytes
-            $0.itemsTotal = totals.items
+            $0.bytesTotal = measurements.reduce(0) { $0 + $1.bytes }
+            $0.itemsTotal = measurements.reduce(0) { $0 + $1.items }
         }
         try preflight(sources, into: destination, moving: moving)
+        try await transferItems(
+            sources, measurements: measurements, into: destination, moving: moving,
+            control: control, undo: undo, conflicts: &conflicts, failures: &failures)
+    }
 
-        for source in sources {
-            try Task.checkCancellation()
-            try control.waitWhilePaused()
+    /// Executes measured items against the existing operation's report and progress.
+    /// The caller owns initial measurement and preflight, so nested work must not reset them.
+    private func transferItems(
+        _ sources: [URL], measurements: [(bytes: Int64, items: Int)], into destination: URL,
+        moving: Bool, control: OperationControl, undo: UndoRecorder,
+        conflicts: inout ConflictPolicy, failures: inout FailurePolicy
+    ) async throws {
+        for (index, pair) in zip(sources, measurements).enumerated() {
+            try await transferItem(
+                pair.0, measurement: pair.1, into: destination,
+                context: TransferContext(
+                    moving: moving, control: control, undo: undo, parents: [],
+                    remainingOutside: sources.count - index - 1),
+                conflicts: &conflicts, failures: &failures)
+        }
+    }
+
+    private func transferItem(
+        _ source: URL, measurement: (bytes: Int64, items: Int), into destination: URL,
+        context: TransferContext,
+        conflicts: inout ConflictPolicy, failures: inout FailurePolicy
+    ) async throws {
+        let moving = context.moving
+        let control = context.control
+        let undo = context.undo
+        let parents = context.parents
+        func validateParents() throws {
+            for (source, destination) in parents {
+                try source.validate(pathGuard: pathGuard)
+                try destination.validate(pathGuard: pathGuard)
+            }
+        }
+        try Task.checkCancellation()
+        try control.waitWhilePaused()
+        try validateParents()
+        control.setNotStarted(context.remainingOutside)
+        var outcome: TransferOutcome.Result = .failed("Stopped before completion")
+        var transferredBytes: Int64 = 0
+        var reportedMeasurement = measurement
+        defer {
+            control.recordOutcome(
+                TransferOutcome(
+                    item: source, items: reportedMeasurement.items, bytes: reportedMeasurement.bytes, result: outcome),
+                transferredBytes: transferredBytes)
+        }
+        do {
             let sameFolder = source.deletingLastPathComponent().path == destination.path
-            if moving && sameFolder { continue }
+            if moving && sameFolder {
+                outcome = .skipped("Already in the destination folder")
+                control.removePending(bytes: measurement.bytes, items: measurement.items)
+                return
+            }
             var target = destination.appendingPathComponent(source.lastPathComponent)
             var replacing = false
             if Self.lstatInfo(target.path) != nil {
@@ -82,17 +144,72 @@ extension FileEngine {
                     // Pasting a copy into its own folder makes "name copy", like Finder.
                     target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
                 } else {
+                    // lstat describes the link itself, including dangling links.
+                    func kind(_ url: URL) -> ConflictItemKind {
+                        guard let info = Self.lstatInfo(url.path) else { return .unknown }
+                        switch info.st_mode & S_IFMT {
+                        case S_IFREG: return .file
+                        case S_IFDIR: return .directory
+                        case S_IFLNK: return .symbolicLink
+                        default: return .other
+                        }
+                    }
+                    // Both folders are pinned before asking, so a merge notices
+                    // either one being swapped while the question is open. A
+                    // folder that can't be pinned is just not offered a merge,
+                    // and the other choices never depend on the pins.
+                    var mergePins: (MergeDirectory, MergeDirectory)?
+                    if Self.mergeEligible(source, target) {
+                        mergePins = try? (
+                            MergeDirectory(source, pathGuard: pathGuard, writable: false),
+                            MergeDirectory(target, pathGuard: pathGuard, writable: true)
+                        )
+                    }
                     let conflict = Conflict(
                         incoming: source, existing: target, incomingModified: Self.modified(source),
-                        existingModified: Self.modified(target))
+                        existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target),
+                        canMerge: mergePins != nil)
                     var choice = try await conflicts.resolve(conflict)
+                    try validateParents()
+                    let replaceIfOlder = choice == .replaceIfOlder
                     if choice == .replaceIfOlder {
                         choice = Self.isOlderFile(target, than: source) ? .replace : .skip
                     }
                     switch choice {
-                    case .skip, .replaceIfOlder:
+                    case .merge:
+                        guard !moving, let (incoming, existing) = mergePins,
+                            Self.mergeEligible(source, target),
+                            !Self.isInside(target.path, source.path), !Self.isInside(source.path, target.path)
+                        else { throw CocoaError(.featureUnsupported) }
+                        try incoming.validate(pathGuard: pathGuard)
+                        try existing.validate(pathGuard: pathGuard)
+                        let names = try incoming.names(pathGuard: pathGuard)
+                        let children = names.map { source.appendingPathComponent($0) }
+                        let childMeasurements = try children.map { try measure([$0]) }
+                        let skippedBefore = control.transferReport?.skippedCount ?? 0
+                        reportedMeasurement = (bytes: 0, items: 1)
                         control.update { $0.itemsDone += 1 }
-                        continue
+                        control.setNotStarted(context.remainingOutside + children.count)
+                        for (index, child) in children.enumerated() {
+                            control.setNotStarted(context.remainingOutside + children.count - index)
+                            try incoming.validate(pathGuard: pathGuard)
+                            try existing.validate(pathGuard: pathGuard)
+                            try await transferItem(
+                                child, measurement: childMeasurements[index], into: target,
+                                context: TransferContext(
+                                    moving: false, control: control, undo: undo,
+                                    parents: parents + [(incoming, existing)],
+                                    remainingOutside: context.remainingOutside + children.count - index - 1),
+                                conflicts: &conflicts, failures: &failures)
+                        }
+                        outcome =
+                            (control.transferReport?.skippedCount ?? 0) > skippedBefore
+                            ? .incomplete("Some children were skipped") : .completed
+                        return
+                    case .skip, .replaceIfOlder:
+                        outcome = .skipped(replaceIfOlder ? "Existing item is not older" : "Skipped by choice")
+                        control.removePending(bytes: measurement.bytes, items: measurement.items)
+                        return
                     case .keepBoth:
                         target = try uniqueName(source.lastPathComponent, in: destination, style: .numbered)
                     case .replace:
@@ -107,102 +224,192 @@ extension FileEngine {
                 }
             }
 
-            let sameDisk = try sameOperationVolume(source, destination)
-            if moving && sameDisk {
-                // A rename is instant, so the existing item is trashed just
-                // before it, and put back if the rename fails.
-                var trashed: URL?
-                var moved = false
-                while !moved {
-                    if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
-                    do {
-                        try await moveItem(at: source, to: target)
-                        moved = true
-                    } catch {
-                        if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                        trashed = nil
-                        guard try await failures.retry(source, after: error) else { break }
-                    }
-                }
-                guard moved else {
-                    control.update { $0.itemsDone += 1 }
-                    continue
-                }
-                if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-                undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
-                let size = (try? measure([target]))?.bytes ?? 0
-                control.update {
-                    $0.bytesDone += size
-                    $0.itemsDone += 1
-                    $0.currentItem = source.lastPathComponent
-                }
-                continue
-            }
+            outcome = try await performTransfer(
+                TransferTarget(
+                    source: source, target: target, destination: destination,
+                    replacing: replacing, measurement: measurement),
+                context: context, failures: &failures, transferredBytes: &transferredBytes)
+        } catch {
+            outcome = .failed(TransferReport.diagnostic(error))
+            throw error
+        }
+    }
 
-            // The copy is written under a partial name. Only when it is complete
-            // (and, for a move, verified) does a replaced item go to the Trash,
-            // right before the copy is renamed into its place.
-            let replaced = ReplacedItem()
-            let existing = replacing ? target : nil
-            let placeCopy: (URL, URL) throws -> Void = { original, partial in
-                if moving {
-                    control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
-                    self.copyTestOptions.boundary?(.beforeVerification, original, partial)
-                    try self.verifyCopy(original, partial, control: control)
-                    self.copyTestOptions.boundary?(.afterVerification, original, partial)
-                }
-                if let existing, Self.lstatInfo(existing.path) != nil {
-                    replaced.trashed = try self.trashItemNow(existing)
-                }
+    private struct TransferTarget {
+        let source: URL
+        let target: URL
+        let destination: URL
+        let replacing: Bool
+        let measurement: (bytes: Int64, items: Int)
+    }
+
+    private func performTransfer(
+        _ item: TransferTarget, context: TransferContext, failures: inout FailurePolicy,
+        transferredBytes: inout Int64
+    ) async throws -> TransferOutcome.Result {
+        let source = item.source
+        let target = item.target
+        let destination = item.destination
+        let replacing = item.replacing
+        let measurement = item.measurement
+        let moving = context.moving
+        let control = context.control
+        let undo = context.undo
+        let parents = context.parents
+        func validateParents() throws {
+            for (source, destination) in parents {
+                try source.validate(pathGuard: pathGuard)
+                try destination.validate(pathGuard: pathGuard)
             }
-            // A failed attempt leaves nothing behind and puts a replaced item
-            // back, so the item can be tried again from the start.
-            let before = control.progress
-            var copied = false
-            while !copied {
+        }
+        let sameDisk = try sameOperationVolume(source, destination)
+        if moving && sameDisk {
+            // A rename is instant, so the existing item is trashed just
+            // before it, and put back if the rename fails.
+            var trashed: URL?
+            var moved = false
+            var lastFailure = ""
+            while !moved {
+                if replacing, Self.lstatInfo(target.path) != nil { trashed = try trashItemNow(target) }
                 do {
-                    try copyTracked(
-                        source, to: target, control: control, replacingExisting: replacing,
-                        recoveryAction: moving ? .move : .copy, beforePlacing: placeCopy)
-                    copied = true
-                } catch let error as PublishedCopyFinalizationError {
-                    // Publication succeeded: keep both the destination and its
-                    // undo, and never restore over it or retry from scratch.
-                    if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-                    undo.add(.trashCreated(target, fileID: error.publishedIdentity))
-                    if moving {
-                        throw OperationError.copyFinalizationFailed(
-                            source.lastPathComponent, error.localizedDescription)
-                    }
-                    throw error
+                    try await moveItem(at: source, to: target)
+                    moved = true
                 } catch {
-                    if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
-                    replaced.trashed = nil
-                    control.update {
-                        $0.bytesDone = before.bytesDone
-                        $0.itemsDone = before.itemsDone
-                    }
+                    if let trashed { restoreReplaced(trashed, to: target, undo: undo) }
+                    trashed = nil
+                    lastFailure = TransferReport.diagnostic(error)
                     guard try await failures.retry(source, after: error) else { break }
                 }
             }
-            guard copied else {
-                control.update { $0.itemsDone += 1 }
-                continue
+            guard moved else {
+                control.removePending(bytes: measurement.bytes, items: measurement.items)
+                return .failedAndSkipped(lastFailure)
             }
-            if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
-            undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+            if let trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+            undo.add(.moveBack(from: target, to: source, fileID: Self.fileID(target)))
+            control.update {
+                $0.bytesDone += measurement.bytes
+                $0.itemsDone += measurement.items
+                $0.currentItem = source.lastPathComponent
+            }
+            return .completed
+        }
+
+        // The copy is written under a partial name. Only when it is complete
+        // (and, for a move, verified) does a replaced item go to the Trash,
+        // right before the copy is renamed into its place.
+        let replaced = ReplacedItem()
+        var verifiedSource: VerifiedSource?
+        let existing = replacing ? target : nil
+        let placeCopy: (URL, URL) throws -> Void = { original, partial in
+            try validateParents()
             if moving {
-                // From here the move finishes even if cancelled: the copy is in
-                // place and verified, so the original goes to the Trash.
-                copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
-                let trashed = try trashItemNow(source)
-                if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+                control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                self.copyTestOptions.boundary?(.beforeVerification, original, partial)
+                verifiedSource = try self.verifyCopy(original, partial, control: control)
+                self.copyTestOptions.boundary?(.afterVerification, original, partial)
+            }
+            if let existing, Self.lstatInfo(existing.path) != nil {
+                try validateParents()
+                replaced.trashed = try self.trashItemNow(existing)
             }
         }
+        // A failed attempt leaves nothing behind and puts a replaced item
+        // back, so the item can be tried again from the start.
+        let before = control.progress
+        var copied = false
+        var lastFailure = ""
+        while !copied {
+            do {
+                try validateParents()
+                try copyTracked(
+                    source, to: target, control: control, replacingExisting: replacing,
+                    recoveryAction: moving ? .move : .copy,
+                    validateParents: { input, output in
+                        try validateParents()
+                        if let (incoming, existing) = parents.last {
+                            try incoming.validateChildParent(input)
+                            try existing.validateChildParent(output)
+                        }
+                    }, beforePlacing: placeCopy
+                )
+                copied = true
+            } catch let error as PublishedCopyFinalizationError {
+                if let trashed = replaced.trashed {
+                    undo.add(replacementStep(trashed, target: target, parents: parents))
+                }
+                undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                if moving {
+                    throw OperationError.copyFinalizationFailed(
+                        source.lastPathComponent, error.localizedDescription)
+                }
+                throw error
+            } catch {
+                if let trashed = replaced.trashed {
+                    do {
+                        try validateParents()
+                    } catch {
+                        undo.add(replacementStep(trashed, target: target, parents: parents))
+                        throw error
+                    }
+                    if let parent = parents.last?.1 {
+                        do {
+                            try placeBack(trashed, at: target, expectedParent: parent.fileIdentity)
+                        } catch {
+                            undo.add(replacementStep(trashed, target: target, parents: parents))
+                            throw error
+                        }
+                    } else {
+                        restoreReplaced(trashed, to: target, undo: undo)
+                    }
+                }
+                replaced.trashed = nil
+                verifiedSource = nil
+                control.update {
+                    $0.bytesDone = before.bytesDone
+                    $0.itemsDone = before.itemsDone
+                }
+                lastFailure = TransferReport.diagnostic(error)
+                guard try await failures.retry(source, after: error) else { break }
+            }
+        }
+        guard copied else {
+            control.removePending(bytes: measurement.bytes, items: measurement.items)
+            return .failedAndSkipped(lastFailure)
+        }
+        transferredBytes = max(0, control.progress.bytesDone - before.bytesDone)
+        if let trashed = replaced.trashed { undo.add(replacementStep(trashed, target: target, parents: parents)) }
+        undo.add(.trashCreated(target, fileID: Self.fileID(target)))
+        if moving {
+            copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
+            guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
+            let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
+            if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+        }
+        return .completed
+    }
+
+    /// Never follow a final link or infer eligibility when package metadata is unavailable.
+    static func mergeEligible(_ incoming: URL, _ existing: URL) -> Bool {
+        func ordinaryDirectory(_ url: URL) -> Bool {
+            guard let info = lstatInfo(url.path), info.st_mode & S_IFMT == S_IFDIR,
+                let values = try? url.resourceValues(forKeys: [.isPackageKey]),
+                let isPackage = values.isPackage
+            else { return false }
+            return !isPackage
+        }
+        return ordinaryDirectory(incoming) && ordinaryDirectory(existing)
     }
 
     /// Puts back an item that was trashed to make room for a replacement that
     /// then failed. If that isn't possible, the operation's undo can still do it.
+    private func replacementStep(_ trashed: URL, target: URL, parents: [(MergeDirectory, MergeDirectory)]) -> UndoStep {
+        if let parent = parents.last?.1 {
+            return .putBackInParent(trashed: trashed, original: target, parent: parent.fileIdentity)
+        }
+        return .putBack(trashed: trashed, original: target)
+    }
+
     private func restoreReplaced(_ trashed: URL, to original: URL, undo: UndoRecorder) {
         do {
             try placeBack(trashed, at: original)
@@ -221,10 +428,25 @@ extension FileEngine {
         }
     }
 
+    private func placeBack(_ trashed: URL, at original: URL, expectedParent: FileIdentity) throws {
+        let from = try CopyLocation(checked: pathGuard.checkPutBack(trashed))
+        let to = try CopyLocation(checked: pathGuard.checkWriteLocation(original))
+        let parent = try to.parent.info()
+        guard UInt64(parent.st_dev) == expectedParent.device, UInt64(parent.st_ino) == expectedParent.inode,
+            UInt32(parent.st_mode & S_IFMT) == expectedParent.kind
+        else { throw OperationError.undoNotPossible("The original merge folder has changed.") }
+        try to.validateParent(pathGuard: pathGuard)
+        let source = try from.info()
+        guard from.renameExclusively(into: to.parent, as: to.name, isDirectory: source.st_mode & S_IFMT == S_IFDIR)
+        else { throw FileEngineError.posix("Put back", original.path) }
+    }
+
     /// Copies one item and adds its progress to the operation's totals.
     private func copyTracked(
         _ source: URL, to target: URL, control: OperationControl, replacingExisting: Bool = false,
-        recoveryAction: RecoveryJournal.Action = .copy, beforePlacing: ((URL, URL) throws -> Void)? = nil
+        recoveryAction: RecoveryJournal.Action = .copy,
+        validateParents: ((CopyDescriptor, CopyDescriptor) throws -> Void)? = nil,
+        beforePlacing: ((URL, URL) throws -> Void)? = nil
     ) throws {
         let base = control.progress
         try copyItem(
@@ -238,7 +460,8 @@ extension FileEngine {
                         ? source.lastPathComponent
                         : source.lastPathComponent + "/" + progress.currentItem
                 }
-            }, replacingExisting: replacingExisting, recoveryAction: recoveryAction, beforePlacing: beforePlacing)
+            }, replacingExisting: replacingExisting, recoveryAction: recoveryAction, validateParents: validateParents,
+            beforePlacing: beforePlacing)
     }
 
     private func duplicate(_ items: [URL], control: OperationControl, undo: UndoRecorder) async throws {
@@ -271,41 +494,158 @@ extension FileEngine {
 
     /// Confirms a copy matches its original: same structure, sizes, link
     /// targets and SHA-256 of every file's contents.
-    func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws {
+    @discardableResult
+    func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws -> VerifiedSource {
+        var hash = SHA256()
         try verifyCopy(
             CopyLocation(checked: pathGuard.checkLocation(original)),
-            CopyLocation(checked: pathGuard.checkWriteLocation(copy)), control: control)
+            CopyLocation(checked: pathGuard.checkWriteLocation(copy)), control: control, hash: &hash)
+        return VerifiedSource(fingerprint: Data(hash.finalize()))
     }
 
-    private func verifyCopy(_ original: CopyLocation, _ copy: CopyLocation, control: OperationControl?) throws {
+    private func verifyCopy(
+        _ original: CopyLocation, _ copy: CopyLocation, control: OperationControl?, hash: inout SHA256
+    ) throws {
         try Task.checkCancellation()
         let a = try original.info()
         let b = try copy.info()
         guard a.st_mode & S_IFMT == b.st_mode & S_IFMT else {
             throw OperationError.verificationFailed(original.path)
         }
+        let version = SourceVersion(a)
+        version.append(to: &hash)
+        var sourceDescriptor: CopyDescriptor?
         switch a.st_mode & S_IFMT {
         case S_IFDIR:
             let source = try original.open(O_RDONLY | O_DIRECTORY, matching: a)
+            sourceDescriptor = source
             let destination = try copy.open(O_RDONLY | O_DIRECTORY, matching: b)
             let left = try CopyLocation.names(in: source, path: original.path).sorted()
             let right = try CopyLocation.names(in: destination, path: copy.path).sorted()
             guard left == right else { throw OperationError.verificationFailed(original.path) }
+            Self.appendNames(left, to: &hash)
             for name in left {
-                try verifyCopy(original.child(name, in: source), copy.child(name, in: destination), control: control)
+                try verifyCopy(
+                    original.child(name, in: source), copy.child(name, in: destination), control: control, hash: &hash)
+            }
+            guard try CopyLocation.names(in: source, path: original.path).sorted() == left else {
+                throw OperationError.verificationFailed(original.path)
             }
         case S_IFLNK:
+            sourceDescriptor = try original.open(O_SYMLINK, matching: a)
             guard try original.linkTarget() == copy.linkTarget() else {
                 throw OperationError.verificationFailed(original.path)
             }
         case S_IFREG:
             let source = try original.open(O_RDONLY, matching: a)
+            sourceDescriptor = source
             let destination = try copy.open(O_RDONLY, matching: b)
             guard a.st_size == b.st_size,
                 try Self.sha256(source, control: control) == Self.sha256(destination, control: control)
             else { throw OperationError.verificationFailed(original.path) }
-        default: break
+        default: throw OperationError.verificationFailed(original.path)
         }
+        guard version == SourceVersion(try original.info()),
+            try sourceDescriptor.map({ version == SourceVersion(try $0.info()) }) ?? true
+        else { throw OperationError.verificationFailed(original.path) }
+        verifiedItemHook?(original.path)
+    }
+
+    /// The evidence is gathered around each verified read, not in a later
+    /// tree snapshot. Only the resulting digest is retained.
+    struct VerifiedSource {
+        let fingerprint: Data
+    }
+
+    struct SourceVersion: Equatable {
+        let device: dev_t
+        let inode: ino_t
+        let mode: mode_t
+        let flags: UInt32
+        let size: off_t
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let changedSeconds: Int
+        let changedNanoseconds: Int
+
+        init(_ info: stat) {
+            device = info.st_dev
+            inode = info.st_ino
+            mode = info.st_mode
+            flags = info.st_flags
+            size = info.st_size
+            modifiedSeconds = info.st_mtimespec.tv_sec
+            modifiedNanoseconds = info.st_mtimespec.tv_nsec
+            changedSeconds = info.st_ctimespec.tv_sec
+            changedNanoseconds = info.st_ctimespec.tv_nsec
+        }
+
+        func append(to hash: inout SHA256) {
+            let fields = [
+                String(device), String(inode), String(mode), String(flags), String(size),
+                String(modifiedSeconds), String(modifiedNanoseconds),
+                String(changedSeconds), String(changedNanoseconds),
+            ]
+            for field in fields { FileEngine.appendFingerprintField(field, to: &hash) }
+        }
+    }
+
+    /// Length-prefix each UTF-8 field so names and numeric fields cannot be
+    /// confused with delimiters or with fields from a different tree.
+    private static func appendFingerprintField(_ value: String, to hash: inout SHA256) {
+        let bytes = Data(value.utf8)
+        hash.update(data: Data("\(bytes.count):".utf8))
+        hash.update(data: bytes)
+    }
+
+    private static func appendNames(_ names: [String], to hash: inout SHA256) {
+        appendFingerprintField(String(names.count), to: &hash)
+        for name in names { appendFingerprintField(name, to: &hash) }
+    }
+
+    private func fingerprintSource(_ location: CopyLocation, hash: inout SHA256) throws {
+        let info = try location.info()
+        let version = SourceVersion(info)
+        version.append(to: &hash)
+        let descriptor: CopyDescriptor
+        if info.st_mode & S_IFMT == S_IFDIR {
+            let directory = try location.open(O_RDONLY | O_DIRECTORY, matching: info)
+            descriptor = directory
+            let names = try CopyLocation.names(in: directory, path: location.path).sorted()
+            Self.appendNames(names, to: &hash)
+            for name in names {
+                try fingerprintSource(location.child(name, in: directory), hash: &hash)
+            }
+            guard try CopyLocation.names(in: directory, path: location.path).sorted() == names else {
+                throw OperationError.copiedSourceChanged(location.path)
+            }
+        } else if info.st_mode & S_IFMT == S_IFREG {
+            descriptor = try location.open(O_RDONLY, matching: info)
+        } else if info.st_mode & S_IFMT == S_IFLNK {
+            descriptor = try location.open(O_SYMLINK, matching: info)
+        } else {
+            throw OperationError.copiedSourceChanged(location.path)
+        }
+        guard SourceVersion(try descriptor.info()) == version, SourceVersion(try location.info()) == version else {
+            throw OperationError.copiedSourceChanged(location.path)
+        }
+    }
+
+    func retireVerifiedSource(_ source: URL, evidence: VerifiedSource) throws -> URL? {
+        let target: URL
+        do {
+            target = try pathGuard.checkModifiable(source)
+            var hash = SHA256()
+            try fingerprintSource(CopyLocation(checked: target), hash: &hash)
+            guard Data(hash.finalize()) == evidence.fingerprint else {
+                throw OperationError.copiedSourceChanged(source.path)
+            }
+        } catch {
+            throw OperationError.copiedSourceChanged(source.path)
+        }
+        // Foundation's Trash API takes a path, not a checked descriptor. A
+        // replacement between this final check and Trash remains possible.
+        return try moveToTrash(target)
     }
 
     private static func sha256(_ descriptor: CopyDescriptor, control: OperationControl?) throws -> SHA256.Digest {
@@ -364,6 +704,8 @@ extension FileEngine {
                     throw OperationError.undoNotPossible("“\(trashed.lastPathComponent)” is no longer in the Trash.")
                 }
                 try await moveItem(at: trashed, to: original, puttingBack: true)
+            case .putBackInParent(let trashed, let original, let expected):
+                try placeBack(trashed, at: original, expectedParent: expected)
             }
             // Undoing a step reverses the change it recorded.
             undo.announce(FolderItemsChanged.changes(for: step).map(\.reversed))
@@ -456,20 +798,28 @@ extension FileEngine {
 
 /// Remembers "apply to all" answers within one operation.
 struct ConflictPolicy {
+    private struct Key: Hashable {
+        let incoming: ConflictItemKind
+        let existing: ConflictItemKind
+    }
+
     let resolver: ConflictResolver
-    var remembered: ConflictChoice?
+    private var remembered: [Key: ConflictChoice] = [:]
 
     init(resolver: @escaping ConflictResolver) {
         self.resolver = resolver
     }
 
     mutating func resolve(_ conflict: Conflict) async throws -> ConflictChoice {
-        if let remembered { return remembered }
         try Task.checkCancellation()
+        let key = Key(incoming: conflict.incomingKind, existing: conflict.existingKind)
+        let known = key.incoming != .unknown && key.existing != .unknown
+        if known, let choice = remembered[key], choice != .merge || conflict.canMerge { return choice }
         let (choice, applyToAll) = await resolver(conflict)
         // A cancel while the question was open wins over the answer.
         try Task.checkCancellation()
-        if applyToAll { remembered = choice }
+        guard choice != .merge || conflict.canMerge else { throw CocoaError(.featureUnsupported) }
+        if applyToAll && known && choice != .stop { remembered[key] = choice }
         return choice
     }
 }
