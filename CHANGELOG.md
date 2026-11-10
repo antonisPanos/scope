@@ -3,6 +3,23 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.5.0](https://github.com/antonisPanos/scope/compare/v0.4.1...v0.5.0) (2026-11-10)
+
+
+### Features
+
+* **engine:** add optional copy recovery journal ([#183](https://github.com/antonisPanos/scope/issues/183)) ([ad501d8](https://github.com/antonisPanos/scope/commit/ad501d8689995f79a20472d723cf10e0fc7e2b87)), closes [#173](https://github.com/antonisPanos/scope/issues/173)
+* **operations:** add internal copy folder merge ([#182](https://github.com/antonisPanos/scope/issues/182)) ([18b8ca2](https://github.com/antonisPanos/scope/commit/18b8ca22dc18430c45e0411796f83fb6103bd322)), closes [#171](https://github.com/antonisPanos/scope/issues/171)
+* **operations:** report destination incompatibilities before copying ([#177](https://github.com/antonisPanos/scope/issues/177)) ([2b101d3](https://github.com/antonisPanos/scope/commit/2b101d3329255eb8498ed0342a4afe010045bd07))
+
+
+### Bug fixes
+
+* **engine:** preserve moves when copy finalization fails ([#181](https://github.com/antonisPanos/scope/issues/181)) ([3ba0dc0](https://github.com/antonisPanos/scope/commit/3ba0dc06125c9b847f872ee896221e48206a5d70)), closes [#168](https://github.com/antonisPanos/scope/issues/168) [#174](https://github.com/antonisPanos/scope/issues/174)
+* **operations:** keep changed sources after cross-volume copy ([#178](https://github.com/antonisPanos/scope/issues/178)) ([9f26e0e](https://github.com/antonisPanos/scope/commit/9f26e0e5cf29e8a676669998449fec401bfde41d)), closes [#167](https://github.com/antonisPanos/scope/issues/167) [#174](https://github.com/antonisPanos/scope/issues/174)
+* **operations:** report skipped transfer outcomes ([#179](https://github.com/antonisPanos/scope/issues/179)) ([0e76497](https://github.com/antonisPanos/scope/commit/0e764974cfcb1c433405b7776537849fb253e76c)), closes [#169](https://github.com/antonisPanos/scope/issues/169) [#174](https://github.com/antonisPanos/scope/issues/174)
+* **operations:** scope conflict decisions by item type ([#176](https://github.com/antonisPanos/scope/issues/176)) ([239706d](https://github.com/antonisPanos/scope/commit/239706d8a7ae09a744b4f026369d67e49e043849))
+
 ## [0.4.1](https://github.com/antonisPanos/scope/compare/v0.4.0...v0.4.1) (2026-11-04)
 
 
