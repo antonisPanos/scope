@@ -386,6 +386,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case diskInside(String)
     case verificationFailed(String)
     case copiedSourceChanged(String)
+    case copyFinalizationFailed(String, String)
     case notAnArchive(String)
     case archive(String)
     case undoNotPossible(String)
@@ -408,6 +409,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
         case .copiedSourceChanged(let path):
             "“\((path as NSString).lastPathComponent)” was copied, but the source changed or could not be checked and was kept."
+        case .copyFinalizationFailed(let name, let reason):
+            "\(reason) The move of “\(name)” did not complete; the source was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
         case .archive(let message): message
         case .undoNotPossible(let reason): "Can't undo: \(reason)"
