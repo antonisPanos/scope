@@ -82,9 +82,19 @@ extension FileEngine {
                     // Pasting a copy into its own folder makes "name copy", like Finder.
                     target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
                 } else {
+                    // lstat describes the link itself, including dangling links.
+                    func kind(_ url: URL) -> ConflictItemKind {
+                        guard let info = Self.lstatInfo(url.path) else { return .unknown }
+                        switch info.st_mode & S_IFMT {
+                        case S_IFREG: return .file
+                        case S_IFDIR: return .directory
+                        case S_IFLNK: return .symbolicLink
+                        default: return .other
+                        }
+                    }
                     let conflict = Conflict(
                         incoming: source, existing: target, incomingModified: Self.modified(source),
-                        existingModified: Self.modified(target))
+                        existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target))
                     var choice = try await conflicts.resolve(conflict)
                     if choice == .replaceIfOlder {
                         choice = Self.isOlderFile(target, than: source) ? .replace : .skip
@@ -558,20 +568,27 @@ extension FileEngine {
 
 /// Remembers "apply to all" answers within one operation.
 struct ConflictPolicy {
+    private struct Key: Hashable {
+        let incoming: ConflictItemKind
+        let existing: ConflictItemKind
+    }
+
     let resolver: ConflictResolver
-    var remembered: ConflictChoice?
+    private var remembered: [Key: ConflictChoice] = [:]
 
     init(resolver: @escaping ConflictResolver) {
         self.resolver = resolver
     }
 
     mutating func resolve(_ conflict: Conflict) async throws -> ConflictChoice {
-        if let remembered { return remembered }
         try Task.checkCancellation()
+        let key = Key(incoming: conflict.incomingKind, existing: conflict.existingKind)
+        let known = key.incoming != .unknown && key.existing != .unknown
+        if known, let choice = remembered[key] { return choice }
         let (choice, applyToAll) = await resolver(conflict)
         // A cancel while the question was open wins over the answer.
         try Task.checkCancellation()
-        if applyToAll { remembered = choice }
+        if applyToAll && known && choice != .stop { remembered[key] = choice }
         return choice
     }
 }
