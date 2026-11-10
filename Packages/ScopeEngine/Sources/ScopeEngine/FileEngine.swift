@@ -32,6 +32,8 @@ public struct FileEngine: Sendable {
     var toolRunner: ToolRunner?
     /// Tests only: simulate slow path resolution at the I/O boundary.
     var readValidationHook: (@Sendable () -> Void)?
+    /// Tests only: called after an individual source item is verified.
+    var verifiedItemHook: (@Sendable (String) -> Void)?
 
     /// Tests only: items for which the Trash refuses, as on a disk without
     /// one. Always nil in the app.

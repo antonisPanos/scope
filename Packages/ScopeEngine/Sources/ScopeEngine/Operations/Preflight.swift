@@ -1,5 +1,50 @@
 import Foundation
 
+/// A bounded list of destination incompatibilities. Paths include the selected
+/// item's name, so entries from different selected folders remain distinguishable.
+public struct PreflightReport: Equatable, Sendable {
+    public enum Reason: Equatable, Sendable {
+        case invalidName
+        case fileTooLarge(limit: Int64)
+        case symbolicLinksUnsupported
+        case symbolicLinksUnknown
+    }
+
+    public struct Entry: Equatable, Sendable {
+        public let path: String
+        public let reason: Reason
+    }
+
+    static let entryLimit = 20
+    public let volume: String
+    public private(set) var entries: [Entry] = []
+    public private(set) var totalCount = 0
+    public var omittedCount: Int { totalCount - entries.count }
+
+    init(volume: String) { self.volume = volume }
+
+    mutating func add(path: String, reason: Reason) {
+        if totalCount < Int.max { totalCount += 1 }
+        if entries.count < Self.entryLimit { entries.append(Entry(path: path, reason: reason)) }
+    }
+
+    var description: String {
+        let details = entries.map { entry in
+            let reason: String
+            switch entry.reason {
+            case .invalidName: reason = "name is not supported"
+            case .fileTooLarge(let limit): reason = "file exceeds the \(OperationError.bytes(limit)) limit"
+            case .symbolicLinksUnsupported: reason = "symbolic links are not supported"
+            case .symbolicLinksUnknown: reason = "symbolic link support could not be confirmed"
+            }
+            return "• \(entry.path.debugDescription): \(reason)"
+        }.joined(separator: "\n")
+        let omitted = omittedCount > 0 ? "\n\(omittedCount) more incompatibilities not shown." : ""
+        return "Can't copy to “\(volume)” (\(totalCount) incompatibilities):\n\(details)\(omitted)\n"
+            + "Nothing was copied. Choose a compatible destination or remove the incompatible items and try again."
+    }
+}
+
 /// Checks a copy or move against its destination before anything is written:
 /// names the destination's file system can't store, files over its size
 /// limit, and free space. Finding these partway through would leave the job
@@ -7,6 +52,7 @@ import Foundation
 extension FileEngine {
     /// What a destination's file system allows.
     struct DestinationLimits: Equatable, Sendable {
+        enum Support: Equatable, Sendable { case supported, unsupported, unknown }
         /// The file system's name as `statfs` reports it ("apfs", "msdos", "exfat").
         var fileSystem: String
         /// The volume's name, for messages.
@@ -18,6 +64,8 @@ extension FileEngine {
         var usesFATNames: Bool
         /// Whether files copied within it can be clones that take no space.
         var clones: Bool
+        /// Unknown is kept separate from supported: a link cannot safely be planned on a guess.
+        var symbolicLinks: Support
 
         init(fileSystem: String, volumeName: String, freeBytes: Int64?) {
             self.fileSystem = fileSystem
@@ -26,6 +74,7 @@ extension FileEngine {
             maxFileSize = fileSystem == "msdos" ? 4 * 1024 * 1024 * 1024 - 1 : nil
             usesFATNames = fileSystem == "msdos" || fileSystem == "exfat"
             clones = fileSystem == "apfs"
+            symbolicLinks = .unknown
         }
 
         static func of(_ folder: URL) -> DestinationLimits? {
@@ -40,35 +89,64 @@ extension FileEngine {
             let name =
                 (try? URL(fileURLWithPath: mount).resourceValues(forKeys: [.volumeLocalizedNameKey]))?
                 .volumeLocalizedName ?? (mount as NSString).lastPathComponent
-            return DestinationLimits(
+            let (freeBytes, overflow) = Int64(clamping: info.f_bavail)
+                .multipliedReportingOverflow(by: Int64(info.f_bsize))
+            var limits = DestinationLimits(
                 fileSystem: type, volumeName: name.isEmpty ? mount : name,
-                freeBytes: Int64(info.f_bavail) * Int64(info.f_bsize))
+                freeBytes: overflow ? Int64.max : freeBytes)
+            if let supports = (try? folder.resourceValues(forKeys: [.volumeSupportsSymbolicLinksKey]))?
+                .volumeSupportsSymbolicLinks
+            {
+                limits.symbolicLinks = supports ? .supported : .unsupported
+            }
+            return limits
         }
     }
+
+    /// Shared injection seam: #174 can supply capabilities without changing path checks.
+    typealias DestinationCapabilitiesProvider = @Sendable (URL) throws -> DestinationLimits
 
     /// Room kept free beyond the copy itself, for folders and metadata.
     static let copyHeadroom: Int64 = 16 * 1024 * 1024
 
-    /// Throws the first reason the items can't go into `destination`.
+    /// Refuses the entire batch if a known incompatibility or uncertain link capability is found.
     /// Items that will only be renamed (a move on one disk) need no space.
-    func preflight(_ sources: [URL], into destination: URL, moving: Bool) throws {
-        guard let limits = copyTestOptions.destinationLimits ?? DestinationLimits.of(destination) else { return }
-        guard Self.lstatInfo(destination.path)?.st_dev != nil else { return }
+    func preflight(
+        _ sources: [URL], into destination: URL, moving: Bool,
+        capabilities: DestinationCapabilitiesProvider = { folder in
+            guard let limits = DestinationLimits.of(folder) else {
+                throw FileEngineError.posix("Check destination", folder.path)
+            }
+            return limits
+        }
+    ) throws {
+        let checkedDestination = try pathGuard.checkWriteLocation(destination)
+        let limits = try copyTestOptions.destinationLimits ?? capabilities(checkedDestination)
+        _ = try CopyLocation(checked: checkedDestination).info()
         var needed: Int64 = 0
+        var report = PreflightReport(volume: limits.volumeName)
         for source in sources {
             try Task.checkCancellation()
-            let sameDisk = try sameOperationVolume(source, destination)
+            let checkedSource = try pathGuard.checkLocation(source)
+            let location = try CopyLocation(checked: checkedSource)
+            _ = try location.info()
+            let sameDisk = try sameOperationVolume(checkedSource, checkedDestination)
             if moving && sameDisk { continue }
-            var scan = PreflightScan(limits: limits)
-            try scan.visit(source.path)
-            if let name = scan.badName { throw OperationError.nameNotAllowed(name, volume: limits.volumeName) }
-            if let file = scan.tooLarge { throw OperationError.fileTooLarge(file, volume: limits.volumeName) }
+            var scan = PreflightScan(limits: limits, report: report)
+            try scan.visit(location, relative: checkedSource.lastPathComponent)
+            report = scan.report
             // A copy within one APFS volume is a clone and takes no space.
-            if !(sameDisk && limits.clones) { needed += scan.bytes }
+            if !(sameDisk && limits.clones) { needed = Self.saturatingAdd(needed, scan.bytes) }
         }
-        if let free = limits.freeBytes, needed > 0, needed + Self.copyHeadroom > free {
+        if report.totalCount > 0 { throw OperationError.incompatibleDestination(report) }
+        if let free = limits.freeBytes, needed > 0, Self.saturatingAdd(needed, Self.copyHeadroom) > free {
             throw OperationError.notEnoughSpace(needed: needed, available: free, volume: limits.volumeName)
         }
+    }
+
+    private static func saturatingAdd(_ a: Int64, _ b: Int64) -> Int64 {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        return overflow ? Int64.max : sum
     }
 
     /// Characters FAT and exFAT can't store in a name.
@@ -82,39 +160,37 @@ extension FileEngine {
     }
 }
 
-/// One walk over an item: its size, and the first name or file the
-/// destination can't take.
+/// One descriptor-relative walk, retaining only a bounded report.
 private struct PreflightScan {
     let limits: FileEngine.DestinationLimits
+    var report: PreflightReport
     var bytes: Int64 = 0
-    var badName: String?
-    var tooLarge: String?
 
-    init(limits: FileEngine.DestinationLimits) {
-        self.limits = limits
-    }
-
-    mutating func visit(_ path: String) throws {
-        guard badName == nil, tooLarge == nil else { return }
+    mutating func visit(_ location: CopyLocation, relative: String) throws {
         try Task.checkCancellation()
-        let name = (path as NSString).lastPathComponent
-        if limits.usesFATNames, !FileEngine.isStorableOnFAT(name) {
-            badName = name
-            return
+        if limits.usesFATNames, !FileEngine.isStorableOnFAT(location.name) {
+            report.add(path: relative, reason: .invalidName)
         }
-        guard let info = FileEngine.lstatInfo(path) else { return }
+        let info = try location.info()
         switch info.st_mode & S_IFMT {
         case S_IFDIR:
-            for child in (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? [] {
-                try visit(path + "/" + child)
+            let directory = try location.open(O_RDONLY | O_DIRECTORY, matching: info)
+            for child in try CopyLocation.names(in: directory, path: location.path).sorted() {
+                try visit(location.child(child, in: directory), relative: relative + "/" + child)
             }
         case S_IFREG:
             let size = Int64(info.st_size)
             if let limit = limits.maxFileSize, size > limit {
-                tooLarge = name
-                return
+                report.add(path: relative, reason: .fileTooLarge(limit: limit))
             }
-            bytes += size
+            let (sum, overflow) = bytes.addingReportingOverflow(max(0, size))
+            bytes = overflow ? Int64.max : sum
+        case S_IFLNK:
+            switch limits.symbolicLinks {
+            case .supported: break
+            case .unsupported: report.add(path: relative, reason: .symbolicLinksUnsupported)
+            case .unknown: report.add(path: relative, reason: .symbolicLinksUnknown)
+            }
         default:
             break
         }

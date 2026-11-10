@@ -311,6 +311,16 @@ public enum ConflictChoice: Sendable, Equatable {
     case stop
 }
 
+/// The item itself, without following a symbolic link.
+public enum ConflictItemKind: Sendable, Hashable {
+    case file
+    case directory
+    case symbolicLink
+    case other
+    /// Metadata was unavailable, or the caller did not supply it.
+    case unknown
+}
+
 public struct Conflict: Sendable, Equatable {
     public let incoming: URL
     public let existing: URL
@@ -318,12 +328,19 @@ public struct Conflict: Sendable, Equatable {
     /// the app doesn't touch the disk to ask.
     public var incomingModified: Date?
     public var existingModified: Date?
+    public let incomingKind: ConflictItemKind
+    public let existingKind: ConflictItemKind
 
-    public init(incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil) {
+    public init(
+        incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil,
+        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown
+    ) {
         self.incoming = incoming
         self.existing = existing
         self.incomingModified = incomingModified
         self.existingModified = existingModified
+        self.incomingKind = incomingKind
+        self.existingKind = existingKind
     }
 }
 
@@ -353,7 +370,7 @@ public struct ItemFailure: Sendable, Equatable {
 /// Retry and stop are never remembered.
 public typealias FailureResolver = @Sendable (ItemFailure) async -> (choice: FailureChoice, applyToAll: Bool)
 
-/// Answers a conflict; `applyToAll` reuses the answer for the rest of the operation.
+/// Answers a conflict; `applyToAll` reuses the answer for the same item-kind pair.
 public typealias ConflictResolver = @Sendable (Conflict) async -> (choice: ConflictChoice, applyToAll: Bool)
 
 public enum OperationError: Error, Equatable, LocalizedError {
@@ -368,6 +385,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     /// A folder being deleted for good has another disk mounted inside.
     case diskInside(String)
     case verificationFailed(String)
+    case copiedSourceChanged(String)
     case copyFinalizationFailed(String, String)
     case notAnArchive(String)
     case archive(String)
@@ -377,6 +395,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case mountFailed(String)
     case needsUnsandboxedBuild
     case notEnoughSpace(needed: Int64, available: Int64, volume: String)
+    case incompatibleDestination(PreflightReport)
     case fileTooLarge(String, volume: String)
     case nameNotAllowed(String, volume: String)
 
@@ -388,6 +407,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
         case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
+        case .copiedSourceChanged(let path):
+            "“\((path as NSString).lastPathComponent)” was copied, but the source changed or could not be checked and was kept."
         case .copyFinalizationFailed(let name, let reason):
             "\(reason) The move of “\(name)” did not complete; the source was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
@@ -400,6 +421,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .notEnoughSpace(let needed, let available, let volume):
             "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
                 + "and \(Self.bytes(available)) is free. Nothing was copied."
+        case .incompatibleDestination(let report): report.description
         case .fileTooLarge(let name, let volume):
             "“\(name)” is larger than 4 GB, which \(volume) can't store (its format is FAT32). Nothing was copied."
         case .nameNotAllowed(let name, let volume):
