@@ -92,32 +92,33 @@ struct BoundedTransferReportTests {
         try fixture.checkBudget()
     }
 
-    @Test func countLimitStopsBeforeNextItem() async throws {
+    @Test func countLimitKeepsCopyingAndListsTheSkip() async throws {
         let fixture = try BoundedFixture()
         let first = try fixture.write("first", count: 1)
-        let second = try fixture.write("second", count: 1)
+        let conflict = try fixture.write("conflict", count: 1)
         let destination = fixture.root.appendingPathComponent("destination")
+        try Data([0x62]).write(to: destination.appendingPathComponent("conflict"))
         let control = OperationControl(reportOutcomeLimit: 1)
-        await #expect(throws: OperationError.transferReportLimit(1)) {
-            try await fixture.engine.run(
-                FileOperation(.copy([first, second], into: destination)), control: control, undo: UndoRecorder(),
-                resolveConflict: { _ in (.stop, false) })
-        }
-        #expect(control.transferReport?.outcomes.count == 1)
-        #expect(control.transferReport?.notStarted == 1)
-        #expect(FileManager.default.fileExists(atPath: second.path))
-        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("second").path))
+        try await fixture.engine.run(
+            FileOperation(.copy([first, conflict], into: destination)), control: control, undo: UndoRecorder(),
+            resolveConflict: { _ in (.skip, false) })
+        let report = try #require(control.transferReport)
+        #expect(report.outcomes.count == 1)
+        #expect(report.outcomes.first?.item.lastPathComponent == "conflict")
+        #expect(report.unlistedCount == 1)
+        #expect(report.skippedCount == 1)
+        #expect(report.notStarted == 0)
+        #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("first").path))
         try fixture.checkBudget()
     }
 
-    @Test func textLimitRefusesReservationAndKeepsTheReport() throws {
+    @Test func oversizedOutcomeIsCountedAndTheReportKept() throws {
         let control = OperationControl()
         control.beginTransferReport(notStarted: 2)
         let item = URL(fileURLWithPath: "/" + String(repeating: "a", count: TransferReport.maxTextBytes))
-        #expect(throws: OperationError.transferReportLimit(2)) {
-            try control.reserveOutcome(for: item, remaining: 2)
-        }
+        control.recordOutcome(TransferOutcome(item: item, items: 1, bytes: 0, result: .completed))
         #expect(control.transferReport?.notStarted == 2)
         #expect(control.transferReport?.outcomes.isEmpty == true)
+        #expect(control.transferReport?.unlistedCount == 1)
     }
 }

@@ -77,7 +77,7 @@ private struct OperationRow: View {
                     Text("\(report.notStarted) item(s) were not started.")
                         .font(.caption).foregroundStyle(Color(nsColor: Palette.warning))
                 }
-                if let report = snapshot.transferReport, !report.outcomes.isEmpty {
+                if let report = snapshot.transferReport, report.hasProblems, !report.outcomes.isEmpty {
                     Button(showDetails ? "Hide transfer details" : "Show transfer details") {
                         showDetails.toggle()
                     }.buttonStyle(.link)
@@ -87,6 +87,10 @@ private struct OperationRow: View {
                                 ForEach(Array(report.outcomes.enumerated()), id: \.offset) { entry in
                                     Text(outcomeDescription(entry.element)).textSelection(.enabled)
                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if report.unlistedCount > 0 {
+                                    Text("\(report.unlistedCount) more item(s) not listed.")
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                         }.frame(maxHeight: 180)

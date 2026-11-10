@@ -1,5 +1,32 @@
 import Foundation
 
+/// An optional fault at a copy's sync boundary. Returning nil performs the syscall.
+enum CopySyncPoint: Sendable, Equatable {
+    case openParent, directory, file, parent
+}
+
+typealias CopySyncFault = @Sendable (CopySyncPoint, String) -> Int32?
+
+enum CopySync {
+    static func sync(_ fd: Int32, path: String, point: CopySyncPoint, fault: CopySyncFault?) throws {
+        while true {
+            let code: Int32
+            if let injected = fault?(point, path) {
+                code = injected
+            } else if fsync(fd) == 0 {
+                return
+            } else {
+                code = errno
+            }
+            if code == EINTR { continue }
+            // Some Darwin filesystems do not implement directory fsync.
+            // This fallback says nothing about physical-media durability.
+            if (point == .directory || point == .parent) && (code == EINVAL || code == ENOTSUP) { return }
+            throw FileEngineError.posix("Sync", path, code)
+        }
+    }
+}
+
 /// A descriptor owns the object opened, even if another process changes its name.
 final class CopyDescriptor {
     let raw: Int32
@@ -88,6 +115,27 @@ struct CopyLocation {
         guard directory >= 0 else { return }
         defer { close(directory) }
         _ = fsync(directory)
+    }
+
+    /// Unlike the archive compatibility helper above, copy finalization must
+    /// surface open and sync failures before a move can retire its source.
+    func syncParent(fault: CopySyncFault?) throws {
+        let directory: Int32
+        while true {
+            if let code = fault?(.openParent, path) {
+                if code == EINTR { continue }
+                throw FileEngineError.posix("Open folder for sync", path, code)
+            }
+            let fd = openat(parent.raw, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            if fd >= 0 {
+                directory = fd
+                break
+            }
+            if errno == EINTR { continue }
+            throw FileEngineError.posix("Open folder for sync", path)
+        }
+        defer { close(directory) }
+        try CopySync.sync(directory, path: path, point: .parent, fault: fault)
     }
 
     static func same(_ a: stat, _ b: stat) -> Bool {

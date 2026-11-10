@@ -77,7 +77,6 @@ extension FileEngine {
             let (source, measurement) = pair
             try Task.checkCancellation()
             try control.waitWhilePaused()
-            try control.reserveOutcome(for: source, remaining: sources.count - index)
             control.setNotStarted(sources.count - index - 1)
             var outcome: TransferOutcome.Result = .failed("Stopped before completion")
             var transferredBytes: Int64 = 0
@@ -177,12 +176,13 @@ extension FileEngine {
                 // (and, for a move, verified) does a replaced item go to the Trash,
                 // right before the copy is renamed into its place.
                 let replaced = ReplacedItem()
+                var verifiedSource: VerifiedSource?
                 let existing = replacing ? target : nil
                 let placeCopy: (URL, URL) throws -> Void = { original, partial in
                     if moving {
                         control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
                         self.copyTestOptions.boundary?(.beforeVerification, original, partial)
-                        try self.verifyCopy(original, partial, control: control)
+                        verifiedSource = try self.verifyCopy(original, partial, control: control)
                         self.copyTestOptions.boundary?(.afterVerification, original, partial)
                     }
                     if let existing, Self.lstatInfo(existing.path) != nil {
@@ -200,9 +200,18 @@ extension FileEngine {
                             source, to: target, control: control, replacingExisting: replacing, beforePlacing: placeCopy
                         )
                         copied = true
+                    } catch let error as PublishedCopyFinalizationError {
+                        if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
+                        undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                        if moving {
+                            throw OperationError.copyFinalizationFailed(
+                                source.lastPathComponent, error.localizedDescription)
+                        }
+                        throw error
                     } catch {
                         if let trashed = replaced.trashed { restoreReplaced(trashed, to: target, undo: undo) }
                         replaced.trashed = nil
+                        verifiedSource = nil
                         control.update {
                             $0.bytesDone = before.bytesDone
                             $0.itemsDone = before.itemsDone
@@ -220,10 +229,9 @@ extension FileEngine {
                 if let trashed = replaced.trashed { undo.add(.putBack(trashed: trashed, original: target)) }
                 undo.add(.trashCreated(target, fileID: Self.fileID(target)))
                 if moving {
-                    // From here the move finishes even if cancelled: the copy is in
-                    // place and verified, so the original goes to the Trash.
                     copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
-                    let trashed = try trashItemNow(source)
+                    guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
+                    let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
                     if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
                 }
                 outcome = .completed
@@ -284,7 +292,12 @@ extension FileEngine {
         for source in sources {
             try Task.checkCancellation()
             let target = try uniqueName(source.lastPathComponent, in: source.deletingLastPathComponent(), style: .copy)
-            try copyTracked(source, to: target, control: control)
+            do {
+                try copyTracked(source, to: target, control: control)
+            } catch let error as PublishedCopyFinalizationError {
+                undo.add(.trashCreated(target, fileID: error.publishedIdentity))
+                throw error
+            }
             undo.add(.trashCreated(target, fileID: Self.fileID(target)))
         }
     }
@@ -299,41 +312,158 @@ extension FileEngine {
 
     /// Confirms a copy matches its original: same structure, sizes, link
     /// targets and SHA-256 of every file's contents.
-    func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws {
+    @discardableResult
+    func verifyCopy(_ original: URL, _ copy: URL, control: OperationControl?) throws -> VerifiedSource {
+        var hash = SHA256()
         try verifyCopy(
             CopyLocation(checked: pathGuard.checkLocation(original)),
-            CopyLocation(checked: pathGuard.checkWriteLocation(copy)), control: control)
+            CopyLocation(checked: pathGuard.checkWriteLocation(copy)), control: control, hash: &hash)
+        return VerifiedSource(fingerprint: Data(hash.finalize()))
     }
 
-    private func verifyCopy(_ original: CopyLocation, _ copy: CopyLocation, control: OperationControl?) throws {
+    private func verifyCopy(
+        _ original: CopyLocation, _ copy: CopyLocation, control: OperationControl?, hash: inout SHA256
+    ) throws {
         try Task.checkCancellation()
         let a = try original.info()
         let b = try copy.info()
         guard a.st_mode & S_IFMT == b.st_mode & S_IFMT else {
             throw OperationError.verificationFailed(original.path)
         }
+        let version = SourceVersion(a)
+        version.append(to: &hash)
+        var sourceDescriptor: CopyDescriptor?
         switch a.st_mode & S_IFMT {
         case S_IFDIR:
             let source = try original.open(O_RDONLY | O_DIRECTORY, matching: a)
+            sourceDescriptor = source
             let destination = try copy.open(O_RDONLY | O_DIRECTORY, matching: b)
             let left = try CopyLocation.names(in: source, path: original.path).sorted()
             let right = try CopyLocation.names(in: destination, path: copy.path).sorted()
             guard left == right else { throw OperationError.verificationFailed(original.path) }
+            Self.appendNames(left, to: &hash)
             for name in left {
-                try verifyCopy(original.child(name, in: source), copy.child(name, in: destination), control: control)
+                try verifyCopy(
+                    original.child(name, in: source), copy.child(name, in: destination), control: control, hash: &hash)
+            }
+            guard try CopyLocation.names(in: source, path: original.path).sorted() == left else {
+                throw OperationError.verificationFailed(original.path)
             }
         case S_IFLNK:
+            sourceDescriptor = try original.open(O_SYMLINK, matching: a)
             guard try original.linkTarget() == copy.linkTarget() else {
                 throw OperationError.verificationFailed(original.path)
             }
         case S_IFREG:
             let source = try original.open(O_RDONLY, matching: a)
+            sourceDescriptor = source
             let destination = try copy.open(O_RDONLY, matching: b)
             guard a.st_size == b.st_size,
                 try Self.sha256(source, control: control) == Self.sha256(destination, control: control)
             else { throw OperationError.verificationFailed(original.path) }
-        default: break
+        default: throw OperationError.verificationFailed(original.path)
         }
+        guard version == SourceVersion(try original.info()),
+            try sourceDescriptor.map({ version == SourceVersion(try $0.info()) }) ?? true
+        else { throw OperationError.verificationFailed(original.path) }
+        verifiedItemHook?(original.path)
+    }
+
+    /// The evidence is gathered around each verified read, not in a later
+    /// tree snapshot. Only the resulting digest is retained.
+    struct VerifiedSource {
+        let fingerprint: Data
+    }
+
+    struct SourceVersion: Equatable {
+        let device: dev_t
+        let inode: ino_t
+        let mode: mode_t
+        let flags: UInt32
+        let size: off_t
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let changedSeconds: Int
+        let changedNanoseconds: Int
+
+        init(_ info: stat) {
+            device = info.st_dev
+            inode = info.st_ino
+            mode = info.st_mode
+            flags = info.st_flags
+            size = info.st_size
+            modifiedSeconds = info.st_mtimespec.tv_sec
+            modifiedNanoseconds = info.st_mtimespec.tv_nsec
+            changedSeconds = info.st_ctimespec.tv_sec
+            changedNanoseconds = info.st_ctimespec.tv_nsec
+        }
+
+        func append(to hash: inout SHA256) {
+            let fields = [
+                String(device), String(inode), String(mode), String(flags), String(size),
+                String(modifiedSeconds), String(modifiedNanoseconds),
+                String(changedSeconds), String(changedNanoseconds),
+            ]
+            for field in fields { FileEngine.appendFingerprintField(field, to: &hash) }
+        }
+    }
+
+    /// Length-prefix each UTF-8 field so names and numeric fields cannot be
+    /// confused with delimiters or with fields from a different tree.
+    private static func appendFingerprintField(_ value: String, to hash: inout SHA256) {
+        let bytes = Data(value.utf8)
+        hash.update(data: Data("\(bytes.count):".utf8))
+        hash.update(data: bytes)
+    }
+
+    private static func appendNames(_ names: [String], to hash: inout SHA256) {
+        appendFingerprintField(String(names.count), to: &hash)
+        for name in names { appendFingerprintField(name, to: &hash) }
+    }
+
+    private func fingerprintSource(_ location: CopyLocation, hash: inout SHA256) throws {
+        let info = try location.info()
+        let version = SourceVersion(info)
+        version.append(to: &hash)
+        let descriptor: CopyDescriptor
+        if info.st_mode & S_IFMT == S_IFDIR {
+            let directory = try location.open(O_RDONLY | O_DIRECTORY, matching: info)
+            descriptor = directory
+            let names = try CopyLocation.names(in: directory, path: location.path).sorted()
+            Self.appendNames(names, to: &hash)
+            for name in names {
+                try fingerprintSource(location.child(name, in: directory), hash: &hash)
+            }
+            guard try CopyLocation.names(in: directory, path: location.path).sorted() == names else {
+                throw OperationError.copiedSourceChanged(location.path)
+            }
+        } else if info.st_mode & S_IFMT == S_IFREG {
+            descriptor = try location.open(O_RDONLY, matching: info)
+        } else if info.st_mode & S_IFMT == S_IFLNK {
+            descriptor = try location.open(O_SYMLINK, matching: info)
+        } else {
+            throw OperationError.copiedSourceChanged(location.path)
+        }
+        guard SourceVersion(try descriptor.info()) == version, SourceVersion(try location.info()) == version else {
+            throw OperationError.copiedSourceChanged(location.path)
+        }
+    }
+
+    func retireVerifiedSource(_ source: URL, evidence: VerifiedSource) throws -> URL? {
+        let target: URL
+        do {
+            target = try pathGuard.checkModifiable(source)
+            var hash = SHA256()
+            try fingerprintSource(CopyLocation(checked: target), hash: &hash)
+            guard Data(hash.finalize()) == evidence.fingerprint else {
+                throw OperationError.copiedSourceChanged(source.path)
+            }
+        } catch {
+            throw OperationError.copiedSourceChanged(source.path)
+        }
+        // Foundation's Trash API takes a path, not a checked descriptor. A
+        // replacement between this final check and Trash remains possible.
+        return try moveToTrash(target)
     }
 
     private static func sha256(_ descriptor: CopyDescriptor, control: OperationControl?) throws -> SHA256.Digest {
