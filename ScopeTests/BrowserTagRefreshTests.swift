@@ -54,8 +54,7 @@ import Testing
     }
 
     @Test func columnTagsRefreshWithoutClosingDeeperColumnsOrChangingSelection() async throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Packages")
+        let root = TestPaths.packages
         let model = BrowserModel(engine: FileEngine(pathGuard: .readOnly), location: .folder(root))
         let state = Mutex(["Red"])
         let cache = FileTagCache { _ in state.withLock { $0 } }
