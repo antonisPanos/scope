@@ -220,19 +220,116 @@ public final class UndoRecorder: Sendable {
     }
 }
 
+/// One top-level transfer result. A folder's counts include its descendants.
+public struct TransferOutcome: Sendable, Equatable {
+    public enum Result: Sendable, Equatable {
+        case completed
+        case skipped(String)
+        case failedAndSkipped(String)
+        case failed(String)
+
+        /// The skip reason or diagnostic; empty for a completed item.
+        public var reason: String {
+            switch self {
+            case .completed: ""
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message): message
+            }
+        }
+
+        public var isSkipped: Bool {
+            switch self {
+            case .skipped, .failedAndSkipped: true
+            default: false
+            }
+        }
+    }
+    public let item: URL
+    public let items: Int
+    public let bytes: Int64
+    public let result: Result
+}
+
+/// Bounded per-operation report. Every outcome is counted, and a batch never
+/// stops because of the report. Outcomes are listed in order until the list
+/// reaches `maxOutcomes` or `maxTextBytes`; after that, a skipped or failed
+/// outcome takes the place of the latest listed completed one, and whatever
+/// is not listed is counted in `unlistedCount`.
+public struct TransferReport: Sendable, Equatable {
+    public static let maxOutcomes = 1_000
+    public static let maxTextBytes = 512 * 1024
+    static let reasonBudget = 4 * 1024
+    public internal(set) var outcomes: [TransferOutcome] = []
+    /// Outcomes counted but not listed, because the list was full.
+    public internal(set) var unlistedCount = 0
+    /// Every skipped item, listed or not.
+    public internal(set) var skippedCount = 0
+    public internal(set) var transferredBytes: Int64 = 0
+    public internal(set) var notStarted = 0
+    var textBytes = 0
+
+    /// True when some outcome was not a plain completion.
+    public var hasProblems: Bool {
+        skippedCount > 0 || outcomes.contains { $0.result != .completed }
+    }
+
+    mutating func record(_ outcome: TransferOutcome, limit: Int) {
+        if outcome.result.isSkipped { skippedCount += 1 }
+        let cost = Self.cost(of: outcome)
+        if outcomes.count < limit, cost <= Self.maxTextBytes - textBytes {
+            outcomes.append(outcome)
+            textBytes += cost
+            return
+        }
+        // A full list keeps the problems visible: they displace completions.
+        if outcome.result != .completed, let index = outcomes.lastIndex(where: { $0.result == .completed }) {
+            let removed = outcomes.remove(at: index)
+            textBytes -= Self.cost(of: removed)
+            unlistedCount += 1
+            if cost <= Self.maxTextBytes - textBytes {
+                outcomes.append(outcome)
+                textBytes += cost
+                return
+            }
+        }
+        unlistedCount += 1
+    }
+
+    private static func cost(of outcome: TransferOutcome) -> Int {
+        outcome.item.path.utf8.count + outcome.result.reason.utf8.count
+    }
+
+    static func diagnostic(_ error: any Error) -> String {
+        let message = error.localizedDescription
+        guard message.utf8.count > reasonBudget else { return message }
+        var result = ""
+        for scalar in message.unicodeScalars {
+            if result.utf8.count + scalar.utf8.count > reasonBudget - 32 { break }
+            result.unicodeScalars.append(scalar)
+        }
+        return result + " [message shortened]"
+    }
+}
+
 /// Pause and progress for one running operation, shared between the worker
 /// and whoever displays it.
 public final class OperationControl: Sendable {
     private let state = Mutex(State())
+    private let reportOutcomeLimit: Int
 
     struct State {
         var paused = false
         var progress = OperationProgress()
         var samples: [(time: TimeInterval, bytes: Int64)] = []
         var skippedEntries: [String] = []
+        var transferReport: TransferReport?
     }
 
-    public init() {}
+    public init() { reportOutcomeLimit = TransferReport.maxOutcomes }
+
+    // Lets a tiny fixture exercise the list limit without 1,001 files.
+    init(reportOutcomeLimit: Int) {
+        self.reportOutcomeLimit = min(max(0, reportOutcomeLimit), TransferReport.maxOutcomes)
+    }
 
     public var isPaused: Bool {
         get { state.withLock { $0.paused } }
@@ -258,6 +355,31 @@ public final class OperationControl: Sendable {
         state.withLock { $0.skippedEntries }
     }
 
+    public var transferReport: TransferReport? {
+        state.withLock { $0.transferReport }
+    }
+
+    func beginTransferReport(notStarted: Int = 0) {
+        state.withLock {
+            var report = TransferReport()
+            report.notStarted = notStarted
+            $0.transferReport = report
+        }
+    }
+
+    func setNotStarted(_ count: Int) {
+        state.withLock { $0.transferReport?.notStarted = count }
+    }
+
+    func recordOutcome(_ outcome: TransferOutcome, transferredBytes: Int64 = 0) {
+        state.withLock { state in
+            guard var report = state.transferReport else { return }
+            report.record(outcome, limit: reportOutcomeLimit)
+            report.transferredBytes += transferredBytes
+            state.transferReport = report
+        }
+    }
+
     func update(_ change: (inout OperationProgress) -> Void) {
         state.withLock { state in
             change(&state.progress)
@@ -266,6 +388,14 @@ public final class OperationControl: Sendable {
                 state.samples.append((now, state.progress.bytesDone))
                 state.samples.removeAll { now - $0.time > 3 }
             }
+        }
+    }
+
+    /// Remove an entire unprocessed top-level item from the measured plan.
+    func removePending(bytes: Int64, items: Int) {
+        update {
+            $0.bytesTotal = max($0.bytesDone, $0.bytesTotal - bytes)
+            $0.itemsTotal = max($0.itemsDone, $0.itemsTotal - items)
         }
     }
 
