@@ -385,6 +385,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     /// A folder being deleted for good has another disk mounted inside.
     case diskInside(String)
     case verificationFailed(String)
+    case copiedSourceChanged(String)
     case notAnArchive(String)
     case archive(String)
     case undoNotPossible(String)
@@ -405,6 +406,8 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
         case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
+        case .copiedSourceChanged(let path):
+            "“\((path as NSString).lastPathComponent)” was copied, but the source changed or could not be checked and was kept."
         case .notAnArchive(let path): "\((path as NSString).lastPathComponent) isn't an archive Scope can open."
         case .archive(let message): message
         case .undoNotPossible(let reason): "Can't undo: \(reason)"
