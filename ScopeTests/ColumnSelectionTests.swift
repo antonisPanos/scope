@@ -6,8 +6,7 @@ import Testing
 
 @MainActor struct ColumnSelectionTests {
     @Test func aReloadKeepsASelectionInADeeperColumn() async throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Packages")
+        let root = TestPaths.packages
         let model = BrowserModel(engine: FileEngine(pathGuard: .readOnly), location: .folder(root))
         let controller = ColumnViewController(model: model)
         defer {
