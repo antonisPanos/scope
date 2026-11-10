@@ -175,12 +175,15 @@ public enum UndoStep: Sendable, Hashable {
     case moveBack(from: URL, to: URL, fileID: FileIdentity)
     /// Undo a trash: put the item back from the Trash.
     case putBack(trashed: URL, original: URL)
+    /// Restore only if the containing merge folder is still the same object.
+    case putBackInParent(trashed: URL, original: URL, parent: FileIdentity)
 
     var touchedItems: [URL] {
         switch self {
         case .trashCreated(let url, _): [url]
         case .moveBack(let from, let to, _): [from, to]
         case .putBack(let trashed, let original): [trashed, original]
+        case .putBackInParent(let trashed, let original, _): [trashed, original]
         }
     }
 }
@@ -227,15 +230,20 @@ public struct TransferOutcome: Sendable, Equatable {
         case skipped(String)
         case failedAndSkipped(String)
         case failed(String)
+        /// Some children of a merged folder were skipped; they are reported separately.
+        case incomplete(String)
 
         /// The skip reason or diagnostic; empty for a completed item.
         public var reason: String {
             switch self {
             case .completed: ""
-            case .skipped(let message), .failedAndSkipped(let message), .failed(let message): message
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message),
+                .incomplete(let message):
+                message
             }
         }
 
+        /// A merged folder's skipped children are counted on their own.
         public var isSkipped: Bool {
             switch self {
             case .skipped, .failedAndSkipped: true
@@ -430,6 +438,8 @@ public struct OperationProgress: Sendable, Equatable {
 
 /// What to do when an item with the same name already exists at the destination.
 public enum ConflictChoice: Sendable, Equatable {
+    /// Combine the contents of two eligible ordinary folders.
+    case merge
     /// Move the existing item to the Trash, then put the new one in its place.
     case replace
     /// Replace the existing file only when it was modified before the new
@@ -460,10 +470,13 @@ public struct Conflict: Sendable, Equatable {
     public var existingModified: Date?
     public let incomingKind: ConflictItemKind
     public let existingKind: ConflictItemKind
+    /// Computed by the engine; unknown eligibility must remain false.
+    public let canMerge: Bool
 
     public init(
         incoming: URL, existing: URL, incomingModified: Date? = nil, existingModified: Date? = nil,
-        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown
+        incomingKind: ConflictItemKind = .unknown, existingKind: ConflictItemKind = .unknown,
+        canMerge: Bool = false
     ) {
         self.incoming = incoming
         self.existing = existing
@@ -471,6 +484,7 @@ public struct Conflict: Sendable, Equatable {
         self.existingModified = existingModified
         self.incomingKind = incomingKind
         self.existingKind = existingKind
+        self.canMerge = canMerge && incomingKind == .directory && existingKind == .directory
     }
 }
 

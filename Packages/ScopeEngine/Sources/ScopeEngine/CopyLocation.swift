@@ -229,3 +229,55 @@ struct CopyLocation {
         return false
     }
 }
+
+/// Keeps a merge directory open across prompts and rejects path substitution.
+/// Child operations must still use or verify this descriptor at their own I/O boundary.
+struct MergeDirectory {
+    let url: URL
+    private let location: CopyLocation
+    private let descriptor: CopyDescriptor
+    private let identity: stat
+    private let writable: Bool
+
+    init(_ url: URL, pathGuard: PathGuard, writable: Bool) throws {
+        let checked = try writable ? pathGuard.checkWriteLocation(url) : pathGuard.checkLocation(url)
+        let location = try CopyLocation(checked: checked)
+        let identity = try location.info()
+        guard identity.st_mode & S_IFMT == S_IFDIR else {
+            throw FileEngineError.posix("Open merge folder", checked.path, ENOTDIR)
+        }
+        self.url = checked
+        self.location = location
+        self.identity = identity
+        self.descriptor = try location.open(O_RDONLY | O_DIRECTORY, matching: identity)
+        self.writable = writable
+    }
+
+    func validate(pathGuard: PathGuard) throws {
+        let checked = try writable ? pathGuard.checkWriteLocation(url) : pathGuard.checkLocation(url)
+        let current = try CopyLocation(checked: checked)
+        guard checked.path == url.path,
+            CopyLocation.same(try descriptor.info(), identity),
+            CopyLocation.same(try location.info(), identity),
+            CopyLocation.same(try current.info(), identity),
+            CopyLocation.same(try location.parent.info(), try current.parent.info())
+        else { throw FileEngineError.posix("Merge folder changed", url.path, EBUSY) }
+    }
+
+    func names(pathGuard: PathGuard) throws -> [String] {
+        try validate(pathGuard: pathGuard)
+        return try CopyLocation.names(in: descriptor, path: url.path).sorted()
+    }
+
+    func validateChildParent(_ parent: CopyDescriptor) throws {
+        guard CopyLocation.same(try descriptor.info(), try parent.info()) else {
+            throw FileEngineError.posix("Merge folder changed", url.path, EBUSY)
+        }
+    }
+
+    var fileIdentity: FileIdentity {
+        FileIdentity(
+            inode: UInt64(identity.st_ino), modified: 0, size: 0,
+            device: UInt64(identity.st_dev), kind: UInt32(identity.st_mode & S_IFMT))
+    }
+}
