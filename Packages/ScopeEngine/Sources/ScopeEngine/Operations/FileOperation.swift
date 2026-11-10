@@ -230,7 +230,26 @@ public struct TransferOutcome: Sendable, Equatable {
         case skipped(String)
         case failedAndSkipped(String)
         case failed(String)
+        /// Some children of a merged folder were skipped; they are reported separately.
         case incomplete(String)
+
+        /// The skip reason or diagnostic; empty for a completed item.
+        public var reason: String {
+            switch self {
+            case .completed: ""
+            case .skipped(let message), .failedAndSkipped(let message), .failed(let message),
+                .incomplete(let message):
+                message
+            }
+        }
+
+        /// A merged folder's skipped children are counted on their own.
+        public var isSkipped: Bool {
+            switch self {
+            case .skipped, .failedAndSkipped: true
+            default: false
+            }
+        }
     }
     public let item: URL
     public let items: Int
@@ -238,25 +257,53 @@ public struct TransferOutcome: Sendable, Equatable {
     public let result: Result
 }
 
-/// Bounded per-operation report. Reserve the path and up to 4 KiB of
-/// diagnostic text for the next outcome before any mutation.
+/// Bounded per-operation report. Every outcome is counted, and a batch never
+/// stops because of the report. Outcomes are listed in order until the list
+/// reaches `maxOutcomes` or `maxTextBytes`; after that, a skipped or failed
+/// outcome takes the place of the latest listed completed one, and whatever
+/// is not listed is counted in `unlistedCount`.
 public struct TransferReport: Sendable, Equatable {
     public static let maxOutcomes = 1_000
     public static let maxTextBytes = 512 * 1024
     static let reasonBudget = 4 * 1024
     public internal(set) var outcomes: [TransferOutcome] = []
+    /// Outcomes counted but not listed, because the list was full.
+    public internal(set) var unlistedCount = 0
+    /// Every skipped item, listed or not.
+    public internal(set) var skippedCount = 0
     public internal(set) var transferredBytes: Int64 = 0
     public internal(set) var notStarted = 0
     var textBytes = 0
-    var reservations: [Int] = []
 
-    public var skippedCount: Int {
-        outcomes.filter {
-            switch $0.result {
-            case .skipped, .failedAndSkipped: true
-            default: false
+    /// True when some outcome was not a plain completion.
+    public var hasProblems: Bool {
+        skippedCount > 0 || outcomes.contains { $0.result != .completed }
+    }
+
+    mutating func record(_ outcome: TransferOutcome, limit: Int) {
+        if outcome.result.isSkipped { skippedCount += 1 }
+        let cost = Self.cost(of: outcome)
+        if outcomes.count < limit, cost <= Self.maxTextBytes - textBytes {
+            outcomes.append(outcome)
+            textBytes += cost
+            return
+        }
+        // A full list keeps the problems visible: they displace completions.
+        if outcome.result != .completed, let index = outcomes.lastIndex(where: { $0.result == .completed }) {
+            let removed = outcomes.remove(at: index)
+            textBytes -= Self.cost(of: removed)
+            unlistedCount += 1
+            if cost <= Self.maxTextBytes - textBytes {
+                outcomes.append(outcome)
+                textBytes += cost
+                return
             }
-        }.count
+        }
+        unlistedCount += 1
+    }
+
+    private static func cost(of outcome: TransferOutcome) -> Int {
+        outcome.item.path.utf8.count + outcome.result.reason.utf8.count
     }
 
     static func diagnostic(_ error: any Error) -> String {
@@ -287,7 +334,7 @@ public final class OperationControl: Sendable {
 
     public init() { reportOutcomeLimit = TransferReport.maxOutcomes }
 
-    // Allows a tiny fixture to exercise the same boundary without 1,001 files.
+    // Lets a tiny fixture exercise the list limit without 1,001 files.
     init(reportOutcomeLimit: Int) {
         self.reportOutcomeLimit = min(max(0, reportOutcomeLimit), TransferReport.maxOutcomes)
     }
@@ -332,36 +379,11 @@ public final class OperationControl: Sendable {
         state.withLock { $0.transferReport?.notStarted = count }
     }
 
-    func reserveOutcome(for item: URL, remaining: Int) throws {
-        try state.withLock { state in
-            guard var report = state.transferReport else { return }
-            let reservation = item.path.utf8.count + TransferReport.reasonBudget
-            guard report.outcomes.count + report.reservations.count < reportOutcomeLimit,
-                reservation <= TransferReport.maxTextBytes - report.textBytes - report.reservations.reduce(0, +)
-            else {
-                report.notStarted = remaining
-                state.transferReport = report
-                throw OperationError.transferReportLimit(remaining)
-            }
-            report.reservations.append(reservation)
-            state.transferReport = report
-        }
-    }
-
     func recordOutcome(_ outcome: TransferOutcome, transferredBytes: Int64 = 0) {
         state.withLock { state in
             guard var report = state.transferReport else { return }
-            guard let reservation = report.reservations.popLast() else { return }
-            let reason: String
-            switch outcome.result {
-            case .completed: reason = ""
-            case .skipped(let message), .failedAndSkipped(let message), .failed(let message), .incomplete(let message):
-                reason = message
-            }
-            precondition(outcome.item.path.utf8.count + reason.utf8.count <= reservation)
-            report.textBytes += outcome.item.path.utf8.count + reason.utf8.count
+            report.record(outcome, limit: reportOutcomeLimit)
             report.transferredBytes += transferredBytes
-            report.outcomes.append(outcome)
             state.transferReport = report
         }
     }
@@ -502,7 +524,6 @@ public enum OperationError: Error, Equatable, LocalizedError {
 
     case itemsBusy([String])
     case stoppedByUser
-    case transferReportLimit(Int)
     /// The user said no to deleting for good on a disk with no Trash.
     case noTrash(String)
     /// A folder being deleted for good has another disk mounted inside.
@@ -518,6 +539,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
     case mountFailed(String)
     case needsUnsandboxedBuild
     case notEnoughSpace(needed: Int64, available: Int64, volume: String)
+    case incompatibleDestination(PreflightReport)
     case fileTooLarge(String, volume: String)
     case nameNotAllowed(String, volume: String)
 
@@ -526,8 +548,6 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .itemsBusy(let names):
             "\(names.joined(separator: ", ")) \(names.count == 1 ? "is" : "are") in use by another operation."
         case .stoppedByUser: "Stopped."
-        case .transferReportLimit(let remaining):
-            "The report limit was reached. \(remaining) remaining item(s) were untouched; run them in a smaller batch."
         case .noTrash(let volume): "“\(volume)” has no Trash, so the items on it were kept."
         case .diskInside(let path): "\(path) has another disk mounted inside it, so it wasn't deleted."
         case .verificationFailed(let path): "The copy of \(path) didn't match the original, so the original was kept."
@@ -545,6 +565,7 @@ public enum OperationError: Error, Equatable, LocalizedError {
         case .notEnoughSpace(let needed, let available, let volume):
             "\(volume) doesn't have enough free space: this needs \(Self.bytes(needed)), "
                 + "and \(Self.bytes(available)) is free. Nothing was copied."
+        case .incompatibleDestination(let report): report.description
         case .fileTooLarge(let name, let volume):
             "“\(name)” is larger than 4 GB, which \(volume) can't store (its format is FAT32). Nothing was copied."
         case .nameNotAllowed(let name, let volume):

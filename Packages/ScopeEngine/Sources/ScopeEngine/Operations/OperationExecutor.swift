@@ -120,7 +120,6 @@ extension FileEngine {
         try Task.checkCancellation()
         try control.waitWhilePaused()
         try validateParents()
-        try control.reserveOutcome(for: source, remaining: context.remainingOutside + 1)
         control.setNotStarted(context.remainingOutside)
         var outcome: TransferOutcome.Result = .failed("Stopped before completion")
         var transferredBytes: Int64 = 0
@@ -145,6 +144,7 @@ extension FileEngine {
                     // Pasting a copy into its own folder makes "name copy", like Finder.
                     target = try uniqueName(source.lastPathComponent, in: destination, style: .copy)
                 } else {
+                    // lstat describes the link itself, including dangling links.
                     func kind(_ url: URL) -> ConflictItemKind {
                         guard let info = Self.lstatInfo(url.path) else { return .unknown }
                         switch info.st_mode & S_IFMT {
@@ -154,25 +154,23 @@ extension FileEngine {
                         default: return .other
                         }
                     }
+                    // Both folders are pinned before asking, so a merge notices
+                    // either one being swapped while the question is open. A
+                    // folder that can't be pinned is just not offered a merge,
+                    // and the other choices never depend on the pins.
+                    var mergePins: (MergeDirectory, MergeDirectory)?
+                    if Self.mergeEligible(source, target) {
+                        mergePins = try? (
+                            MergeDirectory(source, pathGuard: pathGuard, writable: false),
+                            MergeDirectory(target, pathGuard: pathGuard, writable: true)
+                        )
+                    }
                     let conflict = Conflict(
                         incoming: source, existing: target, incomingModified: Self.modified(source),
                         existingModified: Self.modified(target), incomingKind: kind(source), existingKind: kind(target),
-                        canMerge: Self.mergeEligible(source, target))
-                    let mergePins: (MergeDirectory, MergeDirectory)?
-                    if conflict.canMerge {
-                        mergePins = (
-                            try MergeDirectory(source, pathGuard: pathGuard, writable: false),
-                            try MergeDirectory(target, pathGuard: pathGuard, writable: true)
-                        )
-                    } else {
-                        mergePins = nil
-                    }
+                        canMerge: mergePins != nil)
                     var choice = try await conflicts.resolve(conflict)
                     try validateParents()
-                    if let (incoming, existing) = mergePins {
-                        try incoming.validate(pathGuard: pathGuard)
-                        try existing.validate(pathGuard: pathGuard)
-                    }
                     let replaceIfOlder = choice == .replaceIfOlder
                     if choice == .replaceIfOlder {
                         choice = Self.isOlderFile(target, than: source) ? .replace : .skip
@@ -183,6 +181,8 @@ extension FileEngine {
                             Self.mergeEligible(source, target),
                             !Self.isInside(target.path, source.path), !Self.isInside(source.path, target.path)
                         else { throw CocoaError(.featureUnsupported) }
+                        try incoming.validate(pathGuard: pathGuard)
+                        try existing.validate(pathGuard: pathGuard)
                         let names = try incoming.names(pathGuard: pathGuard)
                         let children = names.map { source.appendingPathComponent($0) }
                         let childMeasurements = try children.map { try measure([$0]) }

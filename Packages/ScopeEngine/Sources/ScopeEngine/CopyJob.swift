@@ -19,20 +19,21 @@ struct CopyJob {
     let control: OperationControl?
     let readFault: (@Sendable (String) -> Int32?)?
     let writeFault: (@Sendable (String, Int64) -> Int32?)?
-    let testOptions: FileEngine.CopyTestOptions
     let syncFault: CopySyncFault?
+    let testOptions: FileEngine.CopyTestOptions
 
     init(
         progress: (@Sendable (CopyProgress) -> Void)?, control: OperationControl?,
         readFault: (@Sendable (String) -> Int32?)? = nil, writeFault: (@Sendable (String, Int64) -> Int32?)? = nil,
-        testOptions: FileEngine.CopyTestOptions = .init(), syncFault: CopySyncFault? = nil
+        syncFault: CopySyncFault? = nil,
+        testOptions: FileEngine.CopyTestOptions = .init()
     ) {
         progressHandler = progress
         self.control = control
         self.readFault = readFault
         self.writeFault = writeFault
-        self.testOptions = testOptions
         self.syncFault = syncFault
+        self.testOptions = testOptions
     }
 
     /// Counts what a copy of `source` will write. With `rejectingUnsupported`,

@@ -39,19 +39,19 @@ struct MergeFoundationTests {
         #expect(count.withLock { $0 } == 2)
     }
 
-    @Test func nestedReservationsCountBeforeRecording() throws {
-        let control = OperationControl(reportOutcomeLimit: 2)
+    @Test func nestedOutcomesAreCountedPastTheListLimit() throws {
+        let control = OperationControl(reportOutcomeLimit: 1)
         control.beginTransferReport()
         let parent = URL(fileURLWithPath: "/parent")
         let child = parent.appendingPathComponent("child")
-        try control.reserveOutcome(for: parent, remaining: 1)
-        try control.reserveOutcome(for: child, remaining: 1)
-        #expect(throws: (any Error).self) {
-            try control.reserveOutcome(for: child.appendingPathComponent("other"), remaining: 1)
-        }
         control.recordOutcome(TransferOutcome(item: child, items: 1, bytes: 0, result: .completed))
-        control.recordOutcome(TransferOutcome(item: parent, items: 1, bytes: 0, result: .completed))
-        #expect(control.transferReport?.outcomes.count == 2)
+        control.recordOutcome(
+            TransferOutcome(item: parent, items: 1, bytes: 0, result: .incomplete("Some children were skipped")))
+        let report = try #require(control.transferReport)
+        #expect(report.outcomes.map(\.item) == [parent])
+        #expect(report.unlistedCount == 1)
+        #expect(report.skippedCount == 0)
+        #expect(report.hasProblems)
     }
 
     @Test func pinnedDirectoryRejectsReplacement() throws {

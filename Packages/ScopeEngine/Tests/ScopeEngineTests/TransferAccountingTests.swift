@@ -142,53 +142,57 @@ import Testing
         #expect(sandbox.exists("source/c"))
     }
 
-    @Test func reportLimitStopsBeforeReservingAnotherItem() throws {
+    @Test func fullReportKeepsCountingAndListsProblemsOverCompletions() throws {
         let control = OperationControl()
         control.beginTransferReport()
         for index in 0..<TransferReport.maxOutcomes {
             let item = URL(fileURLWithPath: "/test/\(index)")
-            try control.reserveOutcome(for: item, remaining: 1)
             control.recordOutcome(TransferOutcome(item: item, items: 1, bytes: 0, result: .completed))
         }
-        #expect(throws: OperationError.transferReportLimit(3)) {
-            try control.reserveOutcome(for: URL(fileURLWithPath: "/test/next"), remaining: 3)
-        }
+        let late = URL(fileURLWithPath: "/test/late")
+        control.recordOutcome(TransferOutcome(item: late, items: 1, bytes: 0, result: .skipped("Skipped by choice")))
+        control.recordOutcome(
+            TransferOutcome(item: URL(fileURLWithPath: "/test/after"), items: 1, bytes: 0, result: .completed))
         let report = try #require(control.transferReport)
         #expect(report.outcomes.count == TransferReport.maxOutcomes)
-        #expect(report.notStarted == 3)
+        #expect(report.outcomes.last?.item == late)
+        #expect(report.skippedCount == 1)
+        #expect(report.unlistedCount == 2)
+        #expect(report.hasProblems)
     }
 
-    @Test func reportTextBudgetStopsBeforeAnOversizedItem() throws {
+    @Test func oversizedOutcomeIsCountedButNotListed() throws {
         let control = OperationControl()
-        control.beginTransferReport()
+        control.beginTransferReport(notStarted: 2)
         let item = URL(fileURLWithPath: "/" + String(repeating: "a", count: TransferReport.maxTextBytes))
-        #expect(throws: OperationError.transferReportLimit(2)) {
-            try control.reserveOutcome(for: item, remaining: 2)
-        }
-        #expect(control.transferReport?.outcomes.isEmpty == true)
-        #expect(control.transferReport?.notStarted == 2)
+        control.recordOutcome(TransferOutcome(item: item, items: 1, bytes: 0, result: .failedAndSkipped("EIO")))
+        let report = try #require(control.transferReport)
+        #expect(report.outcomes.isEmpty)
+        #expect(report.unlistedCount == 1)
+        #expect(report.skippedCount == 1)
+        #expect(report.notStarted == 2)
     }
 
-    @Test func batchLimitLeavesNextItemUntouched() async throws {
+    @Test func batchBeyondTheListLimitStillCopiesEverything() async throws {
         let sandbox = try Sandbox()
         try sandbox.write("source/a", "a")
         try sandbox.write("source/b", "b")
         try sandbox.mkdir("destination")
         let control = OperationControl(reportOutcomeLimit: 1)
         let undo = UndoRecorder()
-        await #expect(throws: OperationError.transferReportLimit(1)) {
-            try await sandbox.engine.run(
-                FileOperation(
-                    .copy(
-                        [sandbox.url("source/a"), sandbox.url("source/b")],
-                        into: sandbox.url("destination"))),
-                control: control, undo: undo, resolveConflict: { _ in (.stop, false) })
-        }
+        try await sandbox.engine.run(
+            FileOperation(
+                .copy(
+                    [sandbox.url("source/a"), sandbox.url("source/b")],
+                    into: sandbox.url("destination"))),
+            control: control, undo: undo, resolveConflict: { _ in (.stop, false) })
         #expect(sandbox.exists("destination/a"))
-        #expect(!sandbox.exists("destination/b"))
-        #expect(sandbox.exists("source/b"))
-        #expect(undo.recorded.count == 1)
-        #expect(control.transferReport?.notStarted == 1)
+        #expect(sandbox.exists("destination/b"))
+        #expect(undo.recorded.count == 2)
+        #expect(control.progress.itemsDone == 2)
+        #expect(control.transferReport?.notStarted == 0)
         #expect(control.transferReport?.outcomes.count == 1)
+        #expect(control.transferReport?.unlistedCount == 1)
+        #expect(control.transferReport?.transferredBytes == 2)
     }
 }

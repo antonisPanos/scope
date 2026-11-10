@@ -58,6 +58,9 @@ public struct FileEngine: Sendable {
     /// (ENOSPC) or a failing one (EIO) would. Always nil in the app.
     var writeFault: (@Sendable (String, Int64) -> Int32?)?
 
+    /// Tests only: model a copy sync syscall failure without changing paths.
+    var copySyncFault: CopySyncFault?
+
     /// Internal deterministic seams. Defaults leave production behavior unchanged.
     var copyTestOptions = CopyTestOptions()
 
@@ -89,8 +92,6 @@ public struct FileEngine: Sendable {
         }
         return Self.lstatInfo(source.path)?.st_dev == Self.lstatInfo(destination.path)?.st_dev
     }
-    /// Tests only: model a copy sync syscall failure without changing paths.
-    var copySyncFault: CopySyncFault?
 
     /// Items being copied are written under this prefix and renamed into place
     /// only when complete, so a cancelled or failed copy never leaves a
@@ -317,7 +318,7 @@ public struct FileEngine: Sendable {
 
         var job = CopyJob(
             progress: progress, control: control, readFault: readFault, writeFault: writeFault,
-            testOptions: copyTestOptions, syncFault: copySyncFault)
+            syncFault: copySyncFault, testOptions: copyTestOptions)
         let input = try CopyLocation(checked: source)
         let output = try CopyLocation(checked: target)
         try validateParents?(input.parent, output.parent)

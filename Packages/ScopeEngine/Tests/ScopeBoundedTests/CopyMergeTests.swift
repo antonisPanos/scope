@@ -55,22 +55,22 @@ struct CopyMergeTests {
         try fixture.checkBudget()
     }
 
-    @Test func reportLimitStopsBeforeChildMutation() async throws {
+    @Test func reportLimitDoesNotStopAMerge() async throws {
         let fixture = try BoundedFixture()
         let (source, target) = try folders(fixture)
         try Data("x".utf8).write(to: source.appendingPathComponent("child"))
         let later = try fixture.write("later", count: 1)
         let control = OperationControl(reportOutcomeLimit: 1)
-        await #expect(throws: (any Error).self) {
-            try await fixture.engine.run(
-                FileOperation(.copy([source, later], into: target.deletingLastPathComponent())),
-                control: control, undo: UndoRecorder(), resolveConflict: { _ in (.merge, false) })
-        }
-        #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("child").path))
-        #expect(control.transferReport?.notStarted == 2)
+        try await fixture.engine.run(
+            FileOperation(.copy([source, later], into: target.deletingLastPathComponent())),
+            control: control, undo: UndoRecorder(), resolveConflict: { _ in (.merge, false) })
+        #expect(FileManager.default.fileExists(atPath: target.appendingPathComponent("child").path))
         #expect(
-            !FileManager.default.fileExists(
+            FileManager.default.fileExists(
                 atPath: target.deletingLastPathComponent().appendingPathComponent("later").path))
+        #expect(control.transferReport?.notStarted == 0)
+        #expect(control.transferReport?.outcomes.count == 1)
+        #expect(control.transferReport?.unlistedCount == 2)
         try fixture.checkBudget()
     }
 
