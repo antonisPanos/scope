@@ -6,19 +6,118 @@
     {
       "layers" : [
         {
-          "glass" : false,
-          "image-name" : "Squares.png",
-          "name" : "Squares"
+          "glass" : true,
+          "image-name" : "Tile-3-3.png",
+          "name" : "Tile 3-3"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-3-2.png",
+          "name" : "Tile 3-2"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-3-1.png",
+          "name" : "Tile 3-1"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-3-0.png",
+          "name" : "Tile 3-0"
         }
       ],
       "shadow" : {
         "kind" : "none",
         "opacity" : 0.5
       },
-      "specular" : false,
+      "specular" : true,
       "translucency" : {
-        "enabled" : false,
-        "value" : 0.5
+        "enabled" : true,
+        "value" : 0.34999999999999998
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Tile-2-2.png",
+          "name" : "Tile 2-2"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-2-1.png",
+          "name" : "Tile 2-1"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-2-0.png",
+          "name" : "Tile 2-0"
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.34999999999999998
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Tile-1-2.png",
+          "name" : "Tile 1-2"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-1-1.png",
+          "name" : "Tile 1-1"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-1-0.png",
+          "name" : "Tile 1-0"
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.34999999999999998
+      }
+    },
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Tile-0-2.png",
+          "name" : "Tile 0-2"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-0-1.png",
+          "name" : "Tile 0-1"
+        },
+        {
+          "glass" : true,
+          "image-name" : "Tile-0-0.png",
+          "name" : "Tile 0-0"
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.34999999999999998
       }
     }
   ],
