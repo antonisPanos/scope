@@ -3,6 +3,13 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.7.0](https://github.com/antonisPanos/scope/compare/v0.6.0...v0.7.0) (2026-11-13)
+
+
+### Features
+
+* **icons:** add glass finish to cascading tiles ([f20292b](https://github.com/antonisPanos/scope/commit/f20292b3b913b8757b3e2db4ae7bfba807debac0))
+
 ## [0.6.0](https://github.com/antonisPanos/scope/compare/v0.5.0...v0.6.0) (2026-11-13)
 
 
