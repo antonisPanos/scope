@@ -37,16 +37,21 @@ enum DevHooks {
 
     static func install() {
         observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.antonispanos.scope.dev.hook"), object: nil, queue: .main
+            forName: Notification.Name("com.antonispanos.scope.dev.hook"), object: nil, queue: nil
         ) { notification in
-            if let targetRun = notification.userInfo?["stressRunID"] as? String,
-                BuildIdentity.stress == nil
-                    || ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] != targetRun
-            {
-                return
-            }
+            let targetRun = notification.userInfo?["stressRunID"] as? String
             let request = notification.object as? String ?? ""
-            MainActor.assumeIsolated { handle(request) }
+            RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                MainActor.assumeIsolated {
+                    if let targetRun,
+                        BuildIdentity.stress == nil
+                            || ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] != targetRun
+                    {
+                        return
+                    }
+                    handle(request)
+                }
+            }
         }
     }
 
@@ -69,7 +74,9 @@ enum DevHooks {
         case "snapshot":
             guard let main = controller?.window else { return }
             // Prefer what sits on top of the browser: an alert sheet or the palette.
-            snapshot(main.attachedSheet ?? main.childWindows?.first(where: \.isVisible) ?? main, name: argument)
+            snapshot(
+                NSApp.modalWindow ?? main.attachedSheet ?? main.childWindows?.first(where: \.isVisible) ?? main,
+                name: argument)
         case "sidebar":
             if let item = SidebarStore.shared.allItems.first(where: { $0.title == argument }), item.isEnabled {
                 controller?.model.navigate(to: item.location)
@@ -80,10 +87,14 @@ enum DevHooks {
             let urls = controller?.model.items.filter { names.contains($0.name) }.map(\.url) ?? []
             controller?.selectForHooks(urls)
         case "press":
-            // Presses a button by title on any open sheet (an alert or the conflict dialog).
-            for window in NSApp.windows {
-                guard let sheet = window.attachedSheet else { continue }
-                if let button = findButton(argument, in: sheet.contentView) { button.performClick(nil) }
+            // Presses a button by title on a modal alert or open sheet.
+            if let modal = NSApp.modalWindow, let button = findButton(argument, in: modal.contentView) {
+                button.performClick(nil)
+            } else {
+                for window in NSApp.windows {
+                    guard let sheet = window.attachedSheet else { continue }
+                    if let button = findButton(argument, in: sheet.contentView) { button.performClick(nil) }
+                }
             }
         case "ops":
             for snapshot in OperationsController.shared.snapshots {
@@ -178,6 +189,8 @@ enum DevHooks {
             controller?.undoLastOperation()
         case "activate":
             NSApp.activate()
+        case "quit":
+            NSApp.terminate(nil)
         case "snapshotcontent":
             // The window's content view only, without the title bar and toolbar.
             if let view = controller?.window?.contentView,
