@@ -80,6 +80,10 @@ public struct FileEngine: Sendable {
     struct CopyTestOptions: Sendable {
         var chunkSize = FileEngine.chunkSize
         var disableCloning = false
+        /// A modeled clone error forces the ordinary byte-copy fallback.
+        var cloneFault: (@Sendable (String) -> Int32?)?
+        /// Bounds each write request to exercise short-write completion.
+        var writeLimit: (@Sendable (Int64, Int) -> Int)?
         var destinationLimits: DestinationLimits?
         /// Only simulates different volumes; it cannot authorize a same-volume rename.
         var simulateDifferentVolumes = false
