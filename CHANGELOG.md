@@ -3,6 +3,13 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.6.0](https://github.com/antonisPanos/scope/compare/v0.5.0...v0.6.0) (2026-11-13)
+
+
+### Features
+
+* **stress:** add guarded disk-image QA and resolve stress findings ([#186](https://github.com/antonisPanos/scope/issues/186)) ([ad66eb4](https://github.com/antonisPanos/scope/commit/ad66eb4b91ac87858ce0dc0a5b53d13c559f86f9))
+
 ## [0.5.0](https://github.com/antonisPanos/scope/compare/v0.4.1...v0.5.0) (2026-11-10)
 
 
