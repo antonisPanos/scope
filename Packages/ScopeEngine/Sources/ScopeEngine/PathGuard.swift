@@ -3,9 +3,10 @@ import os
 
 /// Decides which paths the engine may touch.
 ///
-/// Development builds read anywhere but change files only inside one scratch
-/// folder (`writesOnlyUnder`); engine tests restrict reads and writes to their
-/// own temporary folders (`restricted`). Every path is resolved through the file system first (symlinks, `/tmp` vs
+/// Ordinary development builds read anywhere but change files only inside one
+/// scratch folder (`writesOnlyUnder`). Explicit stress launches bind reads and
+/// writes to verified image volumes; engine tests use restricted temporary
+/// folders. Every path is resolved through the file system first (symlinks, `/tmp` vs
 /// `/private/tmp`, and so on), so a symlink or a dropped-in file can't lead the
 /// engine outside the allowed roots. Anything that can't be resolved cleanly is
 /// refused: the guard fails closed.
@@ -24,6 +25,17 @@ public struct PathGuard: Sendable {
     /// When set, writes are allowed only inside these folders (resolved paths,
     /// the folders themselves included), whatever `policy` allows for reading.
     public let writeRoots: [String]?
+
+    /// A stress session pins each allowed mount to the filesystem present at
+    /// launch. A detached or replaced mount must never become a path into the
+    /// host filesystem.
+    private let mountedRoots: [MountedRoot]?
+
+    private struct MountedRoot: Sendable {
+        let path: String
+        let device: UInt64
+        let fileSystemID: [UInt8]
+    }
 
     /// Items that may never be renamed, moved or trashed themselves (what is
     /// inside them can be), stored lowercased and precomposed so a differently
@@ -44,6 +56,31 @@ public struct PathGuard: Sendable {
         PathGuard(policy: .restricted(roots: roots.map { resolveRoot($0.path) }), allowsWrites: true)
     }
 
+    /// Refuses all managed file access while an explicit stress launch is
+    /// being validated or after validation fails.
+    public static let denyAll = PathGuard(policy: .restricted(roots: []), allowsWrites: false)
+
+    /// Binds a restricted guard to the currently mounted file systems. Call
+    /// only after verifying the volumes' UUIDs and backing disk image.
+    public static func restrictedToMountedVolumes(_ roots: [URL]) throws -> PathGuard {
+        guard !roots.isEmpty else { throw CocoaError(.fileReadNoPermission) }
+        let bindings = try roots.map { url -> MountedRoot in
+            let path = resolveRoot(url.path)
+            var item = stat()
+            var fileSystem = statfs()
+            guard lstat(path, &item) == 0, item.st_mode & S_IFMT == S_IFDIR,
+                statfs(path, &fileSystem) == 0,
+                isVolumeRoot(path)
+            else { throw CocoaError(.fileReadNoPermission) }
+            return MountedRoot(
+                path: path, device: UInt64(item.st_dev),
+                fileSystemID: withUnsafeBytes(of: fileSystem.f_fsid) { Array($0) })
+        }
+        return PathGuard(
+            policy: .restricted(roots: bindings.map(\.path)), allowsWrites: true,
+            protectedItems: defaultProtectedItems + bindings.map(\.path), mountedRoots: bindings)
+    }
+
     /// Every absolute path may be read, but changes are allowed only inside
     /// `roots`. The roots themselves may be created, but never renamed, moved
     /// or trashed. Scope Dev uses this with its scratch folder.
@@ -56,12 +93,14 @@ public struct PathGuard: Sendable {
 
     private init(
         policy: Policy, allowsWrites: Bool, writeRoots: [String]? = nil,
-        protectedItems: [String] = PathGuard.defaultProtectedItems
+        protectedItems: [String] = PathGuard.defaultProtectedItems,
+        mountedRoots: [MountedRoot]? = nil
     ) {
         self.policy = policy
         self.allowsWrites = allowsWrites
         self.writeRoots = writeRoots
         self.protectedItems = Set(protectedItems.map(Self.protectionKey))
+        self.mountedRoots = mountedRoots
     }
 
     /// Folders macOS and the user's account need in place, as Finder protects
@@ -220,7 +259,38 @@ public struct PathGuard: Sendable {
         guard Self.isInside(resolved, anyOf: roots) else {
             return .failure(PathGuardViolation(path: url.path, resolvedPath: resolved, reason: .outsideAllowedRoots))
         }
+        if let mountedRoots,
+            !Self.isOnPinnedMount(resolved, followFinalSymlink: followFinalSymlink, roots: mountedRoots)
+        {
+            return .failure(PathGuardViolation(path: url.path, resolvedPath: resolved, reason: .volumeChanged))
+        }
         return .success(URL(fileURLWithPath: resolved))
+    }
+
+    private static func isOnPinnedMount(
+        _ path: String, followFinalSymlink: Bool, roots: [MountedRoot]
+    ) -> Bool {
+        guard let binding = roots.first(where: { isInside(path, anyOf: [$0.path]) }) else { return false }
+        var root = stat()
+        var rootFS = statfs()
+        guard lstat(binding.path, &root) == 0, UInt64(root.st_dev) == binding.device,
+            statfs(binding.path, &rootFS) == 0,
+            withUnsafeBytes(of: rootFS.f_fsid, { Array($0) }) == binding.fileSystemID
+        else { return false }
+
+        var candidate = path
+        var item = stat()
+        while lstat(candidate, &item) != 0 {
+            let parent = (candidate as NSString).deletingLastPathComponent
+            guard parent != candidate else { return false }
+            candidate = parent
+        }
+        if !followFinalSymlink, item.st_mode & S_IFMT == S_IFLNK {
+            candidate = (candidate as NSString).deletingLastPathComponent
+        }
+        var fileSystem = statfs()
+        guard statfs(candidate, &fileSystem) == 0 else { return false }
+        return withUnsafeBytes(of: fileSystem.f_fsid) { Array($0) } == binding.fileSystemID
     }
 
     private static func isInside(_ path: String, anyOf roots: [String]) -> Bool {
@@ -310,6 +380,7 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
         case writesDisabled
         case outsideWritableFolders
         case protectedItem
+        case volumeChanged
     }
 
     public let path: String
@@ -334,6 +405,8 @@ public struct PathGuardViolation: Error, Equatable, CustomStringConvertible, Loc
             "\(path) can't be changed: this build only changes files in its scratch folder"
         case .protectedItem:
             "\((path as NSString).lastPathComponent) can't be renamed, moved or trashed because macOS needs it"
+        case .volumeChanged:
+            "\(path) is no longer on the verified stress image volume"
         }
     }
 

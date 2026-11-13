@@ -25,6 +25,7 @@ app; the [release and source-version note](../README.md#install) distinguishes
 
 Scope Dev reads anywhere but changes files only inside `~/ScopeScratch`. **Go >
 Scratch Folder** creates and opens that folder. The status bar identifies the development guard.
+For the separate image-only stress launch, see [Stress testing](STRESS_TESTING.md).
 
 ## Views and preview
 

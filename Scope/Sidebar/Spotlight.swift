@@ -3,7 +3,7 @@ import Foundation
 /// Runs a Spotlight query and hands back the matching paths, then keeps
 /// reporting as the index changes. Results come from the Spotlight index, not
 /// from reading the disk, so this runs on the main thread like NSMetadataQuery
-/// expects. Queries cover the whole computer.
+/// expects. Stress launches scope every query to the verified image volumes.
 @MainActor
 final class SpotlightQuery {
     private let query = NSMetadataQuery()
@@ -51,8 +51,11 @@ final class SpotlightQuery {
         onResults(urls)
     }
 
-    /// Where queries look: the whole computer.
-    static var scopes: [Any] { [NSMetadataQueryLocalComputerScope] }
+    /// Where global Recents and Tags queries look.
+    static var scopes: [Any] {
+        if let stress = BuildIdentity.stress { return [stress.source, stress.target] }
+        return [NSMetadataQueryLocalComputerScope]
+    }
 
     /// Files used in the last 30 days, newest first, like Finder's Recents.
     static func recents(onResults: @escaping ([URL]) -> Void) -> SpotlightQuery {

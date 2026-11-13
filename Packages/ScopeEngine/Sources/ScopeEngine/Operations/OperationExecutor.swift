@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os.signpost
 
 /// Runs one file operation. Every path passes the path guard; nothing is ever
 /// overwritten or deleted outright: a replaced item goes to the Trash only once its
@@ -69,6 +70,10 @@ extension FileEngine {
         _ items: [URL], into folder: URL, moving: Bool, control: OperationControl,
         undo: UndoRecorder, conflicts: inout ConflictPolicy, failures: inout FailurePolicy
     ) async throws {
+        let signpostID = OSSignpostID(log: StressTrace.signpostLog)
+        os_signpost(.begin, log: StressTrace.signpostLog, name: "Transfer", signpostID: signpostID)
+        defer { os_signpost(.end, log: StressTrace.signpostLog, name: "Transfer", signpostID: signpostID) }
+        control.trace("measurement-start")
         control.beginTransferReport(notStarted: items.count)
         let destination = try pathGuard.checkWriteLocation(folder)
         let sources = try items.map { try pathGuard.checkLocation($0) }
@@ -80,6 +85,7 @@ extension FileEngine {
             $0.itemsTotal = measurements.reduce(0) { $0 + $1.items }
         }
         try preflight(sources, into: destination, moving: moving)
+        control.trace("transfer-start")
         try await transferItems(
             sources, measurements: measurements, into: destination, moving: moving,
             control: control, undo: undo, conflicts: &conflicts, failures: &failures)
@@ -305,9 +311,11 @@ extension FileEngine {
             try validateParents()
             if moving {
                 control.update { $0.currentItem = "Verifying \(original.lastPathComponent)" }
+                control.trace("verification-start")
                 self.copyTestOptions.boundary?(.beforeVerification, original, partial)
                 verifiedSource = try self.verifyCopy(original, partial, control: control)
                 self.copyTestOptions.boundary?(.afterVerification, original, partial)
+                control.trace("verification-complete")
             }
             if let existing, Self.lstatInfo(existing.path) != nil {
                 try validateParents()
@@ -333,6 +341,7 @@ extension FileEngine {
                         }
                     }, beforePlacing: placeCopy
                 )
+                control.trace("published")
                 copied = true
             } catch let error as PublishedCopyFinalizationError {
                 if let trashed = replaced.trashed {
@@ -345,6 +354,7 @@ extension FileEngine {
                 }
                 throw error
             } catch {
+                control.trace("copy-attempt-failed")
                 if let trashed = replaced.trashed {
                     do {
                         try validateParents()
@@ -381,10 +391,12 @@ extension FileEngine {
         if let trashed = replaced.trashed { undo.add(replacementStep(trashed, target: target, parents: parents)) }
         undo.add(.trashCreated(target, fileID: Self.fileID(target)))
         if moving {
+            control.trace("source-retirement-start")
             copyTestOptions.boundary?(.beforeSourceRetirement, source, target)
             guard let verifiedSource else { throw OperationError.copiedSourceChanged(source.path) }
             let trashed = try retireVerifiedSource(source, evidence: verifiedSource)
             if let trashed { undo.add(.putBack(trashed: trashed, original: source)) }
+            control.trace("source-retired")
         }
         return .completed
     }

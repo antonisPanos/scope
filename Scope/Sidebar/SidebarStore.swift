@@ -70,10 +70,11 @@ final class SidebarStore {
         refreshTask?.cancel()
         let favoritePaths = AppSettings.shared.favoritePaths
         let pathGuard = BuildIdentity.current.pathGuard
+        let stress = BuildIdentity.stress
         let home = BuildIdentity.realHome
         refreshTask = Task {
             let built = await Task.detached(priority: .userInitiated) {
-                Self.build(favoritePaths: favoritePaths, pathGuard: pathGuard, home: home)
+                Self.build(favoritePaths: favoritePaths, pathGuard: pathGuard, home: home, stress: stress)
             }.value
             guard !Task.isCancelled else { return }
             favorites = built.favorites
@@ -197,12 +198,24 @@ final class SidebarStore {
         var diskImages: [SidebarItem] = []
     }
 
-    nonisolated private static func build(favoritePaths: [String], pathGuard: PathGuard, home: URL) -> Built {
+    nonisolated private static func build(
+        favoritePaths: [String], pathGuard: PathGuard, home: URL, stress: StressImageAccess?
+    ) -> Built {
         var built = Built()
         built.favorites.append(
             SidebarItem(
                 id: "recents", kind: .recents, title: "Recents", symbolName: "clock",
                 location: .recents, isEnabled: true))
+        if let stress {
+            for (title, url) in [("ScopeStressSource", stress.source), ("ScopeStressTarget", stress.target)] {
+                built.diskImages.append(
+                    SidebarItem(
+                        id: "stress:" + title, kind: .diskImage, title: title,
+                        symbolName: "opticaldiscdrive", location: .folder(url),
+                        isEnabled: pathGuard.permits(url), volumeURL: url))
+            }
+            return built
+        }
         let standard: [(String, String, URL)] = [
             ("Applications", "app.dashed", URL(fileURLWithPath: "/Applications")),
             ("Desktop", "menubar.dock.rectangle", home.appendingPathComponent("Desktop")),

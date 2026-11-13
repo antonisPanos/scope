@@ -226,6 +226,11 @@ final class BrowserModel {
             }
         case .search(let query, let folder):
             if query.searchContents {
+                if let stress = BuildIdentity.stress, !stress.pathGuard.permits(folder) {
+                    state = .failed("This folder is outside the verified stress image.")
+                    onChange?(.state)
+                    return
+                }
                 spotlight = SpotlightQuery.contents(query.text, in: folder) { [weak self] urls in
                     self?.loadItems(at: urls, generation: generation)
                 }
@@ -393,12 +398,9 @@ final class BrowserModel {
     }
 
     private func loadCapacity(_ url: URL, generation: Int) async {
-        let capacity = await Task.detached(priority: .utility) {
-            try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-                .volumeAvailableCapacityForImportantUsage
-        }.value
+        let capacity = await engine.availableCapacity(at: url)
         guard generation == self.generation else { return }
-        availableCapacity = capacity ?? nil
+        availableCapacity = capacity
         onChange?(.status)
     }
 
@@ -468,13 +470,10 @@ final class BrowserModel {
         rowChanges = nil
     }
 
-    /// Runs off the main thread: it may check whether the folder still exists.
-    nonisolated static func describe(_ error: Error, at url: URL) -> String {
+    /// Formats a failure without probing the path again after the guard refused it.
+    nonisolated static func describe(_ error: Error, at _: URL) -> String {
         if let violation = error as? PathGuardViolation {
             return violation.description
-        }
-        if !FileManager.default.fileExists(atPath: url.path) {
-            return "\(url.path) doesn't exist anymore."
         }
         return error.localizedDescription
     }

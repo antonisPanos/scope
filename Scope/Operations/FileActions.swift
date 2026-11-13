@@ -214,10 +214,10 @@ extension BrowserWindowController {
     /// the guard refuses the file.
     nonisolated static func openWithApps(for url: URL, pathGuard: PathGuard) async -> [OpenWithApp] {
         await Task.detached(priority: .userInitiated) {
-            guard pathGuard.permits(url) else { return [] }
+            guard let checked = try? pathGuard.checkTarget(url) else { return [] }
             let workspace = NSWorkspace.shared
-            let preferred = workspace.urlForApplication(toOpen: url)
-            return workspace.urlsForApplications(toOpen: url).prefix(20).map { app in
+            let preferred = workspace.urlForApplication(toOpen: checked)
+            return workspace.urlsForApplications(toOpen: checked).prefix(20).map { app in
                 let name = FileManager.default.displayName(atPath: app.path)
                 return OpenWithApp(
                     url: app, title: name + (app == preferred ? " (default)" : ""),
@@ -241,7 +241,7 @@ extension BrowserWindowController {
         let urls = selectedItems.map(\.url)
         let pathGuard = model.engine.pathGuard
         Task {
-            let permitted = await Task.detached { urls.filter { pathGuard.permits($0) } }.value
+            let permitted = await Task.detached { urls.compactMap { try? pathGuard.checkTarget($0) } }.value
             guard !permitted.isEmpty else { return }
             NSWorkspace.shared.open(
                 permitted, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(),

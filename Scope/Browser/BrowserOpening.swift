@@ -96,17 +96,26 @@ extension BrowserWindowController {
         }
         let engine = model.engine
         Task {
-            let kind = try? await engine.item(at: url).isBrowsableFolder
-            switch kind {
-            case nil:
-                showProblem("There's no folder at \(url.path).")
-            case true?:
-                model.navigate(to: .folder(url))
+            do {
+                let isFolder = try await engine.item(at: url).isBrowsableFolder
+                if isFolder {
+                    model.navigate(to: .folder(url))
+                } else {
+                    // A file: show its folder with the file selected.
+                    model.navigate(to: .folder(url.deletingLastPathComponent()), select: url)
+                }
                 focusFileList()
-            case false?:
-                // A file: show its folder with the file selected.
-                model.navigate(to: .folder(url.deletingLastPathComponent()), select: url)
-                focusFileList()
+            } catch let violation as PathGuardViolation {
+                if BuildIdentity.stress != nil {
+                    showProblem(
+                        violation.reason == .volumeChanged
+                            ? "Scope Dev stopped access because the stress volume changed or was detached."
+                            : "Scope Dev can open only items on the verified stress image.")
+                } else {
+                    showProblem(violation.description)
+                }
+            } catch {
+                showProblem("Scope couldn't open \(url.path): \(error.localizedDescription)")
             }
         }
     }

@@ -126,6 +126,7 @@ struct CopyJob {
             if let code = readFault?(source.path) { throw FileEngineError.posix("Read", source.path, code) }
             let cloned =
                 !testOptions.disableCloning && info.st_flags == 0
+                && testOptions.cloneFault?(source.path) == nil
                 && fclonefileat(input.raw, destination.parent.raw, destination.name, UInt32(CLONE_NOOWNERCOPY)) == 0
             if cloned {
                 output = try destination.open(O_RDONLY)
@@ -226,7 +227,10 @@ struct CopyJob {
             }
             var written = 0
             while written < count {
-                let result = pwrite(output, buffer + written, count - written, offset + off_t(written))
+                let remaining = count - written
+                let requested = max(
+                    1, min(remaining, testOptions.writeLimit?(Int64(offset) + Int64(written), remaining) ?? remaining))
+                let result = pwrite(output, buffer + written, requested, offset + off_t(written))
                 if result < 0, errno == EINTR { continue }
                 guard result > 0 else { throw FileEngineError.posix("Write", destination) }
                 written += result

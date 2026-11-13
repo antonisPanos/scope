@@ -1,4 +1,6 @@
 import Foundation
+import os
+import os.signpost
 
 /// The queue every file operation goes through.
 ///
@@ -48,6 +50,7 @@ public actor OperationCenter {
 
     private final class Entry {
         let id: UUID
+        let signpostID = OSSignpostID(log: OperationCenter.signpostLog)
         let operation: FileOperation
         let control = OperationControl()
         let undo: UndoRecorder
@@ -77,6 +80,7 @@ public actor OperationCenter {
             self.disk = disk
             let id = UUID()
             self.id = id
+            control.setTraceID(id)
             undo = UndoRecorder { change in
                 var change = change
                 change.operation = id
@@ -105,6 +109,9 @@ public actor OperationCenter {
     }
 
     private let engine: FileEngine
+    private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "StressOperations")
+    private static let signpostLog = OSLog(subsystem: "com.antonispanos.scope", category: "StressOperations")
+    private static let runID = ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] ?? "ordinary"
     /// Each item an operation creates, moves or trashes, as soon as it does,
     /// so open views can show it without waiting for the folder watcher.
     public nonisolated let announcements = OperationAnnouncements()
@@ -151,6 +158,9 @@ public actor OperationCenter {
             throw OperationError.itemsBusy(Array(Set(names.map(\.lastPathComponent))).sorted())
         }
         entries.append(entry)
+        Self.logger.notice(
+            "run=\(Self.runID, privacy: .public) op=\(entry.id.uuidString, privacy: .public) phase=queued kind=\(operation.title, privacy: .public) items=\(operation.touchedItems.count)"
+        )
         trimHistory()
         schedule()
         notify()
@@ -200,6 +210,8 @@ public actor OperationCenter {
             return
         case .running, .paused:
             entry.state = .cancelling
+            Self.logger.notice(
+                "run=\(Self.runID, privacy: .public) op=\(id.uuidString, privacy: .public) phase=cancelling")
             entry.control.isPaused = false
             entry.task?.cancel()
         default:
@@ -213,6 +225,7 @@ public actor OperationCenter {
         guard let entry = entries.first(where: { $0.id == id }), entry.state == .running else { return }
         entry.control.isPaused = true
         entry.state = .paused
+        Self.logger.notice("run=\(Self.runID, privacy: .public) op=\(id.uuidString, privacy: .public) phase=paused")
         notify()
     }
 
@@ -220,6 +233,7 @@ public actor OperationCenter {
         guard let entry = entries.first(where: { $0.id == id }), entry.state == .paused else { return }
         entry.control.isPaused = false
         entry.state = .running
+        Self.logger.notice("run=\(Self.runID, privacy: .public) op=\(id.uuidString, privacy: .public) phase=resumed")
         notify()
     }
 
@@ -307,6 +321,9 @@ public actor OperationCenter {
     private func start(_ entry: Entry) {
         entry.state = .running
         entry.started = Date()
+        Self.logger.notice(
+            "run=\(Self.runID, privacy: .public) op=\(entry.id.uuidString, privacy: .public) phase=started")
+        os_signpost(.begin, log: Self.signpostLog, name: "File operation", signpostID: entry.signpostID)
         let engine = engine
         let resolver = resolveConflict
         let confirm = confirmPermanentDeletion
@@ -329,6 +346,10 @@ public actor OperationCenter {
             } catch OperationError.changedSince(let names) {
                 result = .failed(OperationError.changedSince(names).localizedDescription)
             } catch {
+                let nsError = error as NSError
+                Self.logger.error(
+                    "run=\(Self.runID, privacy: .public) op=\(id.uuidString, privacy: .public) phase=failed domain=\(nsError.domain, privacy: .public) code=\(nsError.code) message=\(error.localizedDescription, privacy: .private)"
+                )
                 result = .failed(error.localizedDescription)
             }
             await self?.finish(id, result)
@@ -345,6 +366,14 @@ public actor OperationCenter {
         }
         entry.state = (entry.state == .cancelling && result == .done) ? .cancelled : result
         entry.finished = Date()
+        if let started = entry.started {
+            os_signpost(.end, log: Self.signpostLog, name: "File operation", signpostID: entry.signpostID)
+            let seconds = entry.finished!.timeIntervalSince(started)
+            let progress = entry.control.progress
+            Self.logger.notice(
+                "run=\(Self.runID, privacy: .public) op=\(id.uuidString, privacy: .public) phase=finished state=\(String(describing: entry.state), privacy: .public) seconds=\(seconds) items=\(progress.itemsDone)/\(progress.itemsTotal) bytes=\(progress.bytesDone)/\(progress.bytesTotal) skipped=\(entry.control.transferReport?.skippedCount ?? 0)"
+            )
+        }
         entry.task = nil
         schedule()
         notify()

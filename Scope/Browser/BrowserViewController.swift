@@ -340,7 +340,10 @@ final class BrowserViewController: NSViewController {
         }
         statusLeft.stringValue = left
         if BuildIdentity.current.isDevelopment {
-            statusRight.stringValue = "Scope Dev · changes only in ~/ScopeScratch"
+            statusRight.stringValue =
+                BuildIdentity.isStressRequested
+                ? "Scope Dev · verified stress image only"
+                : "Scope Dev · changes only in ~/ScopeScratch"
             statusRight.textColor = Palette.warning
         } else if !model.engine.pathGuard.allowsWrites {
             statusRight.stringValue = "Read-only build"

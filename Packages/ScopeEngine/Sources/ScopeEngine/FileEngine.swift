@@ -1,5 +1,6 @@
 import Foundation
 import os
+import os.signpost
 
 /// Progress of a running copy. Reported after every chunk and every item.
 public struct CopyProgress: Sendable, Equatable {
@@ -79,6 +80,10 @@ public struct FileEngine: Sendable {
     struct CopyTestOptions: Sendable {
         var chunkSize = FileEngine.chunkSize
         var disableCloning = false
+        /// A modeled clone error forces the ordinary byte-copy fallback.
+        var cloneFault: (@Sendable (String) -> Int32?)?
+        /// Bounds each write request to exercise short-write completion.
+        var writeLimit: (@Sendable (Int64, Int) -> Int)?
         var destinationLimits: DestinationLimits?
         /// Only simulates different volumes; it cannot authorize a same-volume rename.
         var simulateDifferentVolumes = false
@@ -112,6 +117,9 @@ public struct FileEngine: Sendable {
 
     public func contentsOfDirectory(at url: URL, includeHidden: Bool = true) async throws -> [FileItem] {
         return try await onIOThreads {
+            let signpostID = OSSignpostID(log: StressTrace.signpostLog)
+            os_signpost(.begin, log: StressTrace.signpostLog, name: "Folder listing", signpostID: signpostID)
+            defer { os_signpost(.end, log: StressTrace.signpostLog, name: "Folder listing", signpostID: signpostID) }
             let directory = try pathGuard.checkTarget(url)
             var options: FileManager.DirectoryEnumerationOptions = []
             if !includeHidden { options.insert(.skipsHiddenFiles) }
@@ -303,6 +311,10 @@ public struct FileEngine: Sendable {
         validateParents: ((CopyDescriptor, CopyDescriptor) throws -> Void)? = nil,
         beforePlacing: ((_ source: URL, _ partial: URL) throws -> Void)? = nil
     ) throws {
+        let signpostID = OSSignpostID(log: StressTrace.signpostLog)
+        os_signpost(.begin, log: StressTrace.signpostLog, name: "Copy", signpostID: signpostID)
+        defer { os_signpost(.end, log: StressTrace.signpostLog, name: "Copy", signpostID: signpostID) }
+        control?.trace("copy-start")
         let source = try pathGuard.checkLocation(url)
         let target = try pathGuard.checkWriteLocation(destination)
         guard Self.lstatInfo(source.path) != nil else { throw FileEngineError.sourceMissing(source.path) }
@@ -362,6 +374,7 @@ public struct FileEngine: Sendable {
             // A move verifies the copy here, while it still has its partial
             // name, so a cancel or a mismatch never leaves a second copy behind.
             try beforePlacing?(source, partial)
+            control?.trace("publication-ready")
             try validateParents?(input.parent, output.parent)
             try output.validateParent(pathGuard: pathGuard)
             if let boundary = copyTestOptions.boundary {
@@ -387,6 +400,9 @@ public struct FileEngine: Sendable {
                 _ = try journal.transition(record.id, to: .publishing, identity: RecoveryJournal.Identity(pinned))
                 try output.validateParent(pathGuard: pathGuard)
             }
+            let publicationID = OSSignpostID(log: StressTrace.signpostLog)
+            os_signpost(.begin, log: StressTrace.signpostLog, name: "Publication", signpostID: publicationID)
+            defer { os_signpost(.end, log: StressTrace.signpostLog, name: "Publication", signpostID: publicationID) }
             guard CopyLocation.same(try staged.info(), identity),
                 staged.renameExclusively(to: output.name, isDirectory: identity.st_mode & S_IFMT == S_IFDIR)
             else {
@@ -402,6 +418,7 @@ public struct FileEngine: Sendable {
                 size: isDirectory ? 0 : Int64(current.st_size), device: UInt64(current.st_dev),
                 kind: UInt32(current.st_mode & S_IFMT))
         } catch {
+            control?.trace("partial-cleanup-start")
             // A failed or uncertain staging journal update is not proof of
             // ownership. Leave that item and record untouched for review.
             if recoverySession == nil || stagingRecorded {
@@ -413,8 +430,10 @@ public struct FileEngine: Sendable {
                     }
                 } catch {
                     Self.logger.fault("Could not clean up pinned partial or its journal: \(error.localizedDescription)")
+                    control?.trace("partial-cleanup-failed")
                 }
             }
+            control?.trace("partial-cleanup-complete")
             throw error
         }
         copyTestOptions.boundary?(.beforeSync, source, target)

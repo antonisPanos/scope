@@ -41,6 +41,30 @@ struct ConflictAlertTests {
         #expect(alert.suppressionButton?.title == "Apply to all symbolic link → folder conflicts")
     }
 
+    @Test func eligibleFoldersOfferMergeBeforeOtherChoices() {
+        let folders = Conflict(
+            incoming: conflict.incoming, existing: conflict.existing,
+            incomingKind: .directory, existingKind: .directory, canMerge: true)
+        let alert = OperationsController.conflictAlert(folders)
+        #expect(alert.buttons.map(\.title) == ["Merge", "Keep Both", "Replace", "Replace If Older", "Skip", "Stop"])
+        #expect(
+            OperationsController.conflictChoices(for: folders) == [
+                .merge, .keepBoth, .replace, .replaceIfOlder, .skip, .stop,
+            ])
+        #expect(alert.informativeText.contains("Merging combines both folders"))
+    }
+
+    @Test func ineligibleFoldersDoNotOfferMerge() {
+        let folders = Conflict(
+            incoming: conflict.incoming, existing: conflict.existing,
+            incomingKind: .directory, existingKind: .directory)
+        #expect(
+            OperationsController.conflictAlert(folders).buttons.map(\.title) == [
+                "Keep Both", "Replace", "Replace If Older", "Skip", "Stop",
+            ])
+        #expect(OperationsController.conflictChoices(for: folders) == OperationsController.conflictChoices)
+    }
+
     @Test func unknownTypesCannotBeAppliedToAll() {
         let unknown = Conflict(incoming: conflict.incoming, existing: conflict.existing)
         let alert = OperationsController.conflictAlert(unknown)

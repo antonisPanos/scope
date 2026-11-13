@@ -19,6 +19,7 @@ import ScopeEngine
 ///   "type:<text>"      puts text in the first text field of an open sheet (the Rename and New Folder name)
 ///   "cancel"           cancels the newest running operation, as its Cancel button does
 ///   "ops"              logs every operation in the activity list
+///   "stress-status:<request-id>" replies with a JSON snapshot for the stress runner
 ///   "search:<mode>:<text>"  searches (mode: contains, glob, regex, contents)
 ///   "searchkind:<kind>" limits the search to one kind; "endsearch" ends it
 ///   "undo"             undoes the last operation
@@ -36,10 +37,21 @@ enum DevHooks {
 
     static func install() {
         observer = DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("com.antonispanos.scope.dev.hook"), object: nil, queue: .main
+            forName: Notification.Name("com.antonispanos.scope.dev.hook"), object: nil, queue: nil
         ) { notification in
+            let targetRun = notification.userInfo?["stressRunID"] as? String
             let request = notification.object as? String ?? ""
-            MainActor.assumeIsolated { handle(request) }
+            RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+                MainActor.assumeIsolated {
+                    if let targetRun,
+                        BuildIdentity.stress == nil
+                            || ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] != targetRun
+                    {
+                        return
+                    }
+                    handle(request)
+                }
+            }
         }
     }
 
@@ -53,14 +65,18 @@ enum DevHooks {
         logger.notice("Hook: \(request, privacy: .public)")
         switch verb {
         case "command":
-            guard let controller, let command = Commands.command(id: argument) else { return }
+            guard let controller, let command = Commands.command(id: argument), command.isEnabled(controller) else {
+                return
+            }
             command.run(controller)
         case "go":
             controller?.goToTypedPath(argument)
         case "snapshot":
             guard let main = controller?.window else { return }
             // Prefer what sits on top of the browser: an alert sheet or the palette.
-            snapshot(main.attachedSheet ?? main.childWindows?.first(where: \.isVisible) ?? main, name: argument)
+            snapshot(
+                NSApp.modalWindow ?? main.attachedSheet ?? main.childWindows?.first(where: \.isVisible) ?? main,
+                name: argument)
         case "sidebar":
             if let item = SidebarStore.shared.allItems.first(where: { $0.title == argument }), item.isEnabled {
                 controller?.model.navigate(to: item.location)
@@ -71,10 +87,14 @@ enum DevHooks {
             let urls = controller?.model.items.filter { names.contains($0.name) }.map(\.url) ?? []
             controller?.selectForHooks(urls)
         case "press":
-            // Presses a button by title on any open sheet (an alert or the conflict dialog).
-            for window in NSApp.windows {
-                guard let sheet = window.attachedSheet else { continue }
-                if let button = findButton(argument, in: sheet.contentView) { button.performClick(nil) }
+            // Presses a button by title on a modal alert or open sheet.
+            if let modal = NSApp.modalWindow, let button = findButton(argument, in: modal.contentView) {
+                button.performClick(nil)
+            } else {
+                for window in NSApp.windows {
+                    guard let sheet = window.attachedSheet else { continue }
+                    if let button = findButton(argument, in: sheet.contentView) { button.performClick(nil) }
+                }
             }
         case "ops":
             for snapshot in OperationsController.shared.snapshots {
@@ -83,6 +103,8 @@ enum DevHooks {
                     "Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)"
                 )
             }
+        case "stress-status":
+            postStressStatus(replyID: argument, controller: controller)
         case "search":
             controller?.searchForHooks(argument)
         case "searchkind":
@@ -155,10 +177,20 @@ enum DevHooks {
             if let running = OperationsController.shared.snapshots.last(where: \.isActive) {
                 OperationsController.shared.cancel(running.id)
             }
+        case "pause":
+            if let running = OperationsController.shared.snapshots.last(where: { $0.state == .running }) {
+                OperationsController.shared.pause(running.id)
+            }
+        case "resume":
+            if let paused = OperationsController.shared.snapshots.last(where: { $0.state == .paused }) {
+                OperationsController.shared.resume(paused.id)
+            }
         case "undo":
             controller?.undoLastOperation()
         case "activate":
             NSApp.activate()
+        case "quit":
+            NSApp.terminate(nil)
         case "snapshotcontent":
             // The window's content view only, without the title bar and toolbar.
             if let view = controller?.window?.contentView,
@@ -191,6 +223,60 @@ enum DevHooks {
         default:
             logger.error("Unknown hook \(request, privacy: .public)")
         }
+    }
+
+    private static func postStressStatus(replyID: String, controller: BrowserWindowController?) {
+        guard BuildIdentity.stress != nil, !replyID.isEmpty else { return }
+        let snapshots = OperationsController.shared.snapshots.map { snapshot -> [String: Any] in
+            let state: String
+            let failure: String?
+            switch snapshot.state {
+            case .queued:
+                state = "queued"
+                failure = nil
+            case .running:
+                state = "running"
+                failure = nil
+            case .paused:
+                state = "paused"
+                failure = nil
+            case .cancelling:
+                state = "cancelling"
+                failure = nil
+            case .done:
+                state = "done"
+                failure = nil
+            case .cancelled:
+                state = "cancelled"
+                failure = nil
+            case .failed(let message):
+                state = "failed"
+                failure = message
+            }
+            return [
+                "id": snapshot.id.uuidString, "title": snapshot.title, "state": state,
+                "failure": failure as Any? ?? NSNull(),
+                "itemsDone": snapshot.progress.itemsDone, "itemsTotal": snapshot.progress.itemsTotal,
+                "bytesDone": snapshot.progress.bytesDone, "bytesTotal": snapshot.progress.bytesTotal,
+                "speed": snapshot.speed as Any? ?? NSNull(),
+                "skipped": snapshot.transferReport?.skippedCount ?? 0,
+            ]
+        }
+        let payload: [String: Any] = [
+            "runID": ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] ?? "unknown",
+            "time": Date().timeIntervalSince1970,
+            "location": controller?.model.location.title ?? "none",
+            "itemsShown": controller?.model.items.count ?? 0,
+            "availableCapacity": controller?.model.availableCapacity as Any? ?? NSNull(),
+            "operations": snapshots,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("com.antonispanos.scope.dev.stress.reply"), object: replyID,
+            userInfo: ["json": json], deliverImmediately: true)
+        logger.notice("STRESS_STATUS \(json, privacy: .public)")
     }
 
     private static func findButton(_ title: String, in view: NSView?) -> NSButton? {

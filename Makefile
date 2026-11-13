@@ -1,6 +1,6 @@
 # One entry point for everyday tasks. Run `make` or `make help` to list them.
 .DEFAULT_GOAL := help
-.PHONY: help setup hooks build build-all test app-test format lint install-dev devhook dmg release
+.PHONY: help setup hooks build build-all test app-test format lint install-dev devhook dmg release stress-prepare stress-reset stress-fill stress-open stress-run stress-low-space stress-report stress-status-client
 
 DERIVED := build/DerivedData
 XCB := xcodebuild -project Scope.xcodeproj -derivedDataPath $(DERIVED)
@@ -16,7 +16,7 @@ hooks: ## Install the git hooks from scripts/hooks
 	git config blame.ignoreRevsFile .git-blame-ignore-revs
 	@echo "Git hooks installed (scripts/hooks)."
 
-build: ## Build Scope Dev (changes files only in ~/ScopeScratch)
+build: ## Build Scope Dev (scratch mode, or explicit image-only stress mode)
 	$(XCB) -scheme "Scope Dev" build -quiet
 
 build-all: ## Build both schemes
@@ -49,3 +49,27 @@ release: ## Build the DMG for the tag at HEAD and attach it to its GitHub Releas
 
 devhook: ## Compile the devhook tool to build/devhook
 	mkdir -p build && swiftc -O -o build/devhook scripts/devhook.swift
+
+stress-status-client: ## Compile the machine-readable stress status client
+	mkdir -p build && swiftc -O -o build/stress_status scripts/stress_status.swift
+
+stress-prepare: ## Create/mount and seed the 20 GB two-volume stress image
+	/usr/bin/python3 scripts/stress_image.py prepare
+
+stress-reset: ## Reset only verified fixtures inside the stress image
+	/usr/bin/python3 scripts/stress_image.py reset
+
+stress-fill: ## Leave about 1 GiB free for the low-space failure case
+	/usr/bin/python3 scripts/stress_image.py fill
+
+stress-open: build ## Open Scope Dev in verified image-only mode for manual QA
+	/usr/bin/python3 scripts/stress_image.py open
+
+stress-run: build devhook stress-status-client ## Run three Scope Dev stress repetitions
+	/usr/bin/python3 scripts/stress_run.py run
+
+stress-low-space: build devhook stress-status-client ## Verify a near-full image fails safely, then reset it
+	/usr/bin/python3 scripts/stress_run.py low-space
+
+stress-report: ## Report medians and compare with the recorded baseline
+	/usr/bin/python3 scripts/stress_run.py report

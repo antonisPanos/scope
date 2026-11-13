@@ -75,6 +75,7 @@ An XPC failure does not fall back to in-process decoding or encoding in the app.
 | Scheme | App | App Sandbox | Path guard | Purpose |
 | --- | --- | --- | --- | --- |
 | Scope Dev | Scope Dev, amber icon | Off | Reads anywhere, changes only `~/ScopeScratch` | Development and file-changing UI QA |
+| Scope Dev stress launch | Scope Dev, amber icon | Off | Reads and writes only on two verified volumes of one disposable image | Bulk and failure QA |
 | Scope | Scope, white icon | Off | Full operations with normal macOS permissions | Production; read-only UI inspection during development |
 
 Neither **app** uses the App Sandbox; the embedded archive service does. Scope Dev
@@ -84,6 +85,12 @@ change the image, so it needs write permission for the image itself; elsewhere
 Scope Dev mounts images read-only, including when one is opened. Production enables
 `SCOPE_ALLOW_WRITES` in `Config/Scope.xcconfig`. All development file changes still
 use Scope Dev in scratch folders, or disposable engine fixtures.
+
+The explicit stress launch verifies the image backing path and APFS volume UUIDs
+before opening a browser. Its `PathGuard` pins both mount identities and refuses
+paths outside them, including after a detach or mount replacement. It scopes
+Spotlight queries and the sidebar to those volumes. The setup and acceptance
+cases are in [Stress testing](STRESS_TESTING.md).
 
 The app and XPC service target **macOS 27.2** and use Swift 6. The standalone engine
 targets **macOS 15**, which allows engine tests on older runners. A synchronized

@@ -22,8 +22,10 @@ Use the current source and repository docs for present behavior and requirements
 
 - All file system access goes through `FileEngine` in `Packages/ScopeEngine`, and every
   path passes `PathGuard` first. Neither build runs in the App Sandbox.
-- Development builds (`SCOPE_DEV`, "Scope Dev") use `PathGuard.writesOnlyUnder`: they read
-  anywhere but change files only inside `~/ScopeScratch` (`BuildIdentity.scratchFolder`).
+- Ordinary development builds (`SCOPE_DEV`, "Scope Dev") use `PathGuard.writesOnlyUnder`:
+  they read anywhere but change files only inside `~/ScopeScratch` (`BuildIdentity.scratchFolder`).
+  An explicit stress launch binds reads and writes to two verified APFS volumes of the
+  disposable image in `build/stress/`; failure to verify stops the launch.
 - Production builds (`Scope`) enable `SCOPE_ALLOW_WRITES` by default and use normal
   macOS file permissions (owner's decision, 2026-11-02). Development restrictions belong
   in `Scope Dev`; file-changing QA must still use scratch folders or disposable fixtures.
@@ -31,9 +33,9 @@ Use the current source and repository docs for present behavior and requirements
 - Engine tests use temp folders with a restricted guard, and throwaway disk images
   (`TestVolume`) for anything with disk side effects (Trash, moves between disks). Never let
   a test touch the user's real Trash, home or files. App tests never write files.
-- Scope Dev and Scope may be launched over Remote Control to check a change. They read the
-  user's real files, so only browse and look; anything that changes files happens in
-  `~/ScopeScratch` only, and only in Scope Dev.
+- Scope Dev and Scope may be launched over Remote Control to check a change. Ordinary
+  launches read the user's real files, so only browse and look; anything that changes
+  files happens in `~/ScopeScratch` or the verified stress image, only in Scope Dev.
 - The main thread never touches disk. Copies write under `.scope-partial-` names and
   rename into place; never overwrite; delete always means Trash. Two exceptions, both
   only after the user confirms a dialog that names the disk and every item, with Cancel

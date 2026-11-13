@@ -57,6 +57,9 @@ Scope moves and deletes files, so development never changes real ones.
 
 - Scope Dev, the build you run while working, reads anywhere but changes files only
   inside `~/ScopeScratch` (Go > Scratch Folder creates it). Every other change is refused.
+- An explicit stress launch confines managed reads and writes to two verified APFS
+  volumes in `build/stress/ScopeStress.sparsebundle`. See
+  [Stress testing](docs/STRESS_TESTING.md) for preparation, automated cases and manual QA.
 - The production `Scope` build supports full file operations by default. Use `Scope Dev`
   for local development so changes stay inside `~/ScopeScratch`.
 - Engine tests work in temporary folders and throwaway disk images (`TestVolume`), never

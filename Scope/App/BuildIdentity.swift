@@ -1,11 +1,13 @@
 import Foundation
 import ScopeEngine
+import Synchronization
 
 /// Which kind of build this is, and the engine that goes with it.
 ///
 /// Neither build runs in the App Sandbox. Development builds ("Scope Dev")
-/// compile with SCOPE_DEV: they read anywhere but change files only inside
-/// the scratch folder, which the path guard enforces on every operation.
+/// compile with SCOPE_DEV: ordinary launches read anywhere but change files
+/// only inside the scratch folder. An explicit stress launch is confined to
+/// the verified volumes of one disk image instead.
 /// Production builds ("Scope") enable SCOPE_ALLOW_WRITES by default and
 /// use normal macOS permissions. A local configuration may omit that flag
 /// for a read-only build; Scope Dev always keeps its scratch restriction.
@@ -35,11 +37,37 @@ struct BuildIdentity {
     /// creates it.
     static let scratchFolder = realHome.appendingPathComponent("ScopeScratch", isDirectory: true)
 
+    private static let stressAccess = Mutex<StressImageAccess?>(nil)
+
+    static var isStressRequested: Bool {
+        ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--scope-stress-") }
+    }
+
+    static var stress: StressImageAccess? { stressAccess.withLock { $0 } }
+
+    static func installStress(_ access: StressImageAccess) {
+        stressAccess.withLock { $0 = access }
+    }
+
+    static func stressOptions() throws -> (image: URL, source: UUID, target: UUID) {
+        let args = ProcessInfo.processInfo.arguments
+        let keys = ["--scope-stress-image", "--scope-stress-source", "--scope-stress-target"]
+        guard args.count == 7, Set(stride(from: 1, to: args.count, by: 2).map { args[$0] }) == Set(keys),
+            let source = UUID(uuidString: args[4]), let target = UUID(uuidString: args[6]),
+            args[1] == keys[0], args[3] == keys[1], args[5] == keys[2],
+            args[2].hasPrefix("/")
+        else { throw StressImageError.invalidConfiguration }
+        return (URL(fileURLWithPath: args[2]), source, target)
+    }
+
     /// Where a new window opens.
-    var startFolder: URL { Self.realHome }
+    var startFolder: URL { Self.isStressRequested ? (Self.stress?.source ?? Self.realHome) : Self.realHome }
 
     var pathGuard: PathGuard {
-        if isDevelopment { return .writesOnlyUnder([Self.scratchFolder]) }
+        if isDevelopment {
+            if Self.isStressRequested { return Self.stress?.pathGuard ?? .denyAll }
+            return .writesOnlyUnder([Self.scratchFolder])
+        }
         #if SCOPE_ALLOW_WRITES
         return .unrestricted
         #else
