@@ -234,12 +234,17 @@ final class OperationsController {
 
     // MARK: - Conflicts
 
+    private static var promptWindow: NSWindow? {
+        NSApp.keyWindow ?? NSApp.mainWindow
+            ?? NSApp.orderedWindows.first { $0.windowController is BrowserWindowController }
+    }
+
     /// Asks on the frontmost browser window what to do about an existing item.
     private static func ask(_ conflict: Conflict) async -> (choice: ConflictChoice, applyToAll: Bool) {
         let alert = conflictAlert(conflict)
         SystemNotifier.shared.conflictWaiting(name: conflict.existing.lastPathComponent)
         defer { SystemNotifier.shared.conflictAnswered() }
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let window = promptWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
             response = await alert.beginSheetModal(for: window)
@@ -248,14 +253,19 @@ final class OperationsController {
         }
         let all = alert.suppressionButton?.state == .on
         let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-        guard conflictChoices.indices.contains(index), conflictChoices[index] != .stop else {
+        let choices = conflictChoices(for: conflict)
+        guard choices.indices.contains(index), choices[index] != .stop else {
             return (.stop, false)
         }
-        return (conflictChoices[index], all)
+        return (choices[index], all)
     }
 
     /// The conflict question's answers, in the order of its buttons.
     static let conflictChoices: [ConflictChoice] = [.keepBoth, .replace, .replaceIfOlder, .skip, .stop]
+
+    static func conflictChoices(for conflict: Conflict) -> [ConflictChoice] {
+        conflict.canMerge ? [.merge] + conflictChoices : conflictChoices
+    }
 
     static func conflictAlert(_ conflict: Conflict) -> NSAlert {
         let alert = NSAlert()
@@ -281,11 +291,15 @@ final class OperationsController {
         if conflict.existingKind == .directory {
             text +=
                 "\n\nReplacing moves the entire existing folder to the Trash, including items only in that folder. It does not merge folders."
+            if conflict.canMerge {
+                text += "\n\nMerging combines both folders. Scope will ask about any matching items inside them."
+            }
         } else {
             text += "\n\nReplacing moves the existing item to the Trash, so you can get it back."
         }
         text += "\n\nReplace If Older replaces only files whose existing copy is older."
         alert.informativeText = text
+        if conflict.canMerge { alert.addButton(withTitle: "Merge") }
         for title in ["Keep Both", "Replace", "Replace If Older", "Skip", "Stop"] {
             alert.addButton(withTitle: title)
         }
@@ -333,7 +347,7 @@ final class OperationsController {
     /// Asks what to do about an item that couldn't be copied or moved.
     private static func ask(_ failure: ItemFailure) async -> (choice: FailureChoice, applyToAll: Bool) {
         let alert = failureAlert(failure)
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let window = promptWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
             response = await alert.beginSheetModal(for: window)
@@ -378,7 +392,7 @@ final class OperationsController {
             return nil
         }
         defer { escape.map(NSEvent.removeMonitor) }
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        let window = promptWindow
         let response: NSApplication.ModalResponse
         if let window, window.attachedSheet == nil {
             response = await alert.beginSheetModal(for: window)
