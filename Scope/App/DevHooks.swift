@@ -93,57 +93,7 @@ enum DevHooks {
                 )
             }
         case "stress-status":
-            guard BuildIdentity.stress != nil, !argument.isEmpty else { return }
-            let snapshots = OperationsController.shared.snapshots.map { snapshot -> [String: Any] in
-                let state: String
-                let failure: String?
-                switch snapshot.state {
-                case .queued:
-                    state = "queued"
-                    failure = nil
-                case .running:
-                    state = "running"
-                    failure = nil
-                case .paused:
-                    state = "paused"
-                    failure = nil
-                case .cancelling:
-                    state = "cancelling"
-                    failure = nil
-                case .done:
-                    state = "done"
-                    failure = nil
-                case .cancelled:
-                    state = "cancelled"
-                    failure = nil
-                case .failed(let message):
-                    state = "failed"
-                    failure = message
-                }
-                return [
-                    "id": snapshot.id.uuidString, "title": snapshot.title, "state": state,
-                    "failure": failure as Any? ?? NSNull(),
-                    "itemsDone": snapshot.progress.itemsDone, "itemsTotal": snapshot.progress.itemsTotal,
-                    "bytesDone": snapshot.progress.bytesDone, "bytesTotal": snapshot.progress.bytesTotal,
-                    "speed": snapshot.speed as Any? ?? NSNull(),
-                    "skipped": snapshot.transferReport?.skippedCount ?? 0,
-                ]
-            }
-            let payload: [String: Any] = [
-                "runID": ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] ?? "unknown",
-                "time": Date().timeIntervalSince1970,
-                "location": controller?.model.location.title ?? "none",
-                "itemsShown": controller?.model.items.count ?? 0,
-                "availableCapacity": controller?.model.availableCapacity as Any? ?? NSNull(),
-                "operations": snapshots,
-            ]
-            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-                let json = String(data: data, encoding: .utf8)
-            else { return }
-            DistributedNotificationCenter.default().postNotificationName(
-                Notification.Name("com.antonispanos.scope.dev.stress.reply"), object: argument,
-                userInfo: ["json": json], deliverImmediately: true)
-            logger.notice("STRESS_STATUS \(json, privacy: .public)")
+            postStressStatus(replyID: argument, controller: controller)
         case "search":
             controller?.searchForHooks(argument)
         case "searchkind":
@@ -260,6 +210,60 @@ enum DevHooks {
         default:
             logger.error("Unknown hook \(request, privacy: .public)")
         }
+    }
+
+    private static func postStressStatus(replyID: String, controller: BrowserWindowController?) {
+        guard BuildIdentity.stress != nil, !replyID.isEmpty else { return }
+        let snapshots = OperationsController.shared.snapshots.map { snapshot -> [String: Any] in
+            let state: String
+            let failure: String?
+            switch snapshot.state {
+            case .queued:
+                state = "queued"
+                failure = nil
+            case .running:
+                state = "running"
+                failure = nil
+            case .paused:
+                state = "paused"
+                failure = nil
+            case .cancelling:
+                state = "cancelling"
+                failure = nil
+            case .done:
+                state = "done"
+                failure = nil
+            case .cancelled:
+                state = "cancelled"
+                failure = nil
+            case .failed(let message):
+                state = "failed"
+                failure = message
+            }
+            return [
+                "id": snapshot.id.uuidString, "title": snapshot.title, "state": state,
+                "failure": failure as Any? ?? NSNull(),
+                "itemsDone": snapshot.progress.itemsDone, "itemsTotal": snapshot.progress.itemsTotal,
+                "bytesDone": snapshot.progress.bytesDone, "bytesTotal": snapshot.progress.bytesTotal,
+                "speed": snapshot.speed as Any? ?? NSNull(),
+                "skipped": snapshot.transferReport?.skippedCount ?? 0,
+            ]
+        }
+        let payload: [String: Any] = [
+            "runID": ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] ?? "unknown",
+            "time": Date().timeIntervalSince1970,
+            "location": controller?.model.location.title ?? "none",
+            "itemsShown": controller?.model.items.count ?? 0,
+            "availableCapacity": controller?.model.availableCapacity as Any? ?? NSNull(),
+            "operations": snapshots,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("com.antonispanos.scope.dev.stress.reply"), object: replyID,
+            userInfo: ["json": json], deliverImmediately: true)
+        logger.notice("STRESS_STATUS \(json, privacy: .public)")
     }
 
     private static func findButton(_ title: String, in view: NSView?) -> NSButton? {
