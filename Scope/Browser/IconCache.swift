@@ -17,7 +17,7 @@ final class IconCache {
             if let icon = byPath[item.url.path] { return icon }
             // A link to a folder shows the folder's own icon (Google Drive's
             // has one); the row adds the link arrow.
-            loadIcon(for: item.url.path, followingLink: item.isFolderLink)
+            loadIcon(for: item.url.path)
         }
         let key: String
         let type: UTType
@@ -39,19 +39,20 @@ final class IconCache {
         return icon
     }
 
-    /// Loads the icon of the item at `path`, or of its link's target, in the
-    /// background: resolving a link reads the disk.
-    private func loadIcon(for path: String, followingLink: Bool = false) {
+    /// Loads a path-specific icon only after the target passes the active
+    /// read guard. Resolving folder links can otherwise reach outside it.
+    private func loadIcon(for path: String) {
         guard !loading.contains(path) else { return }
         loading.insert(path)
+        let pathGuard = BuildIdentity.current.pathGuard
         Task {
-            let icon = await Task.detached(priority: .utility) {
-                let source = followingLink ? URL(fileURLWithPath: path).resolvingSymlinksInPath().path : path
-                return LoadedIcon(image: NSWorkspace.shared.icon(forFile: source))
+            let icon = await Task.detached(priority: .utility) { () -> LoadedIcon? in
+                guard let checked = try? pathGuard.checkTarget(URL(fileURLWithPath: path)) else { return nil }
+                return LoadedIcon(image: NSWorkspace.shared.icon(forFile: checked.path))
             }.value
-            byPath[path] = icon.image
+            if let icon { byPath[path] = icon.image }
             loading.remove(path)
-            NotificationCenter.default.post(name: Self.didLoad, object: path)
+            if icon != nil { NotificationCenter.default.post(name: Self.didLoad, object: path) }
         }
     }
 

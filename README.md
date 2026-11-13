@@ -87,6 +87,8 @@ shasum -a 256 -c Scope-0.3.0.dmg.sha256
 
 Scope is early 0.x software. Production Scope supports full file operations with
 normal macOS permissions. Scope Dev restricts file changes to `~/ScopeScratch`.
+An explicit [stress launch](docs/STRESS_TESTING.md) instead confines managed
+file access to a disposable two-volume disk image.
 
 The [Back/Forward validation fix (#139)](https://github.com/antonisPanos/scope/pull/139)
 and [compact horizontal List layout (#140)](https://github.com/antonisPanos/scope/pull/140)

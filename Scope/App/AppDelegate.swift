@@ -1,4 +1,5 @@
 import AppKit
+import ScopeEngine
 import os
 
 @main
@@ -27,6 +28,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.logger.notice("Hosting unit tests; no window opened")
             return
         }
+        if BuildIdentity.isStressRequested {
+            #if SCOPE_DEV
+            do {
+                let options = try BuildIdentity.stressOptions()
+                Task {
+                    do {
+                        let access = try await Task.detached(priority: .userInitiated) {
+                            try StressImageAccess.open(
+                                image: options.image, sourceUUID: options.source, targetUUID: options.target)
+                        }.value
+                        BuildIdentity.installStress(access)
+                        finishLaunchingBrowser()
+                    } catch {
+                        refuseStressLaunch(error)
+                    }
+                }
+            } catch {
+                refuseStressLaunch(error)
+            }
+            #else
+            refuseStressLaunch(StressImageError.invalidConfiguration)
+            #endif
+            return
+        }
+        finishLaunchingBrowser()
+    }
+
+    private func finishLaunchingBrowser() {
         NSWindow.allowsAutomaticWindowTabbing = true
         SidebarStore.shared.start()
         _ = SystemNotifier.shared  // becomes the notification delegate before any click arrives
@@ -35,9 +64,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         let identity = BuildIdentity.current
         Self.logger.notice(
-            "Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites)"
+            "Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites), stress \(BuildIdentity.isStressRequested)"
         )
         newWindow(nil)
+    }
+
+    private func refuseStressLaunch(_ error: Error) {
+        Self.logger.fault("Stress launch refused: \(error.localizedDescription, privacy: .public)")
+        let alert = NSAlert()
+        alert.messageText = "Scope Dev couldn't verify the stress image."
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
+        NSApp.terminate(nil)
     }
 
     /// Closing the last window quits Scope, except while jobs run: then it

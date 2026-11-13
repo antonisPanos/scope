@@ -19,6 +19,7 @@ import ScopeEngine
 ///   "type:<text>"      puts text in the first text field of an open sheet (the Rename and New Folder name)
 ///   "cancel"           cancels the newest running operation, as its Cancel button does
 ///   "ops"              logs every operation in the activity list
+///   "stress-status:<request-id>" replies with a JSON snapshot for the stress runner
 ///   "search:<mode>:<text>"  searches (mode: contains, glob, regex, contents)
 ///   "searchkind:<kind>" limits the search to one kind; "endsearch" ends it
 ///   "undo"             undoes the last operation
@@ -38,6 +39,12 @@ enum DevHooks {
         observer = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.antonispanos.scope.dev.hook"), object: nil, queue: .main
         ) { notification in
+            if let targetRun = notification.userInfo?["stressRunID"] as? String,
+                BuildIdentity.stress == nil
+                    || ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] != targetRun
+            {
+                return
+            }
             let request = notification.object as? String ?? ""
             MainActor.assumeIsolated { handle(request) }
         }
@@ -53,7 +60,9 @@ enum DevHooks {
         logger.notice("Hook: \(request, privacy: .public)")
         switch verb {
         case "command":
-            guard let controller, let command = Commands.command(id: argument) else { return }
+            guard let controller, let command = Commands.command(id: argument), command.isEnabled(controller) else {
+                return
+            }
             command.run(controller)
         case "go":
             controller?.goToTypedPath(argument)
@@ -83,6 +92,58 @@ enum DevHooks {
                     "Op: \(snapshot.title, privacy: .public) [\(String(describing: snapshot.state), privacy: .public)] \(progress.itemsDone)/\(progress.itemsTotal) items \(progress.bytesDone)/\(progress.bytesTotal) bytes speed \(Int(snapshot.speed ?? 0)) undo \(snapshot.canUndo) skipped \(snapshot.skippedEntries.count)"
                 )
             }
+        case "stress-status":
+            guard BuildIdentity.stress != nil, !argument.isEmpty else { return }
+            let snapshots = OperationsController.shared.snapshots.map { snapshot -> [String: Any] in
+                let state: String
+                let failure: String?
+                switch snapshot.state {
+                case .queued:
+                    state = "queued"
+                    failure = nil
+                case .running:
+                    state = "running"
+                    failure = nil
+                case .paused:
+                    state = "paused"
+                    failure = nil
+                case .cancelling:
+                    state = "cancelling"
+                    failure = nil
+                case .done:
+                    state = "done"
+                    failure = nil
+                case .cancelled:
+                    state = "cancelled"
+                    failure = nil
+                case .failed(let message):
+                    state = "failed"
+                    failure = message
+                }
+                return [
+                    "id": snapshot.id.uuidString, "title": snapshot.title, "state": state,
+                    "failure": failure as Any? ?? NSNull(),
+                    "itemsDone": snapshot.progress.itemsDone, "itemsTotal": snapshot.progress.itemsTotal,
+                    "bytesDone": snapshot.progress.bytesDone, "bytesTotal": snapshot.progress.bytesTotal,
+                    "speed": snapshot.speed as Any? ?? NSNull(),
+                    "skipped": snapshot.transferReport?.skippedCount ?? 0,
+                ]
+            }
+            let payload: [String: Any] = [
+                "runID": ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"] ?? "unknown",
+                "time": Date().timeIntervalSince1970,
+                "location": controller?.model.location.title ?? "none",
+                "itemsShown": controller?.model.items.count ?? 0,
+                "availableCapacity": controller?.model.availableCapacity as Any? ?? NSNull(),
+                "operations": snapshots,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+                let json = String(data: data, encoding: .utf8)
+            else { return }
+            DistributedNotificationCenter.default().postNotificationName(
+                Notification.Name("com.antonispanos.scope.dev.stress.reply"), object: argument,
+                userInfo: ["json": json], deliverImmediately: true)
+            logger.notice("STRESS_STATUS \(json, privacy: .public)")
         case "search":
             controller?.searchForHooks(argument)
         case "searchkind":
@@ -154,6 +215,14 @@ enum DevHooks {
         case "cancel":
             if let running = OperationsController.shared.snapshots.last(where: \.isActive) {
                 OperationsController.shared.cancel(running.id)
+            }
+        case "pause":
+            if let running = OperationsController.shared.snapshots.last(where: { $0.state == .running }) {
+                OperationsController.shared.pause(running.id)
+            }
+        case "resume":
+            if let paused = OperationsController.shared.snapshots.last(where: { $0.state == .paused }) {
+                OperationsController.shared.resume(paused.id)
             }
         case "undo":
             controller?.undoLastOperation()

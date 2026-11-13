@@ -250,7 +250,7 @@ enum Commands {
         Command(
             id: "goScratch", title: "Scratch Folder", menu: .go, key: "", modifiers: [],
             run: { openScratchFolder($0) },
-            isEnabled: { _ in BuildIdentity.current.isDevelopment }),
+            isEnabled: { _ in BuildIdentity.current.isDevelopment && !BuildIdentity.isStressRequested }),
         Command(
             id: "goToFolder", title: "Go to Folder…", menu: .go, key: "g", modifiers: [.shift, .command],
             run: { $0.beginTypingPath() }, startsGroup: true),

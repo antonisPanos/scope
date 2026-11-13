@@ -1,5 +1,13 @@
 import Foundation
 import Synchronization
+import os
+import os.signpost
+
+enum StressTrace {
+    static let runID = ProcessInfo.processInfo.environment["SCOPE_STRESS_RUN_ID"]
+    static let logger = Logger(subsystem: "com.antonispanos.scope", category: "StressPhases")
+    static let signpostLog = OSLog(subsystem: "com.antonispanos.scope", category: "StressPhases")
+}
 
 /// A file operation as a value: what it does, to what, and where. The engine
 /// runs it; the operation center queues, pauses and cancels it.
@@ -326,6 +334,7 @@ public final class OperationControl: Sendable {
 
     struct State {
         var paused = false
+        var traceID: UUID?
         var progress = OperationProgress()
         var samples: [(time: TimeInterval, bytes: Int64)] = []
         var skippedEntries: [String] = []
@@ -333,6 +342,16 @@ public final class OperationControl: Sendable {
     }
 
     public init() { reportOutcomeLimit = TransferReport.maxOutcomes }
+
+    func setTraceID(_ id: UUID) { state.withLock { $0.traceID = id } }
+
+    func trace(_ phase: String) {
+        guard let runID = StressTrace.runID else { return }
+        let id = state.withLock { $0.traceID?.uuidString ?? "unknown" }
+        StressTrace.logger.notice(
+            "run=\(runID, privacy: .public) op=\(id, privacy: .public) phase=\(phase, privacy: .public)"
+        )
+    }
 
     // Lets a tiny fixture exercise the list limit without 1,001 files.
     init(reportOutcomeLimit: Int) {
