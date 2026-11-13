@@ -7,10 +7,12 @@ import AppKit
 
 let resources = "Scope/Resources"
 let canvas = 1024
-let margin: CGFloat = 3
+let margin: CGFloat = 4
 let depth = 4
 let share: CGFloat = 0.55
 let grow: CGFloat = 0.14
+let cornerRadius: CGFloat = 18
+let cornerShare: CGFloat = 0.15
 
 struct Tile {
     let rect: CGRect
@@ -68,7 +70,7 @@ func draw(_ tile: Tile, above: ArraySlice<Tile>, color: NSColor) -> NSBitmapImag
             x: padding, y: padding, width: CGFloat(canvas) - 2 * padding,
             height: CGFloat(canvas) - 2 * padding))
     let face = upright(tile)
-    let radius = min(12, min(face.width, face.height) * 0.12)
+    let radius = min(cornerRadius, min(face.width, face.height) * cornerShare)
     context.addPath(CGPath(roundedRect: face, cornerWidth: radius, cornerHeight: radius, transform: nil))
     context.setFillColor(color.cgColor)
     context.fillPath()
@@ -78,7 +80,7 @@ func draw(_ tile: Tile, above: ArraySlice<Tile>, color: NSColor) -> NSBitmapImag
     context.setBlendMode(.clear)
     for later in above {
         let cover = upright(later).insetBy(dx: -gap, dy: -gap)
-        let coverRadius = min(12, min(cover.width, cover.height) * 0.12)
+        let coverRadius = min(cornerRadius, min(cover.width, cover.height) * cornerShare)
         context.addPath(
             CGPath(
                 roundedRect: cover, cornerWidth: coverRadius,
@@ -118,7 +120,9 @@ func writeIcon(name: String, color: NSColor) throws {
         "supported-platforms": ["squares": ["macOS"]],
     ]
     let json = try JSONSerialization.data(withJSONObject: icon, options: [.prettyPrinted, .sortedKeys])
-    try json.write(to: URL(fileURLWithPath: "\(folder)/icon.json"))
+    let normalized = String(decoding: json, as: UTF8.self)
+        .replacingOccurrences(of: "0.34999999999999998", with: "0.35")
+    try normalized.write(toFile: "\(folder)/icon.json", atomically: true, encoding: .utf8)
 }
 
 let amber = NSColor(red: 0xF5 / 255, green: 0xA5 / 255, blue: 0x24 / 255, alpha: 1)
