@@ -1,17 +1,15 @@
 #!/bin/bash
-# Builds Scope.app (Release), packs it into a DMG, and signs and notarizes it
-# when the Apple credentials are set up. It never launches the app.
+# Builds Scope.app (Release), packs it into a DMG, and optionally signs and
+# notarizes it. It never launches the app.
 #
 #   scripts/release.sh            build a DMG for the current commit into build/release
 #   scripts/release.sh --upload   also attach it to the GitHub Release of the tag at HEAD
 #
-# Signing is picked automatically:
-#   - A "Developer ID Application" certificate in the keychain: signed with it,
-#     notarized with the notarytool profile "scope-notary" (override with
-#     SCOPE_NOTARY_PROFILE) and stapled. Without the profile it is signed only.
-#   - No certificate: ad-hoc signed. First launch needs approval in
-#     System Settings > Privacy & Security > Open Anyway.
-# Set SCOPE_SIGNING_MODE=ad-hoc to use no Developer ID identity, as CI does.
+# SCOPE_SIGNING_MODE=developer-id requires SCOPE_TEAM_ID and either a notarytool
+# keychain profile or SCOPE_NOTARY_KEY_PATH, SCOPE_NOTARY_KEY_ID, and
+# SCOPE_NOTARY_ISSUER_ID. It fails if signing or notarization cannot complete.
+# The default auto mode uses a local Developer ID identity when available;
+# ad-hoc explicitly builds an unsigned-for-distribution local DMG.
 # One-time setup is in docs/RELEASING.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -51,23 +49,48 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "warning: the working tree has uncommitted changes; this DMG is for testing only" >&2
 fi
 
-# Signing identity.
-case "${SCOPE_SIGNING_MODE:-auto}" in
-  auto)
-    identity="$(security find-identity -v -p codesigning 2>/dev/null \
-      | sed -nE 's/.*"(Developer ID Application: .*)"$/\1/p' | head -n 1)"
-    ;;
-  ad-hoc) identity="" ;;
-  *) fail "SCOPE_SIGNING_MODE must be auto or ad-hoc" ;;
+sign_mode="${SCOPE_SIGNING_MODE:-auto}"
+case "$sign_mode" in
+  auto|ad-hoc|developer-id) ;;
+  *) fail "SCOPE_SIGNING_MODE must be auto, ad-hoc, or developer-id" ;;
 esac
+
+identity=""
+if [ "$sign_mode" != "ad-hoc" ]; then
+  identities="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -nE 's/.*"(Developer ID Application: .*)"$/\1/p' || true)"
+  if [ "$sign_mode" = "developer-id" ]; then
+    [[ "${SCOPE_TEAM_ID:-}" =~ ^[A-Z0-9]{10}$ ]] || fail "SCOPE_TEAM_ID must be a 10-character Apple Developer Team ID"
+    identity="$(printf '%s\n' "$identities" | grep -F "(${SCOPE_TEAM_ID})" | head -n 1 || true)"
+    [ -n "$identity" ] || fail "no valid Developer ID Application identity for team $SCOPE_TEAM_ID"
+  else
+    identity="$(printf '%s\n' "$identities" | head -n 1)"
+  fi
+fi
 if [ -n "$identity" ]; then
   team="$(sed -nE 's/.*\(([A-Z0-9]{10})\)$/\1/p' <<<"$identity")"
+  [ -n "$team" ] || fail "could not determine the Developer ID team"
   sign_mode="developer-id"
   sign_settings=(CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=$identity" "DEVELOPMENT_TEAM=$team" "OTHER_CODE_SIGN_FLAGS=--timestamp")
 else
   sign_mode="ad-hoc"
   sign_settings=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=)
 fi
+
+notary_args=()
+if [ "$sign_mode" = "developer-id" ]; then
+  if [ -n "${SCOPE_NOTARY_KEY_PATH:-}${SCOPE_NOTARY_KEY_ID:-}${SCOPE_NOTARY_ISSUER_ID:-}" ]; then
+    [ -n "${SCOPE_NOTARY_KEY_PATH:-}" ] || fail "SCOPE_NOTARY_KEY_PATH is required with API key credentials"
+    [ -f "$SCOPE_NOTARY_KEY_PATH" ] || fail "SCOPE_NOTARY_KEY_PATH is not a file"
+    [ -n "${SCOPE_NOTARY_KEY_ID:-}" ] || fail "SCOPE_NOTARY_KEY_ID is required"
+    [ -n "${SCOPE_NOTARY_ISSUER_ID:-}" ] || fail "SCOPE_NOTARY_ISSUER_ID is required"
+    notary_args=(--key "$SCOPE_NOTARY_KEY_PATH" --key-id "$SCOPE_NOTARY_KEY_ID" --issuer "$SCOPE_NOTARY_ISSUER_ID")
+  else
+    notary_args=(--keychain-profile "$NOTARY_PROFILE")
+  fi
+  xcrun notarytool history "${notary_args[@]}" >/dev/null || fail "notarization credentials are unavailable"
+fi
+$UPLOAD && [ "$sign_mode" != "developer-id" ] && fail "upload requires a Developer ID signed, notarized DMG"
 
 step "Scope $version (build $build_number, $commit), signing: $sign_mode"
 
@@ -91,7 +114,16 @@ plist="$app/Contents/Info.plist"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$plist")" = "$version" ] || fail "wrong version in Info.plist"
 [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$plist")" = "$build_number" ] || fail "wrong build number in Info.plist"
 if [ "$sign_mode" = "developer-id" ]; then
-  codesign -dv "$app" 2>&1 | grep -q 'flags=.*runtime' || fail "hardened runtime is off; notarization would reject it"
+  service="$app/Contents/XPCServices/ScopeArchiveService.xpc"
+  [ -d "$service" ] || fail "the embedded archive service is missing"
+  for signed in "$app" "$service"; do
+    codesign --verify --strict --verbose=1 "$signed"
+    signature="$(codesign -dv --verbose=4 "$signed" 2>&1)"
+    grep -Fqx "TeamIdentifier=$team" <<<"$signature" || fail "wrong signing team for $signed"
+    grep -q '^Authority=Developer ID Application:' <<<"$signature" || fail "not Developer ID signed: $signed"
+    grep -q '^Timestamp=' <<<"$signature" || fail "secure timestamp is missing: $signed"
+    grep -q 'flags=.*runtime' <<<"$signature" || fail "hardened runtime is off: $signed"
+  done
 fi
 if xcodebuild -project Scope.xcodeproj -scheme Scope -configuration Release -showBuildSettings 2>/dev/null \
   | grep -E '^\s*SWIFT_ACTIVE_COMPILATION_CONDITIONS = ' | grep -q SCOPE_ALLOW_WRITES; then
@@ -111,15 +143,27 @@ rm -rf "$staging"
 
 if [ "$sign_mode" = "developer-id" ]; then
   codesign --sign "$identity" --timestamp "$dmg"
-  if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
-    step "Notarizing (this usually takes a few minutes)"
-    xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
-    xcrun stapler staple "$dmg"
-    step "Checking Gatekeeper"
-    spctl --assess --type open --context context:primary-signature --verbose "$dmg"
-  else
-    echo "warning: no notarytool profile \"$NOTARY_PROFILE\"; the DMG is signed but not notarized" >&2
+  codesign --verify --strict "$dmg"
+  step "Notarizing (this can take up to an hour)"
+  notary_response="$(mktemp -t scope-notary-response)"
+  trap 'rm -f "$notary_response"' EXIT
+  if ! xcrun notarytool submit "$dmg" "${notary_args[@]}" --wait --output-format json > "$notary_response"; then
+    submission_id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$notary_response" 2>/dev/null || true)"
+    [ -z "$submission_id" ] || xcrun notarytool log "$submission_id" "${notary_args[@]}" || true
+    fail "notarization submission failed"
   fi
+  status="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$notary_response")"
+  submission_id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$notary_response")"
+  if [ "$status" != "Accepted" ]; then
+    [ -z "$submission_id" ] || xcrun notarytool log "$submission_id" "${notary_args[@]}" || true
+    fail "notarization status: ${status:-unknown}"
+  fi
+  echo "notarization accepted: $submission_id"
+  xcrun stapler staple "$dmg"
+  xcrun stapler validate "$dmg"
+  step "Checking Gatekeeper"
+  spctl --assess --type open --context context:primary-signature --verbose "$dmg"
+  codesign --verify --strict "$dmg"
 fi
 
 (cd "$OUT" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")

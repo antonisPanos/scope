@@ -75,9 +75,9 @@ Download the DMG from the [latest release](https://github.com/antonisPanos/scope
 open it, and drag **Scope** to **Applications**. The app requires **macOS 27.2 or later**.
 The engine's lower macOS target does not make the app compatible with macOS 15.
 
-Releases currently use an **ad-hoc signed app, without notarization or an Apple-verified
-publisher identity**. After macOS blocks first launch, use **System Settings > Privacy
-& Security > Open Anyway** for Scope. See [Apple's per-app instructions](https://support.apple.com/en-us/102445).
+New releases built through the signed pipeline are **Developer ID signed and
+notarized**. Older releases remain ad-hoc signed; their release notes explain
+the first-launch approval needed on another Mac.
 The release includes a matching `.dmg.sha256` file to verify the download:
 
 ```sh
