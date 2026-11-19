@@ -131,7 +131,7 @@ extension BrowserWindowController: NSToolbarDelegate {
 
     @objc private func viewModeClicked(_ sender: NSToolbarItemGroup) {
         guard ViewMode.allCases.indices.contains(sender.selectedIndex) else { return }
-        model.viewMode = ViewMode.allCases[sender.selectedIndex]
+        model.setViewMode(ViewMode.allCases[sender.selectedIndex])
     }
 
     @objc private func splitClicked() {
@@ -161,5 +161,6 @@ extension BrowserWindowController: NSToolbarDelegate {
         navigationGroup?.subitems[0].isEnabled = model.canGoBack
         navigationGroup?.subitems[1].isEnabled = model.canGoForward
         viewModeGroup?.selectedIndex = ViewMode.allCases.firstIndex(of: model.viewMode) ?? 0
+        viewModeGroup?.isEnabled = model.viewPreferencesReady
     }
 }

@@ -22,12 +22,10 @@ final class BrowserViewController: NSViewController {
     private var zoomLabelHide: Task<Void, Never>?
     /// Sizes the slider snaps to when it comes close.
     private static let zoomStops: [Double] = [16, 24, 32, 48, 64, 96, 128, 192, 256]
-    private static let defaultZoom: Double = 64
     private let message = NSTextField(wrappingLabelWithString: "")
     private let spinner = NSProgressIndicator()
     private let pathSeparator = NSBox()
     private let statusSeparator = NSBox()
-    private var sizeObserver: NSObjectProtocol?
 
     /// Set by the window; handed to whichever file view is showing.
     var onOpen: (([FileItem]) -> Void)? { didSet { fileView.onOpen = onOpen } }
@@ -72,10 +70,6 @@ final class BrowserViewController: NSViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    isolated deinit {
-        if let sizeObserver { NotificationCenter.default.removeObserver(sizeObserver) }
-    }
-
     static func makeView(for mode: ViewMode, model: BrowserModel) -> FileBrowsingView {
         switch mode {
         case .details: FileListViewController(model: model)
@@ -105,7 +99,7 @@ final class BrowserViewController: NSViewController {
         spinner.isDisplayedWhenStopped = false
         sizeSlider.minValue = AppSettings.iconSizes.lowerBound
         sizeSlider.maxValue = AppSettings.iconSizes.upperBound
-        sizeSlider.doubleValue = AppSettings.shared.iconSize
+        sizeSlider.doubleValue = model.iconSize
         sizeSlider.controlSize = .small
         sizeSlider.target = self
         sizeSlider.action = #selector(sizeChanged)
@@ -119,14 +113,6 @@ final class BrowserViewController: NSViewController {
         zoomReset.toolTip = "Reset icon size"
         zoomReset.target = self
         zoomReset.action = #selector(resetZoom)
-        sizeObserver = NotificationCenter.default.addObserver(
-            forName: AppSettings.iconSizeDidChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.sizeSlider.doubleValue = AppSettings.shared.iconSize
-                self?.showZoomLabel()
-            }
-        }
 
         split.isVertical = true
         split.dividerStyle = .thin
@@ -254,7 +240,7 @@ final class BrowserViewController: NSViewController {
         newView.onSelectionChange = { [weak self] in self?.selectionDidChange() }
         pathBar.nextKeyView = subview
         sizeSlider.isHidden = model.viewMode != .icons
-        zoomReset.isHidden = sizeSlider.isHidden || AppSettings.shared.iconSize == Self.defaultZoom
+        updateZoomControls()
     }
 
     /// Swaps in the view for the model's view mode, keeping the selection.
@@ -270,7 +256,7 @@ final class BrowserViewController: NSViewController {
             default: false
             }
         sizeSlider.isHidden = model.viewMode != .icons
-        zoomReset.isHidden = sizeSlider.isHidden || AppSettings.shared.iconSize == Self.defaultZoom
+        updateZoomControls()
         guard !matches else { return }
 
         let selection = fileView.selectedItems.map(\.url)
@@ -298,6 +284,10 @@ final class BrowserViewController: NSViewController {
     func update(_ change: BrowserModel.Change) {
         if change.contains(.location) { pathBar.show(model.location) }
         if change.contains(.viewMode) { switchViewIfNeeded() }
+        if !change.isDisjoint(with: [.iconSize, .viewPreferences]) {
+            updateZoomControls()
+            if change.contains(.iconSize), !change.contains(.location), model.viewPreferencesReady { showZoomLabel() }
+        }
         if change.contains(.state) {
             switch model.state {
             case .loading:
@@ -379,18 +369,29 @@ final class BrowserViewController: NSViewController {
             size = stop
             sizeSlider.doubleValue = stop
         }
-        AppSettings.shared.iconSize = size
+        model.setIconSize(size)
     }
 
     @objc private func resetZoom() {
-        AppSettings.shared.iconSize = Self.defaultZoom
+        model.resetIconSize()
+    }
+
+    private func updateZoomControls() {
+        sizeSlider.doubleValue = model.iconSize
+        sizeSlider.isEnabled = model.viewPreferencesReady
+        zoomReset.isEnabled = model.viewPreferencesReady
+        zoomReset.isHidden = sizeSlider.isHidden || !model.canResetIconSize
+        let title = model.usesFolderIconSize ? "Use Default Icon Size" : "Reset icon size"
+        zoomReset.toolTip = title
+        zoomReset.setAccessibilityLabel(title)
+        if sizeSlider.isHidden { zoomLabel.alphaValue = 0 }
     }
 
     /// Shows the zoom level next to the slider while it changes, then fades it out.
     private func showZoomLabel() {
-        let size = AppSettings.shared.iconSize
-        zoomLabel.stringValue = "\(Int((size / Self.defaultZoom * 100).rounded()))%"
-        zoomReset.isHidden = sizeSlider.isHidden || size == Self.defaultZoom
+        let size = model.iconSize
+        zoomLabel.stringValue = "\(Int((size / AppSettings.factoryIconSize * 100).rounded()))%"
+        updateZoomControls()
         guard !sizeSlider.isHidden else { return }
         zoomLabel.animator().alphaValue = 1
         zoomLabelHide?.cancel()

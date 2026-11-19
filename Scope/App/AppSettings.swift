@@ -7,14 +7,42 @@ import ScopeEngine
 final class AppSettings {
     static let shared = AppSettings()
     static let didChange = Notification.Name("ScopeSettingsDidChange")
-    static let iconSizeDidChange = Notification.Name("ScopeIconSizeDidChange")
+    /// Refresh controls in open windows without changing their display snapshots.
+    static let viewPreferencesDidChange = Notification.Name("ScopeViewPreferencesDidChange")
 
     private let defaults: UserDefaults
+    private var folderPreferences: [String: FolderPreferences] = [:]
+    static let folderPreferenceLimit = 2_000
+    private static let folderPreferencesKey = "folderViewPreferences.v1"
+
+    enum PreferenceScope: String, CaseIterable {
+        case global, perFolder
+        var title: String { self == .global ? "Global" : "Per folder" }
+    }
+
+    struct FolderPreferences {
+        var viewMode: ViewMode?
+        var iconSize: Double?
+        var changed: Double = 0
+        var isEmpty: Bool { viewMode == nil && iconSize == nil }
+    }
 
     /// `defaults` is the app's own; tests pass a throwaway suite, so they
     /// never change the settings Scope Dev runs with.
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        if let saved = defaults.dictionary(forKey: Self.folderPreferencesKey) {
+            for (key, value) in saved {
+                guard let record = value as? [String: Any] else { continue }
+                let size = record["iconSize"] as? Double
+                let preference = FolderPreferences(
+                    viewMode: (record["viewMode"] as? String).flatMap(ViewMode.init(rawValue:)),
+                    iconSize: size.flatMap { $0.isFinite && Self.iconSizes.contains($0) ? $0 : nil },
+                    changed: (record["changed"] as? Double).flatMap { $0.isFinite ? $0 : nil } ?? 0)
+                if !preference.isEmpty { folderPreferences[key] = preference }
+            }
+            trimFolderPreferences()
+        }
     }
 
     var showHiddenFiles: Bool {
@@ -25,10 +53,13 @@ final class AppSettings {
         }
     }
 
-    /// The view mode and sort a new tab starts with: whatever was used last.
-    var lastViewMode: ViewMode {
+    /// Keep the old keys so existing global preferences become the defaults.
+    var defaultViewMode: ViewMode {
         get { defaults.string(forKey: "lastViewMode").flatMap(ViewMode.init(rawValue:)) ?? .details }
-        set { defaults.set(newValue.rawValue, forKey: "lastViewMode") }
+        set {
+            defaults.set(newValue.rawValue, forKey: "lastViewMode")
+            announceViewPreferences()
+        }
     }
 
     var lastSort: FileSort {
@@ -42,16 +73,99 @@ final class AppSettings {
     }
 
     /// Icon size in the icon grid, in points.
-    var iconSize: Double {
-        get { defaults.object(forKey: "iconSize") as? Double ?? 64 }
+    var defaultIconSize: Double {
+        get { Self.validIconSize(defaults.object(forKey: "iconSize") as? Double ?? Self.factoryIconSize) }
         set {
-            defaults.set(min(max(newValue, Self.iconSizes.lowerBound), Self.iconSizes.upperBound), forKey: "iconSize")
-            // Its own notification: a slider drag mustn't re-sort every open folder.
-            NotificationCenter.default.post(name: Self.iconSizeDidChange, object: self)
+            defaults.set(Self.validIconSize(newValue), forKey: "iconSize")
+            announceViewPreferences()
         }
     }
 
     static let iconSizes: ClosedRange<Double> = 16...256
+    static let factoryIconSize: Double = 64
+
+    static func validIconSize(_ value: Double) -> Double {
+        value.isFinite ? min(max(value, iconSizes.lowerBound), iconSizes.upperBound) : factoryIconSize
+    }
+
+    var viewTypeScope: PreferenceScope {
+        get { defaults.string(forKey: "viewTypeScope").flatMap(PreferenceScope.init(rawValue:)) ?? .global }
+        set {
+            defaults.set(newValue.rawValue, forKey: "viewTypeScope")
+            announceViewPreferences()
+        }
+    }
+
+    var iconSizeScope: PreferenceScope {
+        get { defaults.string(forKey: "iconSizeScope").flatMap(PreferenceScope.init(rawValue:)) ?? .global }
+        set {
+            defaults.set(newValue.rawValue, forKey: "iconSizeScope")
+            announceViewPreferences()
+        }
+    }
+
+    func preferences(for identity: FolderPreferenceIdentity) -> FolderPreferences {
+        folderPreferences[identity.storageKey] ?? FolderPreferences()
+    }
+
+    func setViewMode(_ mode: ViewMode?, for identity: FolderPreferenceIdentity) {
+        var record = preferences(for: identity)
+        record.viewMode = mode
+        save(record, for: identity)
+    }
+
+    func setIconSize(_ size: Double?, for identity: FolderPreferenceIdentity) {
+        var record = preferences(for: identity)
+        record.iconSize = size.map(Self.validIconSize)
+        save(record, for: identity)
+    }
+
+    func resetSavedFolderViewTypes() {
+        for key in Array(folderPreferences.keys) {
+            folderPreferences[key]?.viewMode = nil
+        }
+        persistFolderPreferences()
+    }
+
+    func resetSavedFolderIconSizes() {
+        for key in Array(folderPreferences.keys) {
+            folderPreferences[key]?.iconSize = nil
+        }
+        persistFolderPreferences()
+    }
+
+    private func save(_ preference: FolderPreferences, for identity: FolderPreferenceIdentity) {
+        var record = preference
+        record.changed = Date.timeIntervalSinceReferenceDate
+        folderPreferences[identity.storageKey] = record
+        persistFolderPreferences()
+    }
+
+    private func trimFolderPreferences() {
+        folderPreferences = folderPreferences.filter { !$0.value.isEmpty }
+        let excess = folderPreferences.count - Self.folderPreferenceLimit
+        guard excess > 0 else { return }
+        let oldest = folderPreferences.sorted {
+            $0.value.changed == $1.value.changed ? $0.key < $1.key : $0.value.changed < $1.value.changed
+        }
+        for entry in oldest.prefix(excess) { folderPreferences[entry.key] = nil }
+    }
+
+    private func persistFolderPreferences() {
+        trimFolderPreferences()
+        let saved = folderPreferences.mapValues { record -> [String: Any] in
+            var value: [String: Any] = ["changed": record.changed]
+            if let mode = record.viewMode { value["viewMode"] = mode.rawValue }
+            if let size = record.iconSize { value["iconSize"] = size }
+            return value
+        }
+        defaults.set(saved, forKey: Self.folderPreferencesKey)
+        announceViewPreferences()
+    }
+
+    private func announceViewPreferences() {
+        NotificationCenter.default.post(name: Self.viewPreferencesDidChange, object: self)
+    }
 
     var showPreviewPane: Bool {
         get { defaults.object(forKey: "showPreviewPane") as? Bool ?? true }

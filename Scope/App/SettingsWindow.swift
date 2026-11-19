@@ -3,19 +3,21 @@ import ScopeEngine
 import SwiftUI
 import UserNotifications
 
-/// Settings (Cmd+,). For now: alternatives to Finder's shortcuts, for people
-/// used to Windows or Linux file managers. None of them clash with system
-/// shortcuts; Finder's own keys keep working alongside.
+/// Settings (Cmd+,), including defaults and independent folder-memory choices.
 @MainActor
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
-            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.contentViewController = NSHostingController(rootView: SettingsView())
+        window.minSize = NSSize(width: 520, height: 360)
+        if let screen = NSScreen.main {
+            window.setContentSize(NSSize(width: 520, height: min(620, screen.visibleFrame.height - 60)))
+        }
         window.center()
         super.init(window: window)
     }
@@ -35,9 +37,41 @@ struct SettingsView: View {
     @State private var notifications = AppSettings.shared.systemNotifications
     @State private var notificationStatus: UNAuthorizationStatus?
     @State private var fullDiskAccess: Permissions.Status?
+    @State private var viewTypeScope = AppSettings.shared.viewTypeScope
+    @State private var iconSizeScope = AppSettings.shared.iconSizeScope
+    @State private var defaultViewMode = AppSettings.shared.defaultViewMode
+    @State private var defaultIconSize = AppSettings.shared.defaultIconSize
 
     var body: some View {
         Form {
+            Section("Folder Views") {
+                Picker("View type", selection: $viewTypeScope) {
+                    ForEach(AppSettings.PreferenceScope.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .onChange(of: viewTypeScope) { AppSettings.shared.viewTypeScope = viewTypeScope }
+                Picker("Default view type", selection: $defaultViewMode) {
+                    ForEach(ViewMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .onChange(of: defaultViewMode) { AppSettings.shared.defaultViewMode = defaultViewMode }
+                Picker("Icon size", selection: $iconSizeScope) {
+                    ForEach(AppSettings.PreferenceScope.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .onChange(of: iconSizeScope) { AppSettings.shared.iconSizeScope = iconSizeScope }
+                HStack {
+                    Slider(value: $defaultIconSize, in: AppSettings.iconSizes) { Text("Default icon size") }
+                    Text("\(Int(defaultIconSize)) pt").monospacedDigit().frame(width: 52, alignment: .trailing)
+                }
+                .onChange(of: defaultIconSize) { AppSettings.shared.defaultIconSize = defaultIconSize }
+                Text(
+                    "Folders without saved preferences use the defaults. "
+                        + "Icon size applies only to Icons view. "
+                        + "Changes apply when a folder is opened or reloaded."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Button("Reset Saved Folder View Types") { AppSettings.shared.resetSavedFolderViewTypes() }
+                Button("Reset Saved Folder Icon Sizes") { AppSettings.shared.resetSavedFolderIconSizes() }
+            }
             Section("Shortcuts") {
                 Toggle("Return opens the selection (Finder: Return renames)", isOn: $returnOpens)
                     .onChange(of: returnOpens) { AppSettings.shared.returnOpens = returnOpens }
@@ -103,9 +137,15 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refreshPermissions() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: AppSettings.viewPreferencesDidChange)) { _ in
+            // Browser commands can change defaults while Settings stays open.
+            viewTypeScope = AppSettings.shared.viewTypeScope
+            iconSizeScope = AppSettings.shared.iconSizeScope
+            defaultViewMode = AppSettings.shared.defaultViewMode
+            defaultIconSize = AppSettings.shared.defaultIconSize
+        }
         .formStyle(.grouped)
-        .frame(width: 460)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var fullDiskAccessText: String {

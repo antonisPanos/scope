@@ -59,7 +59,8 @@ enum Commands {
         Command(
             id: "view." + mode.rawValue, title: "as \(mode.title)", menu: .view, key: mode.shortcut,
             modifiers: .command,
-            run: { $0.model.viewMode = mode }, isChecked: { $0.model.viewMode == mode })
+            run: { $0.model.setViewMode(mode) }, isEnabled: { $0.model.viewPreferencesReady },
+            isChecked: { $0.model.viewMode == mode })
     }
 
     static func command(id: String) -> Command? {
@@ -153,12 +154,18 @@ enum Commands {
 
     private static let view: [Command] = [
         Command(
+            id: "defaultFolderView", title: "Use Default View Type for This Folder", menu: .view, key: "",
+            modifiers: [],
+            run: { $0.model.useDefaultViewType() }, isEnabled: { $0.model.canUseDefaultViewType }, startsGroup: true),
+        Command(
             id: "biggerIcons", title: "Make Icons Bigger", menu: .view, key: "=", modifiers: .command,
-            run: { _ in AppSettings.shared.iconSize *= 1.25 }, isEnabled: { $0.model.viewMode == .icons },
+            run: { $0.model.setIconSize($0.model.iconSize * 1.25) },
+            isEnabled: { $0.model.viewMode == .icons && $0.model.viewPreferencesReady },
             startsGroup: true),
         Command(
             id: "smallerIcons", title: "Make Icons Smaller", menu: .view, key: "-", modifiers: .command,
-            run: { _ in AppSettings.shared.iconSize /= 1.25 }, isEnabled: { $0.model.viewMode == .icons }),
+            run: { $0.model.setIconSize($0.model.iconSize / 1.25) },
+            isEnabled: { $0.model.viewMode == .icons && $0.model.viewPreferencesReady }),
         Command(
             id: "quickLook", title: "Quick Look", menu: .view, key: "y", modifiers: .command,
             run: { $0.toggleQuickLook() }, isEnabled: { !$0.selectedItems.isEmpty }, startsGroup: true),
