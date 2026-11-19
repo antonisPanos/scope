@@ -48,6 +48,17 @@ the DMG is the installer.
 
 ## Build locally
 
+Install Python 3.12 and the locked packaging tools once before building:
+
+```sh
+SCOPE_DMG_PYTHON=python3.12 bash scripts/dmg/setup.sh
+```
+
+The installer uses `build/dmg-venv`; it never installs packages into the system
+Python. Dependencies and hashes are locked in `scripts/dmg/requirements.txt`.
+Repeat setup after that file changes. CI installs Python and these tools before
+importing signing credentials. Python 3.9 bundled with Xcode is too old.
+
 `make dmg` builds a DMG for whatever is checked out, without uploading. Use it to try
 the packaging. Builds that aren't on a tag are named `Scope-X.Y.Z-<commit>.dmg`.
 
@@ -71,6 +82,76 @@ The script stamps `CFBundleVersion` with `git rev-list --count HEAD`, the commit
 count of the checked-out source. For tagged releases this is the count through
 that tag on `main`; use a full-history checkout. Ordinary local builds retain the
 xcconfig build number (`1`).
+
+## Installer artwork and layout
+
+The installer has a fixed warm-white background, Scope's monochrome production
+icon, a teal arrow, and native Finder labels. Its content area is 640 × 400 logical
+points; icons are 112 points at (175, 210) and (465, 210). It opens in icon view
+with manual placement and without Finder's toolbar, sidebar or status bar.
+
+`scripts/dmg/settings.py` owns the layout. The checked-in `background.png` and
+`background@2x.png` are 640 × 400 and 1280 × 800 pixels, each describing the same
+logical canvas. Regenerate them with the installed Xcode toolchain:
+
+```sh
+swift scripts/dmg/make-background.swift scripts/dmg
+```
+
+Inspect both PNGs after regeneration. They use native system fonts and explicit
+light palette colors; the picture does not switch with system appearance. App
+icons and their labels remain real Finder items, rather than part of the picture.
+The production app's `AppIcon.icns` also supplies the mounted volume icon.
+
+The locked `dmgbuild` tool generates `.DS_Store`, a hidden multi-resolution
+`.background.tiff` and its volume alias, and `.VolumeIcon.icns` with the custom
+volume-icon flag. It uses native disk tools and Python metadata writers, without
+AppleScript, Finder, a graphical login, or automation permissions. The image
+remains HFS+ / UDZO. Do not hand-copy a `.DS_Store` from a development machine.
+
+To iterate without rebuilding, package an already signed production app to a
+fresh output path (the helper refuses to replace an existing image):
+
+```sh
+build/dmg-venv/bin/python3 scripts/dmg/package.py \
+  build/ReleaseDerivedData/Build/Products/Release/Scope.app \
+  'Scope Installer Preview' build/installer-preview.dmg
+```
+
+Packaging verifies the source signature, creates the image, and mounts it
+read-only at a fresh temporary location. It checks the copied app/XPC signatures
+and entitlements, exact Applications symlink, app version, hidden artwork and its
+two resolutions, volume icon and Finder flags, window settings, icon positions,
+and background alias. Only a verified image is published to the requested path.
+The app's extension follows Finder preferences: setting a FinderInfo attribute
+on the signed app to force a hidden extension would invalidate strict verification.
+No app is launched and nothing is copied to the real `/Applications`.
+
+The release order is: sign/verify app and XPC → package and verify mounted contents
+→ sign DMG → notarize → staple → verify final mounted contents, signatures,
+Gatekeeper and image integrity → checksum → publish. Never edit layout metadata
+or recompress after signing. Ad-hoc local builds skip distribution signing and
+notarization, while retaining mounted-content verification.
+
+For visual QA, open a freshly built image in Finder on macOS 27.2 and the latest
+supported macOS. Check light and dark appearance at 1× and 2× scaling: readable
+native labels, sharp text, alignment, hidden support files, no scrolling or
+clipping, and correct layout after ejecting and reopening. Finder preferences and
+cached volume icons can hide defects; use a fresh image or disposable account.
+Test dragging to Applications and first launch only in a disposable macOS account
+or VM. A background preview or metadata check is not a native Finder screenshot.
+
+The Installer QA workflow builds and packages ad-hoc without Apple credentials
+or launching Scope, checks failure handling, and keeps a downloadable preview.
+If disk attachment hangs locally, look for a macOS authorization dialog; do not
+kill system processes. Helpers detach their own images and never unrelated disks.
+
+To update the dependency lock, regenerate and review it, then run Installer QA:
+
+```sh
+uv pip compile scripts/dmg/requirements.in --python-version 3.12 \
+  --generate-hashes --only-binary :all: -o scripts/dmg/requirements.txt
+```
 
 ## Signing modes
 

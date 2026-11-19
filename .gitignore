@@ -4,5 +4,6 @@ DerivedData/
 build/
 .build/
 .swiftpm/
+__pycache__/
 *.xcuserstate
 Config/Local.xcconfig
