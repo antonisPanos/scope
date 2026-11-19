@@ -42,6 +42,24 @@ show/hide columns, and drag headers to reorder or resize them. Size the Icons gr
 with the status-bar slider, `Cmd+=` / `Cmd+-`, or a pinch. The thumbnail memory cache
 is capped at 64 MB; Scope keeps no thumbnail disk cache.
 
+In **Settings > Folder Views**, choose **Global** or **Per folder** separately for
+view type and icon size. Both start as Global. Global adjustments become the
+default; Per folder adjustments save an explicit preference for that folder.
+Folders without a saved preference use the defaults in Settings. Other open tabs
+keep their display until they navigate, reopen, or reload the folder.
+
+**View > Use Default View Type for This Folder** removes the folder's view-type
+preference. In Per folder mode, the icon-size reset button uses the default icon
+size; in Global mode, it resets to 64 points. Settings can clear all saved view
+types or icon sizes independently, without changing the defaults. Switching back
+to Global retains saved folder preferences for later use.
+
+Columns remembers the root shown in the path bar, rather than each expanded
+child column. Saved preferences follow same-volume folder renames and moves;
+copies and cross-volume moves start fresh. On volumes without persistent folder
+identities, and in Recents, Tags or Search, Per folder adjustments last only in
+the current view. Icon size affects only Icons, not the other four views.
+
 Finder color tags appear on folder icons and thumbnails in Icons/Gallery, and
 beside filenames in the other views. Context-menu tag controls apply/remove tags
 on the selection. Changes refresh without losing selection or open columns.

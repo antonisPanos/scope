@@ -29,11 +29,15 @@ final class BrowserModel {
         /// A watcher reported a disk change, including tags and xattrs that
         /// do not change the lightweight FileItem value.
         static let metadata = Change(rawValue: 1 << 7)
+        static let iconSize = Change(rawValue: 1 << 8)
+        static let viewPreferences = Change(rawValue: 1 << 9)
         /// Either kind of items change.
         static let anyItems: Change = [.items, .itemsUpdated]
     }
 
     let engine: FileEngine
+    let settings: AppSettings
+    private let identityResolver: @MainActor (URL) async -> FolderPreferenceIdentity?
     let readAccess: ReadAccessCache
     /// Changes operations make, as they make them; nil in a tab that doesn't follow them.
     let announcements: OperationAnnouncements?
@@ -52,19 +56,18 @@ final class BrowserModel {
     /// How `items` changed, set only while `.itemsUpdated` is announced.
     private(set) var rowChanges: FolderListing.RowChanges?
 
-    var viewMode: ViewMode {
-        didSet {
-            guard viewMode != oldValue else { return }
-            AppSettings.shared.lastViewMode = viewMode
-            onChange?(.viewMode)
-        }
-    }
+    private(set) var viewMode: ViewMode
+    private(set) var iconSize: Double
+    private(set) var folderIdentity: FolderPreferenceIdentity?
+    private(set) var viewPreferencesReady = false
+    private var preferencesTask: Task<Void, Never>?
+    private var viewPreferencesObserver: NSObjectProtocol?
 
     var sort: FileSort {
         didSet {
             guard sort != oldValue else { return }
             sortRevision += 1
-            AppSettings.shared.lastSort = sort
+            settings.lastSort = sort
             Task { await applyFilterAndSort() }
             onChange?(.sort)
         }
@@ -98,15 +101,22 @@ final class BrowserModel {
 
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "Browser")
 
-    init(engine: FileEngine, location: Location, announcements: OperationAnnouncements? = nil) {
+    init(
+        engine: FileEngine, location: Location, announcements: OperationAnnouncements? = nil,
+        settings: AppSettings = .shared,
+        identityResolver: (@MainActor (URL) async -> FolderPreferenceIdentity?)? = nil
+    ) {
         self.engine = engine
+        self.settings = settings
+        self.identityResolver = identityResolver ?? { await engine.folderPreferenceIdentity(at: $0) }
         self.readAccess = ReadAccessCache(engine: engine)
         self.announcements = announcements
         self.location = location
-        self.viewMode = AppSettings.shared.lastViewMode
-        self.sort = AppSettings.shared.lastSort
+        self.viewMode = settings.defaultViewMode
+        self.iconSize = settings.defaultIconSize
+        self.sort = settings.lastSort
         settingsObserver = NotificationCenter.default.addObserver(
-            forName: AppSettings.didChange, object: nil, queue: .main
+            forName: AppSettings.didChange, object: settings, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -114,12 +124,20 @@ final class BrowserModel {
                 Task { await self.applyFilterAndSort() }
             }
         }
+        viewPreferencesObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.viewPreferencesDidChange, object: settings, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onChange?(.viewPreferences) }
+        }
         readAccess.onChange = { [weak self] in self?.onChange?(.status) }
         load()
     }
 
     /// Stops watching and querying; call when the tab closes so it releases everything it held.
     func close() {
+        generation += 1
+        preferencesTask?.cancel()
+        preferencesTask = nil
         sortRevision += 1
         readAccess.close()
         loadTask?.cancel()
@@ -128,6 +146,8 @@ final class BrowserModel {
         spotlight = nil
         if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
         settingsObserver = nil
+        if let viewPreferencesObserver { NotificationCenter.default.removeObserver(viewPreferencesObserver) }
+        viewPreferencesObserver = nil
     }
 
     // MARK: - Navigation
@@ -144,7 +164,7 @@ final class BrowserModel {
     func navigate(to destination: Location, select: URL? = nil) {
         pendingSelection = select.map { [$0] } ?? []
         guard destination != location else {
-            if select != nil { onChange?(.items) }
+            load()
             return
         }
         backStack.append(location)
@@ -157,8 +177,9 @@ final class BrowserModel {
     /// being refined keystroke by keystroke shouldn't fill the Back list.
     func replace(with destination: Location) {
         guard destination != location else { return }
+        let refiningSearch = location.isSearch && destination.isSearch && location.searchRoot == destination.searchRoot
         location = destination
-        load()
+        load(preservingViewPreferences: refiningSearch)
     }
 
     func goBack() {
@@ -186,9 +207,8 @@ final class BrowserModel {
     func reload() {
         if case .folder = location, let folder = subscription?.folder {
             FolderStore.shared.reload(folder)
-        } else {
-            load()
         }
+        load()
     }
 
     // MARK: - Loading
@@ -197,10 +217,14 @@ final class BrowserModel {
     /// changes whose lightweight FileItem snapshot stayed equal.
     func metadataDidChange() { onChange?(.metadata) }
 
-    private func load() {
+    private func load(preservingViewPreferences: Bool = false) {
         generation += 1
         let generation = generation
         loadTask?.cancel()
+        preferencesTask?.cancel()
+        folderIdentity = nil
+        viewPreferencesReady = location.folderURL == nil
+        if viewPreferencesReady, !preservingViewPreferences { restoreViewPreferences() }
         unsubscribe()
         spotlight?.stop()
         spotlight = nil
@@ -213,11 +237,21 @@ final class BrowserModel {
         allItemsVersion = nil
         items = []
         availableCapacity = nil
-        onChange?([.location, .items, .state, .status])
+        onChange?([.location, .items, .state, .status, .viewMode, .iconSize, .viewPreferences])
+        guard generation == self.generation else { return }
 
         switch location {
         case .folder(let url):
-            openFolder(url, generation: generation)
+            preferencesTask = Task { [weak self, identityResolver] in
+                let identity = await identityResolver(url)
+                guard let self, generation == self.generation, !Task.isCancelled else { return }
+                self.folderIdentity = identity
+                self.restoreViewPreferences()
+                self.viewPreferencesReady = true
+                self.onChange?([.viewMode, .iconSize, .viewPreferences])
+                guard generation == self.generation else { return }
+                self.openFolder(url, generation: generation)
+            }
         case .recents:
             spotlight = SpotlightQuery.recents { [weak self] urls in self?.loadItems(at: urls, generation: generation) }
         case .tag(let tag):
@@ -250,7 +284,7 @@ final class BrowserModel {
         }
         self.subscription = subscription
         let folder = subscription.folder
-        if folder.isLoaded, let sorted = folder.sorted(by: sort, showHidden: AppSettings.shared.showHiddenFiles) {
+        if folder.isLoaded, let sorted = folder.sorted(by: sort, showHidden: settings.showHiddenFiles) {
             // Already sorted this way by another tab or an earlier visit: no wait at all.
             takeItems(of: folder)
             items = sorted
@@ -437,7 +471,7 @@ final class BrowserModel {
         let source = allItems
         let sort = sort
         // Search results already follow the query's own hidden-files switch.
-        let showHidden = AppSettings.shared.showHiddenFiles || location.isSearch
+        let showHidden = settings.showHiddenFiles || location.isSearch
         let generation = generation
         let old = items
         // A folder's items another tab (or an earlier visit) already sorted this way.
@@ -476,5 +510,75 @@ final class BrowserModel {
             return violation.description
         }
         return error.localizedDescription
+    }
+}
+
+/// Display snapshots are local to a tab. Only explicit user actions save
+/// preferences; restoration and settings notifications never write them back.
+extension BrowserModel {
+    var usesFolderIconSize: Bool { settings.iconSizeScope == .perFolder }
+
+    var canUseDefaultViewType: Bool {
+        viewPreferencesReady && location.folderURL != nil && settings.viewTypeScope == .perFolder
+    }
+
+    var canResetIconSize: Bool {
+        if usesFolderIconSize {
+            return iconSize != settings.defaultIconSize
+                || folderIdentity.map { settings.preferences(for: $0).iconSize != nil } == true
+        }
+        return iconSize != AppSettings.factoryIconSize
+    }
+
+    func setViewMode(_ mode: ViewMode) {
+        guard viewPreferencesReady else { return }
+        if settings.viewTypeScope == .global {
+            settings.defaultViewMode = mode
+        } else if let folderIdentity {
+            settings.setViewMode(mode, for: folderIdentity)
+        }
+        viewMode = mode
+        onChange?(.viewMode)
+    }
+
+    func setIconSize(_ size: Double) {
+        guard viewPreferencesReady else { return }
+        let size = AppSettings.validIconSize(size)
+        if settings.iconSizeScope == .global {
+            settings.defaultIconSize = size
+        } else if let folderIdentity {
+            settings.setIconSize(size, for: folderIdentity)
+        }
+        iconSize = size
+        onChange?(.iconSize)
+    }
+
+    func useDefaultViewType() {
+        guard canUseDefaultViewType else { return }
+        if let folderIdentity { settings.setViewMode(nil, for: folderIdentity) }
+        viewMode = settings.defaultViewMode
+        onChange?(.viewMode)
+    }
+
+    func resetIconSize() {
+        guard viewPreferencesReady else { return }
+        if usesFolderIconSize {
+            if let folderIdentity { settings.setIconSize(nil, for: folderIdentity) }
+            iconSize = settings.defaultIconSize
+            onChange?(.iconSize)
+        } else {
+            setIconSize(AppSettings.factoryIconSize)
+        }
+    }
+
+    /// Read after identity lookup so a settings change during an await wins.
+    func restoreViewPreferences() {
+        let saved = folderIdentity.map { settings.preferences(for: $0) }
+        viewMode =
+            settings.viewTypeScope == .perFolder
+            ? saved?.viewMode ?? settings.defaultViewMode : settings.defaultViewMode
+        iconSize =
+            settings.iconSizeScope == .perFolder
+            ? saved?.iconSize ?? settings.defaultIconSize : settings.defaultIconSize
     }
 }

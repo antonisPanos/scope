@@ -176,7 +176,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             window?.subtitle = ""
             sidebarSelection.selectedID = SidebarStore.shared.item(for: model.location)?.id
         }
-        if change.contains(.viewMode) || change.contains(.location) { updateToolbar() }
+        if !change.isDisjoint(with: [.viewMode, .location, .viewPreferences]) { updateToolbar() }
     }
 
     func focusFileList() {

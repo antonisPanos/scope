@@ -17,7 +17,7 @@ final class TestVolume {
     private let folder: URL
     /// The image's whole disk (/dev/diskN). Detaching by it also works after
     /// a test force-ejected the volume, which leaves the disk attached.
-    private let device: String?
+    private var device: String?
 
     init(name: String = "ScopeOps", sizeMB: Int = 512, fileSystem: String = "APFS") throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("ScopeVolume-" + UUID().uuidString)
@@ -52,6 +52,14 @@ final class TestVolume {
     /// Force-detaches the volume mid-test, as pulling the disk out would.
     func detach() throws {
         try Self.run("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force", "-quiet"])
+    }
+
+    /// Reattach the same image at the same mount point, with a fresh device ID.
+    func remount() throws {
+        try detach()
+        let attached = try Self.output(
+            "/usr/bin/hdiutil", ["attach", image.path, "-nobrowse", "-mountpoint", mountPoint.path, "-plist"])
+        device = Self.wholeDisk(fromAttachPlist: attached)
     }
 
     @discardableResult

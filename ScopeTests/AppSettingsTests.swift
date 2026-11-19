@@ -18,8 +18,8 @@ import Testing
     @Test func startsFromTheDefaults() throws {
         try withSettings { settings in
             #expect(!settings.showHiddenFiles)
-            #expect(settings.lastViewMode == .details)
-            #expect(settings.iconSize == 64)
+            #expect(settings.defaultViewMode == .details)
+            #expect(settings.defaultIconSize == 64)
             #expect(settings.favoritePaths.isEmpty)
         }
     }
@@ -28,11 +28,11 @@ import Testing
         let before = UserDefaults.standard.dictionaryRepresentation()["favoritePaths"] as? [String]
         try withSettings { settings in
             settings.favoritePaths = ["/Volumes/ScopeTest/a"]
-            settings.iconSize = 1000
-            settings.lastViewMode = .icons
+            settings.defaultIconSize = 1000
+            settings.defaultViewMode = .icons
             #expect(settings.favoritePaths == ["/Volumes/ScopeTest/a"])
-            #expect(settings.iconSize == AppSettings.iconSizes.upperBound)
-            #expect(settings.lastViewMode == .icons)
+            #expect(settings.defaultIconSize == AppSettings.iconSizes.upperBound)
+            #expect(settings.defaultViewMode == .icons)
         }
         #expect(UserDefaults.standard.dictionaryRepresentation()["favoritePaths"] as? [String] == before)
     }

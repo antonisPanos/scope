@@ -39,6 +39,15 @@ intentional documentation images remain in Git.
 | [folder-info-counting.png](folder-info-counting.png) | Scope Dev, provisional size, allocated size and item totals |
 | [folder-info-incomplete.png](folder-info-incomplete.png) | Scope Dev, completed partial totals with an unreadable descendant |
 | [folder-info-error.png](folder-info-error.png) | Scope Dev, an unreadable root reported as an error |
+| [folder-view-settings.png](folder-view-settings.png) | Scope Dev, independent folder-memory choices and global defaults |
+
+## Folder view settings capture (19 November 2026)
+
+`folder-view-settings.png` is an unedited native Scope Dev Settings window
+capture on macOS 27.2.1 with Xcode 27.2. It shows only preferences, with no
+personal paths or files. A temporary development hook opened and captured the
+Settings window; the hook was removed before the final build. The smaller-window
+layout is also rendered by the app tests.
 
 ## Folder Info captures (19 November 2026)
 

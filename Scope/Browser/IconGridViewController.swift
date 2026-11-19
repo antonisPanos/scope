@@ -83,8 +83,8 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         collectionView.setDraggingSourceOperationMask([.copy, .generic], forLocal: false)
         collectionView.onRightClick = { [weak self] point in self?.selectItem(at: point) }
         collectionView.onMagnify = { [weak self] factor in
-            guard self?.style == .grid else { return }
-            AppSettings.shared.iconSize *= factor
+            guard let self, self.style == .grid else { return }
+            self.model.setIconSize(self.model.iconSize * factor)
         }
 
         scrollView.documentView = collectionView
@@ -98,13 +98,6 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
         view = scrollView
 
         let center = NotificationCenter.default
-        observers.append(
-            center.addObserver(forName: AppSettings.iconSizeDidChange, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.style == .grid else { return }
-                    self.applySize()
-                }
-            })
         if style != .list {
             observers.append(
                 center.addObserver(forName: ThumbnailCache.didLoad, object: nil, queue: .main) { [weak self] note in
@@ -140,6 +133,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     // MARK: - FileBrowsingView
 
     func modelDidChange(_ change: BrowserModel.Change) {
+        if change.contains(.iconSize), style == .grid { applySize() }
         if change.contains(.location), style == .list {
             scrollView.contentView.scroll(to: .zero)
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -266,7 +260,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
 
     var iconSize: CGFloat {
         switch style {
-        case .grid: CGFloat(AppSettings.shared.iconSize)
+        case .grid: CGFloat(model.iconSize)
         case .strip: 56
         case .list: 16
         }
