@@ -3,6 +3,20 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.8.0](https://github.com/antonisPanos/scope/compare/v0.7.0...v0.8.0) (2026-11-19)
+
+
+### Features
+
+* **browser:** fade pending cut items ([#191](https://github.com/antonisPanos/scope/issues/191)) ([342825b](https://github.com/antonisPanos/scope/commit/342825b3b336322c2b35d37c7d945e2be59a4882))
+* **browser:** remember folder views and icon sizes ([#195](https://github.com/antonisPanos/scope/issues/195)) ([160067c](https://github.com/antonisPanos/scope/commit/160067cf337249efd7412200e983d3d5760ce052))
+* **release:** style the drag-to-install dmg ([#194](https://github.com/antonisPanos/scope/issues/194)) ([b34eb85](https://github.com/antonisPanos/scope/commit/b34eb8530410a644e06c8fd7b69ce78896edd980))
+
+
+### Bug fixes
+
+* **preview:** report folder count failures and cancel reliably ([#193](https://github.com/antonisPanos/scope/issues/193)) ([872b982](https://github.com/antonisPanos/scope/commit/872b982d4d3bf7acdaef343e83173d60a889cc54))
+
 ## [0.7.0](https://github.com/antonisPanos/scope/compare/v0.6.0...v0.7.0) (2026-11-13)
 
 
