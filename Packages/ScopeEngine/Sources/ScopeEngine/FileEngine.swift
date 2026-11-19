@@ -68,6 +68,9 @@ public struct FileEngine: Sendable {
     /// Internal deterministic seams. Defaults leave production behavior unchanged.
     var copyTestOptions = CopyTestOptions()
 
+    /// Tests only: observe, pause or fail a folder-count metadata read.
+    var folderSizeEntryWillRead: (@Sendable (URL) throws -> Void)?
+
     static var boundedTestProcess: Bool {
         ProcessInfo.processInfo.environment["SCOPE_BOUNDED_ROOT"] != nil
     }
