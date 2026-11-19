@@ -2,6 +2,7 @@ import AppKit
 import Observation
 import ScopeEngine
 import SwiftUI
+import Synchronization
 
 /// Get Info (Cmd+I or the right-click menu): everything Scope knows about one
 /// item in its own small window. A folder's size is added up when the window
@@ -53,11 +54,36 @@ final class InfoWindowController: NSWindowController, NSWindowDelegate {
 final class InfoModel {
     typealias FolderCounter = @Sendable (URL, @escaping @Sendable (FolderSize) -> Void) async throws -> FolderSize
 
+    enum CountState: Equatable {
+        case idle
+        case counting(FolderSize?)
+        case completed(FolderSize)
+        case failed(String, partial: FolderSize?)
+        case cancelled(FolderSize?)
+    }
+
     let item: FileItem
     let engine: FileEngine
     var details: ItemDetails?
-    var folderSize: FolderSize?
-    var isCounting = false
+    private(set) var countState: CountState = .idle
+    var folderSize: FolderSize? {
+        switch countState {
+        case .idle: nil
+        case .counting(let partial), .failed(_, let partial), .cancelled(let partial): partial
+        case .completed(let size): size
+        }
+    }
+    var isCounting: Bool {
+        if case .counting = countState { return true }
+        return false
+    }
+    var countMessage: String? {
+        switch countState {
+        case .completed(let size) where size.isIncomplete: "Incomplete — some items couldn’t be read."
+        case .failed(let message, _): "Couldn’t calculate size.\n\(message)"
+        default: nil
+        }
+    }
     var copied: String?
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var generation = 0
@@ -74,31 +100,43 @@ final class InfoModel {
 
     func load() {
         cancel()
+        countState = .idle
+        details = nil
         let generation = generation
         let engine = engine
         let url = item.url
         tasks.append(
             Task { [weak self] in
                 guard self?.generation == generation, !Task.isCancelled else { return }
-                let details = try? await engine.details(for: url)
+                let details = try? await engine.details(for: url, includeFolderItemCount: false)
                 guard let self, self.generation == generation, !Task.isCancelled else { return }
                 self.details = details
             })
         guard item.isBrowsableFolder || item.isPackage else { return }
-        isCounting = true
+        countState = .counting(nil)
         let countFolder = countFolder
+        let latest = Mutex<FolderSize?>(nil)
         tasks.append(
             Task { [weak self] in
                 guard self?.generation == generation, !Task.isCancelled else { return }
-                let result = try? await countFolder(url) { partial in
-                    Task { @MainActor in
-                        guard let self, self.generation == generation else { return }
-                        self.folderSize = partial
+                do {
+                    let result = try await countFolder(url) { partial in
+                        latest.withLock { $0 = partial }
+                        Task { @MainActor in
+                            guard let self, self.generation == generation, self.isCounting else { return }
+                            self.countState = .counting(partial)
+                        }
                     }
+                    try Task.checkCancellation()
+                    guard let self, self.generation == generation else { return }
+                    self.countState = .completed(result)
+                } catch {
+                    guard let self, self.generation == generation else { return }
+                    let partial = latest.withLock { $0 }
+                    self.countState =
+                        error is CancellationError || Task.isCancelled
+                        ? .cancelled(partial) : .failed(error.localizedDescription, partial: partial)
                 }
-                guard let self, self.generation == generation, !Task.isCancelled else { return }
-                if let result { self.folderSize = result }
-                self.isCounting = false
             })
     }
 
@@ -106,7 +144,7 @@ final class InfoModel {
         generation += 1
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
-        isCounting = false
+        countState = .cancelled(folderSize)
     }
 
     func copy(_ value: String) {
@@ -133,6 +171,9 @@ struct InfoView: View {
                         Text(model.item.name).font(.headline).textSelection(.enabled).lineLimit(2)
                         Text(model.item.kind).foregroundStyle(.secondary)
                     }
+                }
+                if let message = model.countMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 section("General", rows: generalRows)
                 if !moreRows.isEmpty { section("More", rows: moreRows) }
@@ -163,17 +204,24 @@ struct InfoView: View {
         }
     }
 
-    private var generalRows: [(String, String)] {
+    var generalRows: [(String, String)] {
         let item = model.item
         var rows: [(String, String)] = []
         if item.isBrowsableFolder || item.isPackage {
             if let size = model.folderSize {
-                let text = PreviewPaneController.sizeText(size.bytes)
-                rows.append(("Size", model.isCounting ? "\(text) so far…" : text))
-                rows.append(("On disk", PreviewPaneController.sizeText(size.allocatedBytes)))
-                rows.append(("Contains", "\(size.items.formatted()) items\(model.isCounting ? " so far" : "")"))
+                let suffix = model.isCounting ? " so far…" : sizeIsPartial ? " (partial)" : ""
+                rows.append(("Size", PreviewPaneController.sizeText(size.bytes) + suffix))
+                rows.append(("On disk", PreviewPaneController.sizeText(size.allocatedBytes) + suffix))
+                rows.append(("Contains", "\(size.items.formatted()) items" + suffix))
             } else {
-                rows.append(("Size", "Calculating…"))
+                let text: String
+                switch model.countState {
+                case .counting: text = "Calculating…"
+                case .failed: text = "Couldn’t calculate size"
+                case .cancelled: text = "Cancelled"
+                default: text = "—"
+                }
+                rows.append(("Size", text))
             }
         } else if let size = item.size {
             rows.append(("Size", PreviewPaneController.sizeText(size)))
@@ -187,6 +235,14 @@ struct InfoView: View {
         if let added = item.added { rows.append(("Added", DateText.format(added))) }
         if let tags = model.details?.tags, !tags.isEmpty { rows.append(("Tags", tags.joined(separator: ", "))) }
         return rows
+    }
+
+    private var sizeIsPartial: Bool {
+        switch model.countState {
+        case .completed(let size): size.isIncomplete
+        case .failed, .cancelled: true
+        default: false
+        }
     }
 
     private var moreRows: [(String, String)] {

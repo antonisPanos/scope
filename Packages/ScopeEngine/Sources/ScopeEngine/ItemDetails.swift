@@ -32,14 +32,17 @@ public struct FolderSize: Sendable, Equatable {
     public var allocatedBytes: Int64 = 0
     /// Files and folders inside, at any depth.
     public var items = 0
+    /// Some descendants or required size metadata could not be read.
+    public var isIncomplete = false
 }
 
 extension FileEngine {
     /// Reads what the preview pane shows for one item. Images are read for
     /// their dimensions and camera data, audio and video for their length,
-    /// folders for how many items they hold.
-    public func details(for url: URL) async throws -> ItemDetails {
+    /// folders optionally for how many items they hold.
+    public func details(for url: URL, includeFolderItemCount: Bool = true) async throws -> ItemDetails {
         return try await onIOThreads {
+            try Task.checkCancellation()
             let location = try pathGuard.checkLocation(url)
             let item = try FileItem(url: location)
             var details = ItemDetails(item: item)
@@ -65,9 +68,13 @@ extension FileEngine {
             }
 
             if item.isBrowsableFolder && !item.isSymbolicLink {
-                details.folderItemCount =
-                    (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
-                    .filter { !$0.hasPrefix(".") }.count
+                if includeFolderItemCount {
+                    try Task.checkCancellation()
+                    details.folderItemCount =
+                        (try? FileManager.default.contentsOfDirectory(atPath: location.path))?
+                        .filter { !$0.hasPrefix(".") }.count
+                }
+                try Task.checkCancellation()
                 return details
             }
             guard !item.isSymbolicLink, !item.isAlias else { return details }
@@ -103,34 +110,84 @@ extension FileEngine {
     }
 
     /// Adds up a folder's contents on demand, without following symlinks.
-    /// Reports running totals as it goes; cancelling stops it at once.
+    /// Reports running totals, including incomplete results for unreadable descendants.
+    /// Cancellation is checked between I/O calls; a blocked filesystem call must return first.
     public func folderSize(of url: URL, progress: (@Sendable (FolderSize) -> Void)? = nil) async throws -> FolderSize {
         return try await onIOThreads {
-            let folder = try pathGuard.checkTarget(url)
+            let folder = try readableCountRoot(url)
             let keys: [URLResourceKey] = [
                 .fileSizeKey, .totalFileAllocatedSizeKey, .isDirectoryKey, .isSymbolicLinkKey,
             ]
+            let keySet = Set(keys)
+            var total = FolderSize()
+            var rootError: Error?
             guard
                 let enumerator = FileManager.default.enumerator(
                     at: folder, includingPropertiesForKeys: keys, options: [],
-                    errorHandler: { _, _ in true })
-            else { return FolderSize() }
-            var total = FolderSize()
-            while let next = enumerator.nextObject() as? URL {
+                    errorHandler: { failedURL, error in
+                        if failedURL.path == folder.path { rootError = error }
+                        total.isIncomplete = true
+                        return rootError == nil && !Task.isCancelled
+                    })
+            else { throw CocoaError(.fileReadUnknown, userInfo: [NSFilePathErrorKey: folder.path]) }
+            while true {
+                try Task.checkCancellation()
+                guard let next = enumerator.nextObject() as? URL else { break }
+                try Task.checkCancellation()
                 total.items += 1
-                if total.items % 500 == 0 {
+                do {
+                    let location = try pathGuard.checkLocation(next)
+                    try folderSizeEntryWillRead?(location)
+                    try Task.checkCancellation()
+                    // Keep the enumerator's prefetched metadata when canonicalization
+                    // did not change the URL, rather than reading every item twice.
+                    let resourceURL = location.path == next.path ? next : location
+                    let values = try resourceURL.resourceValues(forKeys: keySet)
+                    try Task.checkCancellation()
+                    if let isDirectory = values.isDirectory, let isLink = values.isSymbolicLink {
+                        if !isDirectory && !isLink {
+                            total.bytes += Int64(values.fileSize ?? 0)
+                            total.allocatedBytes += Int64(values.totalFileAllocatedSize ?? 0)
+                            if values.fileSize == nil || values.totalFileAllocatedSize == nil {
+                                total.isIncomplete = true
+                            }
+                        }
+                    } else {
+                        total.isIncomplete = true
+                    }
+                } catch {
+                    try Task.checkCancellation()
+                    if error is CancellationError { throw error }
+                    total.isIncomplete = true
+                    enumerator.skipDescendants()
+                }
+                if total.items.isMultiple(of: 500) {
                     try Task.checkCancellation()
                     progress?(total)
                 }
-                guard let values = try? next.resourceValues(forKeys: Set(keys)), values.isDirectory != true,
-                    values.isSymbolicLink != true
-                else { continue }
-                total.bytes += Int64(values.fileSize ?? 0)
-                total.allocatedBytes += Int64(values.totalFileAllocatedSize ?? 0)
             }
+            try Task.checkCancellation()
+            if let rootError { throw rootError }
+            // An enumerator may have cached its last entries before a volume
+            // disappeared. Don't publish a successful result for a lost root.
+            _ = try readableCountRoot(folder)
             progress?(total)
+            try Task.checkCancellation()
             return total
         }
+    }
+
+    private func readableCountRoot(_ url: URL) throws -> URL {
+        try Task.checkCancellation()
+        let folder = try pathGuard.checkTarget(url)
+        try Task.checkCancellation()
+        // Validate readability without materializing the immediate children.
+        guard let directory = opendir(folder.path) else {
+            throw FileEngineError.posix("Count folder", folder.path)
+        }
+        closedir(directory)
+        try Task.checkCancellation()
+        return folder
     }
 
     static func modeString(_ mode: mode_t) -> String {
