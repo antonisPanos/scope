@@ -21,6 +21,31 @@ check() {
 }
 
 check "$app"
+python3 - "$entitlements" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    actual = plistlib.load(source)
+expected = {"com.apple.security.app-sandbox": False}
+if actual != expected:
+    raise SystemExit(f"unexpected Scope app entitlements: {actual}")
+PY
+
+service="$app/Contents/XPCServices/ScopeArchiveService.xpc"
+[ -d "$service" ] || { echo "error: the embedded archive service is missing" >&2; exit 1; }
+check "$service"
+python3 - "$entitlements" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    actual = plistlib.load(source)
+expected = {"com.apple.security.app-sandbox": True}
+if actual != expected:
+    raise SystemExit(f"unexpected archive service entitlements: {actual}")
+PY
+
 # -print0 keeps bundle and executable names with spaces intact. Only Mach-O
 # code can carry a code-signing entitlement; resources are not executable.
 while IFS= read -r -d '' candidate; do

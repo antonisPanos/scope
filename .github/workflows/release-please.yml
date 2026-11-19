@@ -2,7 +2,7 @@ name: Release PR
 
 # Keeps a "chore(main): release X.Y.Z" PR open with the next version and
 # changelog, worked out from the conventional commits on main. Merging it
-# tags vX.Y.Z and creates the GitHub Release. Its outputs start the DMG
+# tags vX.Y.Z and creates a draft GitHub Release. Its outputs start the DMG
 # jobs here: releases created with GITHUB_TOKEN don't trigger other workflows.
 on:
   push:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing published tag to build/retry (for example v0.2.0); leave empty to update the release PR
+        description: Existing draft or published tag to build/retry (for example v0.7.0); leave empty to update the release PR
         required: false
         type: string
 
@@ -36,9 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a tag such as v0.2.0' >&2; exit 1; }
-          published="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName')"
-          [[ "$published" == "$TAG" ]] || { echo 'The release must already be published' >&2; exit 1; }
+          existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          [[ "$existing" == "$TAG" ]] || { echo 'The release must already exist' >&2; exit 1; }
           echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
           echo 'release_created=true' >> "$GITHUB_OUTPUT"
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -54,14 +53,18 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: xcode-27
-    timeout-minutes: 30
+    timeout-minutes: 90
+    environment: release-signing
     concurrency:
       group: release-dmg-${{ needs.release-please.outputs.tag_name }}
       cancel-in-progress: false
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       TAG: ${{ needs.release-please.outputs.tag_name }}
-      SCOPE_SIGNING_MODE: ad-hoc
+      SCOPE_SIGNING_MODE: developer-id
+      SCOPE_TEAM_ID: ${{ vars.SCOPE_TEAM_ID }}
+      SCOPE_NOTARY_KEY_ID: ${{ vars.SCOPE_NOTARY_KEY_ID }}
+      SCOPE_NOTARY_ISSUER_ID: ${{ vars.SCOPE_NOTARY_ISSUER_ID }}
     outputs:
       artifact_id: ${{ steps.artifact.outputs.artifact-id }}
       source_sha: ${{ steps.source.outputs.sha }}
@@ -83,15 +86,41 @@ jobs:
           xcodebuild -version
           sdk="$(xcrun --sdk macosx --show-sdk-version)"
           python3 -c 'import sys; assert tuple(map(int, sys.argv[1].split("."))) >= (27, 2), "macOS 27.2 SDK required"' "$sdk"
-      - name: Build and verify the ad-hoc signed app and DMG
+      - name: Import temporary signing credentials
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.SCOPE_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.SCOPE_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_BASE64: ${{ secrets.SCOPE_NOTARY_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ -n "$CERTIFICATE_BASE64" && -n "$CERTIFICATE_PASSWORD" && -n "$NOTARY_KEY_BASE64" ]]
+          [[ -n "$SCOPE_TEAM_ID" && -n "$SCOPE_NOTARY_KEY_ID" && -n "$SCOPE_NOTARY_ISSUER_ID" ]]
+          certificate="$RUNNER_TEMP/scope-developer-id.p12"
+          key="$RUNNER_TEMP/scope-notary-key.p8"
+          keychain="$RUNNER_TEMP/scope-signing.keychain-db"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 -D > "$certificate"
+          printf '%s' "$NOTARY_KEY_BASE64" | base64 -D > "$key"
+          keychain_password="$(openssl rand -hex 24)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          echo "SCOPE_NOTARY_KEY_PATH=$key" >> "$GITHUB_ENV"
+      - name: Build and verify the notarized DMG
         run: |
           set -euo pipefail
           scripts/release.sh
           app=build/ReleaseDerivedData/Build/Products/Release/Scope.app
           codesign --verify --deep --strict "$app"
-          codesign -dv "$app" 2>&1 | grep -qx 'Signature=adhoc'
           scripts/check-release-entitlements.sh "$app"
-          hdiutil verify "build/release/Scope-${TAG#v}.dmg"
+          dmg="build/release/Scope-${TAG#v}.dmg"
+          codesign --verify --strict "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose "$dmg"
+          hdiutil verify "$dmg"
           (cd build/release && shasum -a 256 -c "Scope-${TAG#v}.dmg.sha256")
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: artifact
@@ -102,6 +131,11 @@ jobs:
             build/release/Scope-*.dmg.sha256
           if-no-files-found: error
           retention-days: 7
+      - name: Remove temporary signing credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/scope-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/scope-developer-id.p12" "$RUNNER_TEMP/scope-notary-key.p8"
 
   publish-dmg:
     name: Attach DMG to release
@@ -129,27 +163,31 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" == "$SOURCE_SHA" ]]
-          published="$(gh release view "$TAG" --json tagName,isDraft --jq 'select(.isDraft == false) | .tagName')"
-          [[ "$published" == "$TAG" ]]
+          existing="$(gh release view "$TAG" --json tagName --jq .tagName)"
+          [[ "$existing" == "$TAG" ]]
           sha256sum --check --strict "Scope-${TAG#v}.dmg.sha256"
           gh release upload "$TAG" "Scope-${TAG#v}.dmg" "Scope-${TAG#v}.dmg.sha256" --clobber
-      - name: Add download and first-launch instructions
+      - name: Publish the verified release
         run: |
           set -euo pipefail
           notes="$RUNNER_TEMP/release-notes.md"
           gh release view "$TAG" --json body --jq .body > "$notes"
-          if ! grep -q '<!-- scope-dmg-install -->' "$notes"; then
-            cat >> "$notes" <<EOF
+          NOTES="$notes" python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["NOTES"])
+          body = path.read_text().split("<!-- scope-dmg-install -->", 1)[0].rstrip()
+          tag = os.environ["TAG"]
+          body += f"""
 
           <!-- scope-dmg-install -->
           ### Install Scope
 
-          Download **Scope-${TAG#v}.dmg**, open it, and drag **Scope** to **Applications**.
+          Download **Scope-{tag[1:]}.dmg**, open it, and drag **Scope** to **Applications**.
           Requires **macOS 27.2 or later**. The matching **.sha256** file verifies the download.
-
-          **Ad-hoc signed, not notarized:** this build has no Apple-verified publisher identity.
-          After macOS blocks the first launch, use **System Settings → Privacy & Security → Open Anyway** for Scope.
-          [Apple's instructions](https://support.apple.com/en-us/102445) explain this per-app approval.
-          EOF
-            gh release edit "$TAG" --notes-file "$notes"
-          fi
+          Scope is Developer ID signed and notarized by Apple.
+          """
+          path.write_text(body)
+          PY
+          gh release edit "$TAG" --notes-file "$notes" --draft=false

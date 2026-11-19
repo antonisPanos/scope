@@ -3,6 +3,8 @@
   "release-type": "simple",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
+  "draft": true,
+  "force-tag-creation": true,
   "bump-minor-pre-major": true,
   "bootstrap-sha": "0f713b0e406cb103476d3cbc8bf4df39cec12eeb",
   "changelog-sections": [
