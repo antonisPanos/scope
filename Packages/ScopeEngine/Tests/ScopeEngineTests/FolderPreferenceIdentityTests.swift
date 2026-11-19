@@ -57,11 +57,11 @@ import Testing
         #expect(await engine.folderPreferenceIdentity(at: first.url("folder")) == original)
         // Both the source and the destination are disposable volumes, including
         // the source Trash used by a cross-volume move.
-        try await engine.moveItem(at: first.url("folder"), to: second.url("moved"))
-        let moved = try #require(await engine.folderPreferenceIdentity(at: second.url("moved")))
+        try await OperationHarness(engine: engine).run(.move([first.url("folder")], into: second.work))
+        let moved = try #require(await engine.folderPreferenceIdentity(at: second.url("folder")))
         #expect(moved != original && moved.volumeUUID != original.volumeUUID)
         try second.detach()
-        #expect(await engine.folderPreferenceIdentity(at: second.url("moved")) == nil)
+        #expect(await engine.folderPreferenceIdentity(at: second.url("folder")) == nil)
     }
 
     @Test func volumesWithoutPersistentObjectIDsReturnNil() async throws {
