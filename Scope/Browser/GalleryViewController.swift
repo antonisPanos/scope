@@ -39,9 +39,10 @@ final class GalleryViewController: NSViewController, FileBrowsingView {
 
     func prepareForContextMenu() {}
 
-    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil, cutPasteboard: CutPasteboard = .shared) {
         self.model = model
-        self.strip = IconGridViewController(model: model, style: .strip, tagCache: tagCache)
+        self.strip = IconGridViewController(
+            model: model, style: .strip, tagCache: tagCache, cutPasteboard: cutPasteboard)
         super.init(nibName: nil, bundle: nil)
     }
 

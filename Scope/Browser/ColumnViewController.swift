@@ -21,19 +21,27 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
 
     private let browser = FileBrowser()
     private let root = ColumnNode(item: nil)
+    private var cutObserver: NSObjectProtocol?
+    private let cutPasteboard: CutPasteboard
     private let tagCache: FileTagCache
 
-    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil, cutPasteboard: CutPasteboard = .shared) {
         self.model = model
+        self.cutPasteboard = cutPasteboard
         self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
-        self.tagCache.onChange = { [weak self] url in self?.reloadTags(at: url) }
+        self.tagCache.onChange = { [weak self] url in self?.reloadLabels(at: url) }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    isolated deinit {
+        if let cutObserver { NotificationCenter.default.removeObserver(cutObserver) }
+    }
+
     override func loadView() {
+        browser.setCellClass(CutBrowserCell.self)
         browser.delegate = self
         browser.focusRingType = .none
         browser.target = self
@@ -52,6 +60,11 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         browser.autohidesScroller = true
         browser.onKey = { [weak self] event in self?.handleKey(event) ?? false }
         view = browser
+        cutObserver = NotificationCenter.default.addObserver(
+            forName: CutPasteboard.didChange, object: cutPasteboard, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadLabels() }
+        }
         reloadItems()
     }
 
@@ -66,17 +79,19 @@ final class ColumnViewController: NSViewController, FileBrowsingView {
         if !change.isDisjoint(with: [.anyItems, .sort]) {
             root.refreshNestedSettings(sort: model.sort, showHidden: AppSettings.shared.showHiddenFiles)
         }
-        if change.contains(.metadata) { reloadTags() }
+        if change.contains(.metadata) { reloadLabels() }
     }
 
     func close() {
+        if let cutObserver { NotificationCenter.default.removeObserver(cutObserver) }
+        cutObserver = nil
         tagCache.close()
         root.children = nil
     }
 
     /// Update row values without rebuilding the column tree or its selection.
     /// AppKit only requests new values for visible rows.
-    private func reloadTags(at url: URL? = nil) {
+    private func reloadLabels(at url: URL? = nil) {
         guard isViewLoaded else { return }
         for column in 0...max(0, browser.lastColumn) {
             guard let nodes = (browser.parentForItems(inColumn: column) as? ColumnNode)?.children else { continue }
@@ -297,6 +312,12 @@ extension ColumnViewController: NSBrowserDelegate {
         return text
     }
 
+    func browser(_ browser: NSBrowser, willDisplayCell cell: Any, atRow row: Int, column: Int) {
+        guard let cell = cell as? CutBrowserCell else { return }
+        let file = (browser.item(atRow: row, inColumn: column) as? ColumnNode)?.item
+        cell.isCut = file.map { cutPasteboard.contains($0.url) } ?? false
+    }
+
     func browser(_ browser: NSBrowser, shouldEditItem item: Any?) -> Bool {
         false
     }
@@ -309,5 +330,38 @@ final class FileBrowser: NSBrowser {
 
     override func keyDown(with event: NSEvent) {
         if onKey?(event) != true { super.keyDown(with: event) }
+    }
+}
+
+/// Keep the browser's selection background while fading its label and attachments.
+@MainActor
+final class CutBrowserCell: NSBrowserCell {
+    var isCut = false
+    private var drawingCutContent = false
+
+    override func highlightColor(in controlView: NSView) -> NSColor? {
+        drawingCutContent ? .clear : super.highlightColor(in: controlView)
+    }
+
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        guard isCut, let context = NSGraphicsContext.current?.cgContext else {
+            super.drawInterior(withFrame: cellFrame, in: controlView)
+            return
+        }
+        // NSBrowserCell draws its highlight inside drawInterior too. Draw it
+        // at full opacity before compositing the content as a group: text
+        // attachments can otherwise reset the graphics context's alpha.
+        if isHighlighted, let color = super.highlightColor(in: controlView) {
+            color.setFill()
+            cellFrame.fill()
+        }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        context.setAlpha(0.5)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        drawingCutContent = true
+        super.drawInterior(withFrame: cellFrame, in: controlView)
+        drawingCutContent = false
+        context.endTransparencyLayer()
     }
 }

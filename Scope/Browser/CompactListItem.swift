@@ -23,8 +23,8 @@ final class CompactListItem: NSCollectionViewItem {
         imageView = cell.imageView
     }
 
-    func show(_ file: FileItem, tags: [String]) {
-        cell.configure(with: file, tags: tags)
+    func show(_ file: FileItem, tags: [String], isCut: Bool = false) {
+        cell.configure(with: file, tags: tags, isCut: isCut)
         view.toolTip = file.name
         updateHighlight()
     }

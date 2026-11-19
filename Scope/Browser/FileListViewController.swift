@@ -53,6 +53,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     let outlineView = FileOutlineView()
     var roots: [FileNode] = []
     var nodesByURL: [URL: FileNode] = [:]
+    let cutPasteboard: CutPasteboard
     private let tagCache: FileTagCache
     /// Cached tags that may be out of date: still shown, but read again.
     var staleTags: Set<URL> { tagCache.staleURLs }
@@ -63,8 +64,9 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
-    init(model: BrowserModel, tagCache: FileTagCache? = nil) {
+    init(model: BrowserModel, tagCache: FileTagCache? = nil, cutPasteboard: CutPasteboard = .shared) {
         self.model = model
+        self.cutPasteboard = cutPasteboard
         self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
         super.init(nibName: nil, bundle: nil)
         self.tagCache.onChange = { [weak self] url in self?.tagsChanged(at: url) }
@@ -137,6 +139,10 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.reloadVisibleNames() }
             })
+        observers.append(
+            center.addObserver(forName: CutPasteboard.didChange, object: cutPasteboard, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshCutAppearance() }
+            })
         applyColumns()
         applySortIndicator()
         // When swapped in for another view, the model already has items.
@@ -146,6 +152,8 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     // MARK: - Updates from the model
 
     func close() {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         tagCache.close()
         roots = []
         nodesByURL = [:]
@@ -261,6 +269,22 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.endUpdates()
         for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
         selectPending()
+    }
+
+    private func refreshCutAppearance() {
+        let visible = outlineView.rows(in: outlineView.visibleRect)
+        for row in visible.location..<NSMaxRange(visible) {
+            guard let file = (outlineView.item(atRow: row) as? FileNode)?.item else { continue }
+            let isCut = cutPasteboard.contains(file.url)
+            for column in outlineView.tableColumns.indices {
+                guard let cell = outlineView.view(atColumn: column, row: row, makeIfNecessary: false) else { continue }
+                if let name = cell as? FileNameCell {
+                    name.updateCutAppearance(for: file, isCut: isCut)
+                } else {
+                    cell.alphaValue = isCut ? 0.5 : 1
+                }
+            }
+        }
     }
 
     private func reloadVisibleNames() {

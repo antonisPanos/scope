@@ -28,14 +28,16 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private var typeSelect = ""
     private var typeSelectTime = Date.distantPast
     private var observers: [NSObjectProtocol] = []
+    private let cutPasteboard: CutPasteboard
     private let tagCache: FileTagCache
     private var listViewportSize: NSSize = .zero
 
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("IconItem")
     private static let listItemIdentifier = NSUserInterfaceItemIdentifier("CompactListItem")
 
-    init(model: BrowserModel, style: Style, tagCache: FileTagCache? = nil) {
+    init(model: BrowserModel, style: Style, tagCache: FileTagCache? = nil, cutPasteboard: CutPasteboard = .shared) {
         self.model = model
+        self.cutPasteboard = cutPasteboard
         self.style = style
         self.scrollView = style == .list ? HorizontalListScrollView() : NSScrollView()
         self.tagCache = tagCache ?? FileTagCache(engine: model.engine)
@@ -114,6 +116,10 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
             center.addObserver(forName: IconCache.didLoad, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshVisible() }
             })
+        observers.append(
+            center.addObserver(forName: CutPasteboard.didChange, object: cutPasteboard, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshVisible() }
+            })
         applySize()
         reloadItems()
     }
@@ -150,6 +156,8 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     }
 
     func close() {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         tagCache.close()
         ThumbnailCache.shared.cancelRequests(of: ObjectIdentifier(self))
     }
@@ -299,7 +307,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
     private func configure(_ item: NSCollectionViewItem, with file: FileItem) {
         let tags = tagCache.tags(for: file.url) ?? []
         if let item = item as? CompactListItem {
-            item.show(file, tags: tags)
+            item.show(file, tags: tags, isCut: cutPasteboard.contains(file.url))
             return
         }
         guard let item = item as? IconItem else { return }
@@ -309,7 +317,7 @@ final class IconGridViewController: NSViewController, FileBrowsingView {
             for: file, pointSize: size, scale: scale, pathGuard: model.engine.pathGuard, owner: ObjectIdentifier(self))
         item.show(
             file, image: thumbnail ?? IconCache.shared.icon(for: file), iconSize: size,
-            showsName: style == .grid, tags: tags)
+            showsName: style == .grid, tags: tags, isCut: cutPasteboard.contains(file.url))
     }
 
     // MARK: - Keys
@@ -499,7 +507,9 @@ final class IconItem: NSCollectionViewItem {
         textField = name
     }
 
-    func show(_ file: FileItem, image: NSImage, iconSize: CGFloat, showsName: Bool, tags: [String] = []) {
+    func show(
+        _ file: FileItem, image: NSImage, iconSize: CGFloat, showsName: Bool, tags: [String] = [], isCut: Bool = false
+    ) {
         icon.image = image
         iconWidth.constant = iconSize
         iconHeight.constant = iconSize
@@ -508,7 +518,9 @@ final class IconItem: NSCollectionViewItem {
         nameHidden.isActive = !showsName
         tagDots.show(tags)
         tagBadge.isHidden = tagDots.isHidden
-        icon.alphaValue = file.isHidden ? 0.55 : 1
+        icon.alphaValue = isCut ? 0.5 : (file.isHidden ? 0.55 : 1)
+        name.alphaValue = isCut ? 0.5 : 1
+        tagBadge.alphaValue = isCut ? 0.5 : 1
         view.toolTip = showsName ? nil : file.name
         updateHighlight()
     }

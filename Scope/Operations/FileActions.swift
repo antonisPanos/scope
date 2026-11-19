@@ -30,27 +30,22 @@ extension BrowserWindowController {
     // MARK: - Pasteboard
 
     func copySelection() {
-        let urls = selectedItems.map(\.url)
-        guard !urls.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects(urls as [NSURL])
+        CutPasteboard.shared.write(selectedItems.map(\.url))
     }
 
     /// Cut (Cmd+X): copies the selection, and the next paste moves it instead.
     func cutSelection() {
-        copySelection()
-        guard !selectedItems.isEmpty else { return }
-        CutPasteboard.changeCount = NSPasteboard.general.changeCount
+        CutPasteboard.shared.write(selectedItems.map(\.url), cut: true)
     }
 
     /// Whether the files on the pasteboard came from Cut and nothing was copied since.
-    var pasteboardIsCut: Bool { CutPasteboard.changeCount == NSPasteboard.general.changeCount }
+    var pasteboardIsCut: Bool { CutPasteboard.shared.isCut }
 
     func copyPathOfSelection() {
         let paths = (selectedItems.isEmpty ? [currentFolder].compactMap { $0 } : selectedItems.map(\.url)).map(\.path)
         guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
+        CutPasteboard.shared.invalidate()
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
     }
 
@@ -65,7 +60,7 @@ extension BrowserWindowController {
         guard let folder = currentFolder, !files.isEmpty else { return }
         let move = move || pasteboardIsCut
         // Cut items move once; pasting again would find nothing left to move.
-        if pasteboardIsCut { CutPasteboard.changeCount = nil }
+        if pasteboardIsCut { CutPasteboard.shared.invalidate() }
         startOperation(move ? .move(files, into: folder) : .copy(files, into: folder))
     }
 
@@ -258,14 +253,6 @@ extension BrowserWindowController {
     @objc func copy(_ sender: Any?) { copySelection() }
     @objc func paste(_ sender: Any?) { paste(move: false) }
     @objc func undo(_ sender: Any?) { undoLastOperation() }
-}
-
-/// Remembers which pasteboard contents came from Cut, by the pasteboard's
-/// change count, so copying anything else afterwards turns the next paste
-/// back into a copy.
-@MainActor
-private enum CutPasteboard {
-    static var changeCount: Int?
 }
 
 /// An app for the Open With menu, carried from the background lookup. The
