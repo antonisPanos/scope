@@ -106,14 +106,16 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
                 outlineView.makeView(withIdentifier: tableColumn.identifier, owner: nil) as? FileNameCell
                 ?? FileNameCell()
             cell.identifier = tableColumn.identifier
-            cell.configure(with: file, tags: tags(for: file) ?? [])
+            cell.configure(with: file, tags: tags(for: file) ?? [], isCut: cutPasteboard.contains(file.url))
             return cell
         case .tags:
             let cell = textCell(outlineView, tableColumn.identifier)
+            cell.alphaValue = cutPasteboard.contains(file.url) ? 0.5 : 1
             cell.textField?.attributedStringValue = Self.tagText(tags(for: file) ?? [])
             return cell
         default:
             let cell = textCell(outlineView, tableColumn.identifier)
+            cell.alphaValue = cutPasteboard.contains(file.url) ? 0.5 : 1
             cell.textField?.stringValue = Self.text(for: column, of: file)
             cell.textField?.alignment = column == .size ? .right : .left
             return cell

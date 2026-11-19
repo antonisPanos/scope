@@ -52,13 +52,21 @@ final class FileNameCell: NSTableCellView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// `tags` are the item's Finder tags, once they've been read.
-    func configure(with item: FileItem, tags: [String] = []) {
+    func configure(with item: FileItem, tags: [String] = [], isCut: Bool = false) {
         dots.show(tags)
         name.stringValue = item.name
-        name.alphaValue = item.isHidden ? 0.55 : 1
-        icon.alphaValue = item.isHidden ? 0.55 : 1
+        updateCutAppearance(for: item, isCut: isCut)
         icon.image = IconCache.shared.icon(for: item)
         badge.isHidden = !(item.isSymbolicLink || item.isAlias)
+    }
+
+    /// A clipboard update changes appearance without reconfiguring the content.
+    func updateCutAppearance(for item: FileItem, isCut: Bool) {
+        let alpha: CGFloat = isCut ? 0.5 : (item.isHidden ? 0.55 : 1)
+        name.alphaValue = alpha
+        icon.alphaValue = alpha
+        badge.alphaValue = isCut ? 0.5 : 1
+        dots.alphaValue = isCut ? 0.5 : 1
     }
 }
 
