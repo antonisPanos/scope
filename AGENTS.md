@@ -82,7 +82,7 @@ Use the current source and repository docs for present behavior and requirements
   prompt on the user's screen: ask them to look for one. Don't kill system processes.
 - Recents and Tags come from Spotlight, over the whole computer.
 - Engine CI uses macOS 26 (engine targets macOS 15). The release workflow uses `xcode-27`
-  with Xcode 27.2 to build and publish ad-hoc signed DMGs without launching the app.
+  with Xcode 27.2 to build and publish Developer ID signed, notarized DMGs without launching the app.
   The existing app CI job on macOS 26 skips its build when the 27.2 SDK is unavailable.
 
 <!-- CODEGRAPH_START -->

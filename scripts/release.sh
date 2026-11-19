@@ -30,6 +30,11 @@ DERIVED="build/ReleaseDerivedData"
 step() { printf '\n==> %s\n' "$*"; }
 fail() { echo "error: $*" >&2; exit 1; }
 
+dmg_python="$PWD/build/dmg-venv/bin/python3"
+[ -x "$dmg_python" ] || fail "run scripts/dmg/setup.sh with Python 3.12 before packaging"
+"$dmg_python" -c 'import dmgbuild, ds_store, mac_alias; from importlib.metadata import version; assert version("dmgbuild") == "2.0.0"' \
+  || fail "packaging tools are unavailable; run scripts/dmg/setup.sh"
+
 # Version: the vX.Y.Z tag at HEAD, otherwise the xcconfig version marked as a snapshot.
 base_version="$(sed -nE 's/^MARKETING_VERSION = ([0-9.]+).*/\1/p' Config/Base.xcconfig)"
 tag="$(git describe --exact-match --tags --match 'v[0-9]*' HEAD 2>/dev/null || true)"
@@ -134,12 +139,7 @@ fi
 
 step "Making the DMG"
 dmg="$OUT/Scope-$dmg_version.dmg"
-staging="$OUT/dmg-root"
-mkdir -p "$staging"
-ditto "$app" "$staging/Scope.app"
-ln -s /Applications "$staging/Applications"
-hdiutil create -volname "Scope $version" -srcfolder "$staging" -fs HFS+ -format UDZO -ov "$dmg" -quiet
-rm -rf "$staging"
+"$dmg_python" scripts/dmg/package.py "$app" "Scope $version" "$dmg"
 
 if [ "$sign_mode" = "developer-id" ]; then
   codesign --sign "$identity" --timestamp "$dmg"
@@ -166,6 +166,8 @@ if [ "$sign_mode" = "developer-id" ]; then
   codesign --verify --strict "$dmg"
 fi
 
+# Verify the actual final deliverable, after stapling and before checksumming.
+"$dmg_python" scripts/dmg/verify.py "$dmg" "$app" "Scope $version"
 (cd "$OUT" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
 
 if $UPLOAD; then
