@@ -1,8 +1,6 @@
 # Scope user guide
 
-Scope follows Finder shortcuts where possible. This guide describes the merged
-app; the [release and source-version note](../README.md#install) distinguishes
-`main` from the current installer.
+Scope follows Finder shortcuts where possible.
 
 ## Windows, tabs and navigation
 
@@ -14,9 +12,7 @@ app; the [release and source-version note](../README.md#install) distinguishes
 - Click a path-bar segment to go there. `Cmd+L` or `Shift+Cmd+G` lets you type an
   absolute or relative path, including `~`. `Option+Cmd+P` toggles the path bar.
 - `Cmd+[` / `Cmd+]` go Back/Forward; `Cmd+Up` opens the enclosing folder;
-  `Cmd+Down` opens the selection. History belongs to the active tab. The toolbar
-  validation fix in [#139](https://github.com/antonisPanos/scope/pull/139) is merged
-  after v0.3.0, alongside the List redesign for the v0.4.0 release.
+  `Cmd+Down` opens the selection. History belongs to the active tab.
 - `Cmd+K` opens the command palette for commands, places and typed paths.
 - `Shift+Cmd+.` toggles hidden files. `Ctrl+Option+Cmd+1` through `7` choose sort keys.
   `Shift+Cmd+H/D/O/A/F` open Home/Desktop/Documents/Applications/Recents;
@@ -71,15 +67,12 @@ tags, location, image dimensions/camera, media duration or folder item count.
 
 | Gallery | Columns | List |
 | --- | --- | --- |
-| ![Gallery with a large preview of original coastal artwork](images/gallery.png) | ![Columns navigating from a studio project into its artwork folder](images/columns.png) | ![Compact List with tagged artwork in top-to-bottom columns](images/compact-list-light.png) |
+| ![Gallery with a large preview of original coastal artwork](images/gallery.png) | ![Columns navigating from a studio project into its artwork folder](images/columns.png) | <picture><source media="(prefers-color-scheme: dark)" srcset="images/compact-list-dark.png"><img src="images/compact-list-light.png" alt="Seasonal catalog entries in compact, top-to-bottom columns"></picture> |
 
 List uses compact columns, supports horizontal scrolling with a normal mouse
 wheel, and reflows as the window height changes. Its three-filled-column icon is
 distinct from Columns' folder-hierarchy icon. Keyboard navigation, type-to-select,
 multiple selection and filename tooltips work across the columns.
-[PR #140](https://github.com/antonisPanos/scope/pull/140) merged on 3 November 2026
-after v0.3.0, for the v0.4.0 release. The v0.3.0 installer uses the
-previous vertical List.
 
 ## File operations
 
