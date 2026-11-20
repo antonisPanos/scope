@@ -27,13 +27,15 @@
 
 - **Five views:** Icons, Details, Columns, Gallery and List (`Cmd+1` through `Cmd+5`).
   List fills compact columns from top to bottom and scrolls horizontally;
-  Details supports sortable columns and expandable folders.
+  Details supports sortable columns and expandable folders. Scope can remember
+  the view type and icon size for each folder.
 - **Tabs and dual panes:** keep places open, compare two folders, and copy or move
   the selection to the other side (`Ctrl+Cmd+C` / `Ctrl+Cmd+M`).
 - **Finder color tags:** see tags on folders, thumbnails and filenames; apply them
   from the context menu. Metadata changes refresh without losing your place.
-- **Preview and navigation:** Quick Look, an optional details pane, an editable path
-  bar, Back/Forward history and a command palette (`Cmd+K`).
+- **Preview and navigation:** Quick Look, a details pane, Get Info with folder size
+  and item counts, an editable path bar, Back/Forward history and a command palette
+  (`Cmd+K`).
 - **Search:** stream results from the current folder and its subfolders using a
   name, glob or regular expression. Filter by kind, size, modification date and
   tag, or use Contents (Spotlight) for indexed file contents.
@@ -50,12 +52,12 @@ The [user guide](docs/USER_GUIDE.md) covers the views, shortcuts, settings and o
 | --- | --- |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/browser-icons-dark.png"><img src="docs/images/browser-icons.png" alt="Icons view showing six original coastal illustrations with Finder color tags"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/details-dark.png"><img src="docs/images/details.png" alt="Details view with tagged project folders and expanded artwork"></picture> |
 | **Icons:** resizable thumbnails and color tags | **Details:** sortable metadata and expandable folders |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/search-dark.png"><img src="docs/images/search.png" alt="A glob search for JPG artwork across a fictional studio project"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/activity-dark.png"><img src="docs/images/activity.png" alt="Scope Dev activity drawer after compressing disposable coastal artwork, with Undo available"></picture> |
-| **Search:** patterns and filters across subfolders | **Activity:** inspect jobs and undo supported changes |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/search-dark.png"><img src="docs/images/search.png" alt="A search for JPG artwork across a fictional studio project"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/compact-list-dark.png"><img src="docs/images/compact-list-light.png" alt="Seasonal catalog entries arranged in compact, top-to-bottom columns in List view"></picture> |
+| **Search:** results and filters across subfolders | **List:** compact columns with horizontal scrolling |
 
-[Gallery, Columns and List screenshots](docs/USER_GUIDE.md#views-and-preview) show the other views.
-All captures use the actual app with an original, disposable demo project; see
-[screenshot provenance](docs/images/README.md).
+The [user guide](docs/USER_GUIDE.md#views-and-preview) also shows Gallery and
+Columns. The README screenshots show the installed production release with a
+fictional demo project. See the [screenshot provenance](docs/images/README.md).
 
 ## Care with your files
 
@@ -73,28 +75,18 @@ All captures use the actual app with an original, disposable demo project; see
 
 Download the DMG from the [latest release](https://github.com/antonisPanos/scope/releases/latest),
 open it, and drag **Scope** to **Applications**. The app requires **macOS 27.2 or later**.
-The engine's lower macOS target does not make the app compatible with macOS 15.
 
-New releases built through the signed pipeline are **Developer ID signed and
-notarized**. Older releases remain ad-hoc signed; their release notes explain
-the first-launch approval needed on another Mac.
-The release includes a matching `.dmg.sha256` file to verify the download:
+The current installer is **Developer ID signed and notarized**. Download its
+matching `.dmg.sha256` file if you want to verify the DMG.
 
 ```sh
 # In the folder containing both downloaded files; substitute your version.
-shasum -a 256 -c Scope-0.3.0.dmg.sha256
+shasum -a 256 -c Scope-0.8.0.dmg.sha256
 ```
 
-Scope is early 0.x software. Production Scope supports full file operations with
-normal macOS permissions. Scope Dev restricts file changes to `~/ScopeScratch`.
-An explicit [stress launch](docs/STRESS_TESTING.md) instead confines managed
-file access to a disposable two-volume disk image.
-
-The [Back/Forward validation fix (#139)](https://github.com/antonisPanos/scope/pull/139)
-and [compact horizontal List layout (#140)](https://github.com/antonisPanos/scope/pull/140)
-merged into `main` after v0.3.0 for the v0.4.0 release.
-The screenshots show that merged source; v0.3.0 has the earlier vertical List.
-Check the [release notes](https://github.com/antonisPanos/scope/releases) for the installer version.
+Scope uses normal macOS permissions for file operations. Scope Dev restricts file
+changes to `~/ScopeScratch`. An explicit [stress launch](docs/STRESS_TESTING.md)
+confines managed file access to a disposable two-volume disk image.
 
 ## Build from source
 
