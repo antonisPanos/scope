@@ -59,6 +59,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     var staleTags: Set<URL> { tagCache.staleURLs }
     private let headerView = NSTableHeaderView()
     private var observers: [NSObjectProtocol] = []
+    private var isUpdatingOutline = false
 
     isolated deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
@@ -224,22 +225,19 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     }
 
     private func reloadItems() {
-        let selected = selectedURLs()
-        var reused: [URL: FileNode] = [:]
-        roots = model.items.map { item in
-            let node = nodesByURL[item.url] ?? FileNode(item: item)
-            if node.item != item {
-                node.update(item)
+        updatePreservingSelection(allowPendingSelection: true) {
+            var reused: [URL: FileNode] = [:]
+            roots = model.items.map { item in
+                let node = nodesByURL[item.url] ?? FileNode(item: item)
+                if node.item != item {
+                    node.update(item)
+                }
+                reused[item.url] = node
+                return node
             }
-            reused[item.url] = node
-            return node
+            nodesByURL = reused
+            outlineView.reloadData()
         }
-        nodesByURL = reused
-        outlineView.reloadData()
-
-        // A pending selection is kept until the item shows up: the first
-        // update after navigating is empty.
-        if !selectPending() { select(selected, scroll: false) }
     }
 
     /// Updates only the top-level rows that changed on disk, so expanded
@@ -255,20 +253,21 @@ final class FileListViewController: NSViewController, FileBrowsingView {
             reloadItems()
             return
         }
-        var redrawn: [FileNode] = []
-        for index in changes.reloaded where updated[index].item != items[index] {
-            let node = updated[index]
-            node.update(items[index])
-            redrawn.append(node)
+        updatePreservingSelection(allowPendingSelection: true) {
+            var redrawn: [FileNode] = []
+            for index in changes.reloaded where updated[index].item != items[index] {
+                let node = updated[index]
+                node.update(items[index])
+                redrawn.append(node)
+            }
+            roots = updated
+            nodesByURL = Dictionary(updated.map { ($0.item.url, $0) }, uniquingKeysWith: { _, last in last })
+            outlineView.beginUpdates()
+            outlineView.removeItems(at: changes.removed, inParent: nil, withAnimation: [])
+            outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
+            outlineView.endUpdates()
+            for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
         }
-        roots = updated
-        nodesByURL = Dictionary(updated.map { ($0.item.url, $0) }, uniquingKeysWith: { _, last in last })
-        outlineView.beginUpdates()
-        outlineView.removeItems(at: changes.removed, inParent: nil, withAnimation: [])
-        outlineView.insertItems(at: changes.inserted, inParent: nil, withAnimation: [])
-        outlineView.endUpdates()
-        for node in redrawn { outlineView.reloadItem(node, reloadChildren: true) }
-        selectPending()
     }
 
     private func refreshCutAppearance() {
@@ -302,6 +301,26 @@ final class FileListViewController: NSViewController, FileBrowsingView {
         outlineView.selectedRowIndexes.compactMap { (outlineView.item(atRow: $0) as? FileNode)?.item }
     }
 
+    /// AppKit may clear descendant selections while reloading their parent.
+    /// Keep selection observers on the settled state so the preview stays visible.
+    func updatePreservingSelection(allowPendingSelection: Bool = false, _ update: () -> Void) {
+        let selected = selectedURLs()
+        let selectedSet = Set(selected)
+        isUpdatingOutline = true
+        update()
+        let selectedPendingItem = allowPendingSelection && selectPending()
+        if !selectedPendingItem, Set(selectedURLs()) != selectedSet {
+            select(selected, scroll: false)
+        }
+        isUpdatingOutline = false
+        if Set(selectedURLs()) != selectedSet { selectionDidChange() }
+    }
+
+    func selectionDidChange() {
+        guard !isUpdatingOutline else { return }
+        onSelectionChange?()
+    }
+
     private func selectedURLs() -> [URL] {
         selectedItems.map(\.url)
     }
@@ -315,6 +334,7 @@ final class FileListViewController: NSViewController, FileBrowsingView {
     }
 
     private func rows(for urls: [URL]) -> IndexSet {
+        guard !urls.isEmpty else { return [] }
         let wanted = Set(urls.map(\.standardizedFileURL))
         var rows = IndexSet()
         for row in 0..<outlineView.numberOfRows {
