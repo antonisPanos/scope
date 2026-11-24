@@ -9,14 +9,23 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
     /// Counts menu builds, so a late tag or app lookup can't land in a newer menu.
     private var generation = 0
     private var tagTask: Task<Void, Never>?
+    private var openWithTask: Task<Void, Never>?
+
+    func makeMenu(for tab: BrowserViewController) -> NSMenu {
+        let menu = BrowserContextMenu(tab: tab)
+        menu.delegate = self
+        return menu
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         generation += 1
         tagTask?.cancel()
-        guard let controller else { return }
-        controller.prepareForContextMenu()
-        let selection = controller.selectedItems
+        openWithTask?.cancel()
+        guard let controller, let tab = (menu as? BrowserContextMenu)?.tab,
+            controller.prepareForContextMenu(in: tab)
+        else { return }
+        let selection = tab.fileView.selectedItems
 
         func add(_ id: String, _ title: String? = nil) {
             guard let command = Commands.command(id: id), command.isEnabled(controller) else { return }
@@ -24,22 +33,6 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
                 title: title ?? command.title, action: #selector(BrowserWindowController.runCommand(_:)),
                 keyEquivalent: "")
             item.representedObject = id
-            menu.addItem(item)
-        }
-        /// A submenu of commands, with a check on the current choice.
-        func submenu(_ title: String, _ ids: [String]) {
-            let sub = NSMenu(title: title)
-            for id in ids {
-                guard let command = Commands.command(id: id) else { continue }
-                if id == "sort.ascending" { sub.addItem(.separator()) }
-                let item = NSMenuItem(
-                    title: command.title, action: #selector(BrowserWindowController.runCommand(_:)), keyEquivalent: "")
-                item.representedObject = id
-                item.state = command.isChecked?(controller) == true ? .on : .off
-                sub.addItem(item)
-            }
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.submenu = sub
             menu.addItem(item)
         }
         let sortIDs = [
@@ -57,16 +50,21 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("paste")
             add("moveHere")
             separator()
+            if let folder = tab.model.location.folderURL {
+                addOpenWith(for: folder, isFolder: true, to: menu, controller: controller)
+            }
             add("getInfo", "Get Info for This Folder")
             add("copyPath", "Copy Path of This Folder")
             add("addToSidebar")
             separator()
-            submenu("Sort By", sortIDs)
-            submenu("View", viewIDs)
+            addSubmenu("Sort By", commands: sortIDs, to: menu, controller: controller)
+            addSubmenu("View", commands: viewIDs, to: menu, controller: controller)
             add("toggleHidden")
         } else {
             add("open")
-            if let item = controller.openWithItem { addOpenWith(for: item, to: menu, controller: controller) }
+            if selection.count == 1, let item = selection.first {
+                addOpenWith(for: item.url, isFolder: item.isBrowsableFolder, to: menu, controller: controller)
+            }
             add("openInNewTab")
             add("openInSplit")
             add("quickLook")
@@ -90,7 +88,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             add("copyPath")
             add("addToSidebar")
             separator()
-            submenu("Sort By", sortIDs)
+            addSubmenu("Sort By", commands: sortIDs, to: menu, controller: controller)
             if controller.allowsWrites {
                 addTagRow(for: selection, to: menu, controller: controller)
             } else if selection.count == 1 {
@@ -99,10 +97,25 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
         }
     }
 
-    /// Open With, filled in when the apps arrive: finding the apps that open
-    /// a file reads the disk, so it happens in the background. The line goes
-    /// away again when no app can open the file.
-    private func addOpenWith(for item: FileItem, to menu: NSMenu, controller: BrowserWindowController) {
+    /// Adds a submenu of commands with a check on the current choice.
+    private func addSubmenu(_ title: String, commands: [String], to menu: NSMenu, controller: BrowserWindowController) {
+        let submenu = NSMenu(title: title)
+        for id in commands {
+            guard let command = Commands.command(id: id) else { continue }
+            if id == "sort.ascending" { submenu.addItem(.separator()) }
+            let item = NSMenuItem(
+                title: command.title, action: #selector(BrowserWindowController.runCommand(_:)), keyEquivalent: "")
+            item.representedObject = id
+            item.state = command.isChecked?(controller) == true ? .on : .off
+            submenu.addItem(item)
+        }
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    /// Finds apps in the background and removes the submenu if none are available.
+    private func addOpenWith(for url: URL, isFolder: Bool, to menu: NSMenu, controller: BrowserWindowController) {
         let line = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
         let apps = NSMenu(title: "Open With")
         let waiting = NSMenuItem(title: "Finding Apps…", action: nil, keyEquivalent: "")
@@ -111,17 +124,16 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
         line.submenu = apps
         menu.addItem(line)
         let build = generation
-        let url = item.url
-        let pathGuard = controller.model.engine.pathGuard
-        Task { [weak controller] in
-            let found = await BrowserWindowController.openWithApps(for: url, pathGuard: pathGuard)
-            guard build == generation, let controller else { return }
+        let engine = controller.model.engine
+        openWithTask = Task { [weak self, weak controller] in
+            let found = await BrowserWindowController.openWithApps(for: url, isFolder: isFolder, engine: engine)
+            guard !Task.isCancelled, self?.generation == build, let controller else { return }
             guard !found.isEmpty else {
                 if menu.index(of: line) >= 0 { menu.removeItem(line) }
                 return
             }
             apps.removeAllItems()
-            for app in found { apps.addItem(controller.openWithEntry(for: app)) }
+            for app in found { apps.addItem(controller.openWithEntry(for: app, opening: url, engine: engine)) }
         }
     }
 
@@ -149,6 +161,7 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         tagTask?.cancel()
+        openWithTask?.cancel()
     }
 
     private func separator(in menu: NSMenu) {
@@ -170,4 +183,18 @@ final class ContextMenuBuilder: NSObject, NSMenuDelegate {
             menu.addItem(line)
         }
     }
+}
+
+/// Identifies the pane that opened the menu even if another pane had focus.
+@MainActor
+private final class BrowserContextMenu: NSMenu {
+    weak var tab: BrowserViewController?
+
+    init(tab: BrowserViewController) {
+        self.tab = tab
+        super.init(title: "")
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("BrowserContextMenu requires a browser tab") }
 }

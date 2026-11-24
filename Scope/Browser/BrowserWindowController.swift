@@ -22,7 +22,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let sidebarSelection = SidebarSelection()
     var sidebarItem: NSSplitViewItem!
     var palette: CommandPalette?
-    private let contextMenu = NSMenu()
     private let contextMenuBuilder = ContextMenuBuilder()
     var navigationGroup: NSToolbarItemGroup?
     var viewModeGroup: NSToolbarItemGroup?
@@ -83,7 +82,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
 
-        contextMenu.delegate = contextMenuBuilder
         contextMenuBuilder.controller = self
         wire(first)
         wire(workspace.panes[0])
@@ -139,7 +137,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let window = self?.window
             Task { await OperationsController.shared.undo(id, from: window) }
         }
-        tab.contextMenu = contextMenu
+        tab.contextMenu = contextMenuBuilder.makeMenu(for: tab)
         tab.pathBar.onNavigate = { [weak tab] url in tab?.model.navigate(to: .folder(url)) }
         tab.pathBar.onSubmit = { [weak self] text in
             self?.goToTypedPath(text)
@@ -307,8 +305,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
     #endif
 
-    func prepareForContextMenu() {
-        content.fileView.prepareForContextMenu()
+    func prepareForContextMenu(in tab: BrowserViewController) -> Bool {
+        guard workspace.pane(containing: tab)?.activeTab === tab else { return false }
+        if workspace.activate(containing: tab.view) { activeContentChanged() }
+        tab.fileView.prepareForContextMenu()
+        return true
     }
 
     func openSelection() {

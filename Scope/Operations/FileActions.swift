@@ -1,5 +1,6 @@
 import AppKit
 import ScopeEngine
+import UniformTypeIdentifiers
 
 /// The file operations a browser window offers: copy and paste, duplicate,
 /// rename, new folder, Trash, compress, extract, mount, undo. Each one turns
@@ -197,34 +198,36 @@ extension BrowserWindowController {
 
     // MARK: - Open With
 
-    /// The file Open With is offered for: a single selected file or package.
-    var openWithItem: FileItem? {
-        guard selectedItems.count == 1, let item = selectedItems.first, !item.isBrowsableFolder else { return nil }
-        return item
-    }
-
-    /// The apps that can open `url`, at most 20, the default one marked.
-    /// Launch Services reads the file and the app bundles to answer, and the
-    /// guard resolves the path, so this runs off the main thread. Empty when
-    /// the guard refuses the file.
-    nonisolated static func openWithApps(for url: URL, pathGuard: PathGuard) async -> [OpenWithApp] {
-        await Task.detached(priority: .userInitiated) {
-            guard let checked = try? pathGuard.checkTarget(url) else { return [] }
-            let workspace = NSWorkspace.shared
-            let preferred = workspace.urlForApplication(toOpen: checked)
-            return workspace.urlsForApplications(toOpen: checked).prefix(20).map { app in
-                let name = FileManager.default.displayName(atPath: app.path)
-                return OpenWithApp(
-                    url: app, title: name + (app == preferred ? " (default)" : ""),
-                    icon: workspace.icon(forFile: app.path))
-            }
-        }.value
+    /// Launch Services reads the item and app bundles, so look up handlers off the main thread.
+    @concurrent
+    nonisolated static func openWithApps(for url: URL, isFolder: Bool, engine: FileEngine) async -> [OpenWithApp] {
+        guard let target = await engine.readableURLs([url]).first, !Task.isCancelled else { return [] }
+        let workspace = NSWorkspace.shared
+        let preferred = workspace.urlForApplication(toOpen: target)?.standardizedFileURL
+        var candidates = workspace.urlsForApplications(toOpen: target)
+        if isFolder {
+            // Some apps register for public.directory and are absent from the exact folder lookup.
+            candidates += workspace.urlsForApplications(toOpen: .directory)
+        }
+        var seen = Set<URL>()
+        var applications = candidates.map(\.standardizedFileURL).filter { seen.insert($0).inserted }
+        if let preferred, let index = applications.firstIndex(of: preferred), index != applications.startIndex {
+            applications.remove(at: index)
+            applications.insert(preferred, at: 0)
+        }
+        return applications.compactMap { app in
+            guard !Task.isCancelled else { return nil }
+            let name = FileManager.default.displayName(atPath: app.path)
+            return OpenWithApp(
+                url: app, title: name + (app == preferred ? " (default)" : ""),
+                icon: workspace.icon(forFile: app.path))
+        }
     }
 
     /// The Open With menu line for one app.
-    func openWithEntry(for app: OpenWithApp) -> NSMenuItem {
+    func openWithEntry(for app: OpenWithApp, opening url: URL, engine: FileEngine) -> NSMenuItem {
         let entry = NSMenuItem(title: app.title, action: #selector(openWithApp(_:)), keyEquivalent: "")
-        entry.representedObject = app.url
+        entry.representedObject = OpenWithRequest(url: url, application: app.url, engine: engine)
         entry.target = self
         app.icon.size = NSSize(width: 16, height: 16)
         entry.image = app.icon
@@ -232,15 +235,18 @@ extension BrowserWindowController {
     }
 
     @objc private func openWithApp(_ sender: NSMenuItem) {
-        guard let app = sender.representedObject as? URL else { return }
-        let urls = selectedItems.map(\.url)
-        let pathGuard = model.engine.pathGuard
-        Task {
-            let permitted = await Task.detached { urls.compactMap { try? pathGuard.checkTarget($0) } }.value
-            guard !permitted.isEmpty else { return }
-            NSWorkspace.shared.open(
-                permitted, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration(),
-                completionHandler: nil)
+        guard let request = sender.representedObject as? OpenWithRequest else { return }
+        Task { [weak self] in
+            guard let target = await request.engine.readableURLs([request.url]).first else {
+                self?.showProblem("\(BuildIdentity.current.appName) can't open \(request.url.path).")
+                return
+            }
+            do {
+                _ = try await NSWorkspace.shared.open(
+                    [target], withApplicationAt: request.application, configuration: NSWorkspace.OpenConfiguration())
+            } catch {
+                self?.showProblem(error.localizedDescription)
+            }
         }
     }
 
@@ -261,4 +267,11 @@ struct OpenWithApp: @unchecked Sendable {
     let url: URL
     let title: String
     let icon: NSImage
+}
+
+/// Captures the clicked item or folder with the app selected from its submenu.
+private struct OpenWithRequest {
+    let url: URL
+    let application: URL
+    let engine: FileEngine
 }

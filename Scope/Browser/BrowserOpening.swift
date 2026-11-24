@@ -120,7 +120,7 @@ extension BrowserWindowController {
         }
     }
 
-    private func showProblem(_ text: String) {
+    func showProblem(_ text: String) {
         Self.logger.notice("Problem shown: \(text, privacy: .public)")
         guard let window else { return }
         let alert = NSAlert()
