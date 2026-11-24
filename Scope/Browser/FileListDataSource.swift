@@ -25,18 +25,22 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
         node.isLoadingChildren = true
         node.childrenListing = NestedFolderListing(url: node.item.url, model: model) { [weak self, weak node] sorted in
             guard let self, let node else { return }
-            let old = Dictionary((node.children ?? []).map { ($0.item.url, $0) }, uniquingKeysWith: { a, _ in a })
-            node.children = sorted.map { item in
-                if let kept = old[item.url] {
-                    kept.update(item)
-                    return kept
-                }
-                return FileNode(item: item)
-            }
             node.isLoadingChildren = false
+            if node.children?.map(\.item) != sorted {
+                self.updatePreservingSelection {
+                    let old = Dictionary(
+                        (node.children ?? []).map { ($0.item.url, $0) }, uniquingKeysWith: { a, _ in a })
+                    node.children = sorted.map { item in
+                        if let kept = old[item.url] {
+                            kept.update(item)
+                            return kept
+                        }
+                        return FileNode(item: item)
+                    }
+                    self.outlineView.reloadItem(node, reloadChildren: true)
+                }
+            }
             self.model.metadataDidChange()
-            self.outlineView.reloadItem(node, reloadChildren: true)
-            self.onSelectionChange?()
         }
     }
 
@@ -130,7 +134,7 @@ extension FileListViewController: NSOutlineViewDataSource, NSOutlineViewDelegate
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        onSelectionChange?()
+        selectionDidChange()
     }
 
     private func textCell(_ outlineView: NSOutlineView, _ identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView

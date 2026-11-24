@@ -46,6 +46,75 @@ import Testing
         try await waitUntil { preview.previewItem != nil }
     }
 
+    @Test func expandedFolderUpdatesKeepTheSelectedPreviewAndFocus() async throws {
+        let root = TestPaths.packages.deletingLastPathComponent()
+        let announcements = OperationAnnouncements()
+        let suite = "ScopePreviewSelectionTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = BrowserModel(
+            engine: FileEngine(pathGuard: .readOnly), location: .folder(root),
+            announcements: announcements, settings: AppSettings(defaults: defaults))
+        let controller = BrowserViewController(model: model)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        defer {
+            window.contentViewController = nil
+            controller.close()
+            model.close()
+        }
+        window.contentViewController = controller
+        model.onChange = { [weak controller] in controller?.update($0) }
+        try await waitUntil { model.state == .loaded }
+        let list = try #require(controller.fileView as? FileListViewController)
+        let outline = list.outlineView
+        let folder = try #require(list.roots.first { $0.item.name == "docs" })
+        outline.expandItem(folder)
+        try await waitUntil { folder.children?.contains { $0.item.name == "ARCHITECTURE.md" } == true }
+        let file = try #require(folder.children?.first { $0.item.name == "ARCHITECTURE.md" })
+        let url = file.item.url
+        let preview = try #require(descendant(QLPreviewView.self, in: controller.view))
+        preview.superview?.isHidden = false
+        let grid = try #require(descendant(NSGridView.self, in: controller.view))
+        try #require(window.makeFirstResponder(outline))
+        try #require(list.select([url], scroll: false))
+        let initial = grid.cell(atColumnIndex: 0, rowIndex: 0).contentView
+        try await waitUntil {
+            preview.previewItem != nil && grid.cell(atColumnIndex: 0, rowIndex: 0).contentView !== initial
+        }
+        let previewItem = preview.previewItem as AnyObject?
+        let details = grid.cell(atColumnIndex: 0, rowIndex: 0).contentView
+        var reportedSelections: [[URL]] = []
+        controller.onSelectionChange = { [weak list] in
+            if let list { reportedSelections.append(list.selectedItems.map(\.url)) }
+        }
+
+        // Drive the expanded folder's watcher path without changing source files.
+        let change = FolderItemsChanged(folder: folder.item.url, added: [url.lastPathComponent])
+        await Task.detached { announcements.announce(change) }.value
+        try await waitUntil {
+            grid.numberOfRows > 0 && grid.cell(atColumnIndex: 0, rowIndex: 0).contentView !== details
+        }
+        #expect(list.selectedItems.map(\.url) == [url])
+        #expect(window.firstResponder === outline)
+        #expect(preview.previewItem as AnyObject? === previewItem)
+
+        let previousRow = outline.row(forItem: file)
+        let listing = try #require(folder.childrenListing)
+        listing.update(sort: FileSort(key: .name, ascending: false), showHidden: false)
+        try await waitUntil { outline.row(forItem: file) != previousRow }
+        #expect(outline.selectedRow == outline.row(forItem: file))
+        #expect(list.selectedItems.map(\.url) == [url])
+        #expect(window.firstResponder === outline)
+        #expect(preview.previewItem as AnyObject? === previewItem)
+        #expect(reportedSelections.allSatisfy { $0 == [url] })
+
+        list.select([], scroll: false)
+        #expect(preview.previewItem == nil)
+        #expect(reportedSelections.last == [])
+    }
+
     private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
         if let match = view as? T { return match }
         return view.subviews.lazy.compactMap { descendant(type, in: $0) }.first
@@ -56,6 +125,6 @@ import Testing
             if condition() { return }
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(condition())
+        try #require(condition())
     }
 }
