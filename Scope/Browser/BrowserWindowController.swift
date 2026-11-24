@@ -206,6 +206,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.screen?.visibleFrame ?? newFrame
     }
 
+    func windowDidBecomeMain(_ notification: Notification) {
+        (NSApp.delegate as? AppDelegate)?.browserBecameMain(self)
+    }
+
     func windowWillClose(_ notification: Notification) {
         quickLookTask?.cancel()
         quickLookURLs = []

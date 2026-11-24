@@ -2,6 +2,14 @@
 
 Scope follows Finder shortcuts where possible.
 
+## Updates
+
+Scope checks for a newer version at startup and when you return to the app, at most once an hour.
+When an update is available, **View Release** opens the GitHub download page.
+**Dismiss** hides the notice for that version.
+
+![Scope's update notice with View Release and Dismiss buttons](images/update-notice.png)
+
 ## Windows, tabs and navigation
 
 - `Cmd+N` opens a window; `Cmd+T` opens a tab and `Cmd+W` closes the current tab.

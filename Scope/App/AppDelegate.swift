@@ -6,6 +6,9 @@ import os
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var browsers: [ObjectIdentifier: BrowserWindowController] = [:]
+    private var updateChecker: UpdateChecker?
+    private var updateBanner: UpdateBannerController?
+    private weak var updateBannerWindow: NSWindow?
     private static let logger = Logger(subsystem: "com.antonispanos.scope", category: "App")
 
     static func main() {
@@ -67,6 +70,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Launched \(identity.appName, privacy: .public): sandbox \(identity.isSandboxed), writes \(identity.pathGuard.allowsWrites), stress \(BuildIdentity.isStressRequested)"
         )
         newWindow(nil)
+        if !identity.isDevelopment,
+            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            let installed = ReleaseVersion(version)
+        {
+            updateChecker = UpdateChecker(installedVersion: installed)
+            checkForUpdate()
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        checkForUpdate()
+    }
+
+    private func checkForUpdate() {
+        guard let updateChecker else { return }
+        refreshUpdateBanner()
+        Task { [weak self] in
+            await updateChecker.checkIfDue()
+            self?.refreshUpdateBanner()
+        }
+    }
+
+    func browserBecameMain(_ browser: BrowserWindowController) {
+        refreshUpdateBanner(preferredWindow: browser.window)
+    }
+
+    private var frontBrowserWindow: NSWindow? {
+        NSApp.orderedWindows.first { window in
+            guard let browser = window.windowController as? BrowserWindowController,
+                browsers[ObjectIdentifier(browser)] != nil, window.isVisible, !window.isMiniaturized
+            else { return false }
+            return window.tabGroup.map { $0.selectedWindow === window } ?? true
+        }
+    }
+
+    private func refreshUpdateBanner(preferredWindow: NSWindow? = nil) {
+        guard let updateChecker else { return }
+        let version = updateChecker.availableVersion
+        let window = version == nil ? nil : preferredWindow ?? frontBrowserWindow
+        if window === updateBannerWindow, version == updateBanner?.version { return }
+
+        if let window = updateBannerWindow, let banner = updateBanner,
+            let index = window.titlebarAccessoryViewControllers.firstIndex(where: { $0 === banner })
+        {
+            window.removeTitlebarAccessoryViewController(at: index)
+        }
+        updateBanner = nil
+        updateBannerWindow = nil
+
+        guard let window, let version else { return }
+        let banner = UpdateBannerController(version: version) { [weak self] in
+            self?.updateChecker?.dismiss(version)
+            self?.refreshUpdateBanner()
+        }
+        updateBanner = banner
+        updateBannerWindow = window
+        window.addTitlebarAccessoryViewController(banner)
     }
 
     private func refuseStressLaunch(_ error: Error) {
@@ -156,7 +216,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func makeBrowser(location: Location) -> BrowserWindowController {
         let controller = BrowserWindowController(location: location)
         controller.onClose = { [weak self] closed in
-            self?.browsers[ObjectIdentifier(closed)] = nil
+            guard let self else { return }
+            browsers[ObjectIdentifier(closed)] = nil
+            if updateBannerWindow === closed.window { refreshUpdateBanner() }
         }
         browsers[ObjectIdentifier(controller)] = controller
         return controller
