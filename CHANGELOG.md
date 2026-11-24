@@ -3,6 +3,19 @@
 All notable changes to Scope. Versions follow [Semantic Versioning](https://semver.org);
 entries are written by release-please from the conventional commits on `main`.
 
+## [0.9.0](https://github.com/antonisPanos/scope/compare/v0.8.0...v0.9.0) (2026-11-24)
+
+
+### Features
+
+* **browser:** extend open with to folders ([#201](https://github.com/antonisPanos/scope/issues/201)) ([6380675](https://github.com/antonisPanos/scope/commit/63806757c7484ca85b66c1579b4e7a4ce4be7321))
+* **system:** check for Scope updates on launch and activation ([#200](https://github.com/antonisPanos/scope/issues/200)) ([ea5438d](https://github.com/antonisPanos/scope/commit/ea5438dc7e357172c8896759120f1e542b7df1f2))
+
+
+### Bug fixes
+
+* **browser:** preserve selection during details refresh ([#198](https://github.com/antonisPanos/scope/issues/198)) ([f3491a7](https://github.com/antonisPanos/scope/commit/f3491a7237bcfd8f522300079cc378954c8cbac7))
+
 ## [0.8.0](https://github.com/antonisPanos/scope/compare/v0.7.0...v0.8.0) (2026-11-19)
 
 
